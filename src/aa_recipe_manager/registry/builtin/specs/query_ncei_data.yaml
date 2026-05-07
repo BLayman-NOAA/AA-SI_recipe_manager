@@ -1,0 +1,35 @@
+op: query_ncei_data
+description: >
+  Query an NCEI acoustic data catalog for file listings within a time window.
+  Returns a list of result records (file metadata), not the files themselves.
+category: data_retrieval
+inputs: {}
+outputs:
+  ncei_results:
+    type: list
+    description: List of NCEI file metadata records (dicts) matching the query
+params:
+  file_time_start:
+    type: str
+    description: "ISO 8601 start of window, e.g. '2016-07-25T20:58'"
+    required: true
+  file_time_end:
+    type: str
+    description: ISO 8601 end of window
+    required: true
+  filters:
+    type: dict
+    description: Key-value filters applied to NCEI metadata (e.g. CRUISE_NAME)
+    required: false
+    default: {}
+implementations:
+  - key: default
+    callable_path: aa_si_utils.data_retrieval.query_ncei_data
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      ncei_results: __return__

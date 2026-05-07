@@ -1,0 +1,118 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aa-recipe-manager"
+version = "0.1.0"
+description = "Define, share, generate, and execute standardized scientific workflow recipes."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "NOAA Fisheries AA-SI" },
+]
+keywords = [
+    "noaa",
+    "fisheries",
+    "acoustics",
+    "workflow",
+    "recipe",
+    "pipeline",
+    "DAG",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pydantic>=2",
+    "ruamel.yaml>=0.17",
+    "click>=8.0",
+    "nbformat>=5.7",
+    "packaging>=21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "jsonschema>=4.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+dask = [
+    "dask[distributed]>=2023.1.0",
+]
+prefect = [
+    "prefect>=2.0",
+]
+
+[project.scripts]
+aa-recipe-manager = "aa_recipe_manager.cli:main"
+aa_recipe_manager = "aa_recipe_manager.cli:main"
+
+[project.urls]
+Repository = "https://github.com/nmfs-ost/AA-SI_recipe_manager.git"
+Issues = "https://github.com/nmfs-ost/AA-SI_recipe_manager/issues"
+Changelog = "https://github.com/nmfs-ost/AA-SI_recipe_manager/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aa_recipe_manager"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "e2e: end-to-end tests using real recipe files and example data",
+]
+
+[tool.coverage.run]
+source = ["src/aa_recipe_manager"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "src"

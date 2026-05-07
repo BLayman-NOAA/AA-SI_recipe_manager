@@ -1,0 +1,38 @@
+op: remove_background_noise
+description: >
+  Estimate and remove background noise from Sv using the De Robertis and
+  Higginbottom method. Returns a cleaned Sv Dataset.
+category: noise_removal
+inputs:
+  ds_Sv:
+    type: Dataset
+    expected_variables:
+      - Sv
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: Noise-corrected Sv Dataset
+    expected_variables:
+      - Sv
+params:
+  noise_range_sample_num:
+    type: int
+    description: Number of range samples used to estimate the noise level
+    required: false
+    default: 10
+  noise_ping_num:
+    type: int
+    description: Number of pings used to estimate the noise level
+    required: false
+    default: 5
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.remove_noise
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    output_map:
+      ds_Sv: __return__

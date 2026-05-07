@@ -1,0 +1,68 @@
+op: generate_standardized_cal_mapping
+description: >
+  Read manufacturer calibration files, convert them to per-channel standardized
+  files, match each raw channel to its calibration data, and return a mapping
+  dict and a calibration dict.
+category: calibration
+inputs: {}
+outputs:
+  mapping_dict:
+    type: dict
+    description: Maps each raw channel to its standardized calibration file path
+  calibration_dict:
+    type: dict
+    description: Parsed standardized calibration data keyed by channel
+params:
+  raw_input_folder:
+    type: path
+    description: Folder containing raw acoustic files; used to determine channel configuration
+    required: true
+    constraints:
+      must_exist: true
+  cal_input_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: true
+  output_base:
+    type: path
+    required: true
+    constraints:
+      must_exist: false
+  cruise_id:
+    type: str
+    required: true
+  record_author:
+    type: str
+    required: true
+  short_filenames:
+    type: bool
+    required: false
+    default: true
+  keep_unused:
+    type: bool
+    description: Retain standardized files not matched to any channel
+    required: false
+    default: true
+  conflict_resolution:
+    type: str
+    description: "'error' or 'interactive' when multiple cal files match a channel"
+    required: false
+    default: "error"
+  verbose:
+    type: bool
+    description: Print progress information during mapping; implementation-specific
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.generate_standardized_cal_mapping
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_calibration.git
+    output_map:
+      mapping_dict: "['mapping_dict']"
+      calibration_dict: "['calibration_dict']"

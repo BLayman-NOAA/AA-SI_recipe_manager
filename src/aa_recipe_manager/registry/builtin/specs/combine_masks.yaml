@@ -1,0 +1,31 @@
+op: combine_masks
+description: >
+  Combine two or more mask datasets into one final mask. Accepts a list of
+  mask inputs to support inserting additional custom mask-producing steps
+  into the chain without changing core framework code.
+category: masking
+inputs:
+  masks:
+    type: list
+    description: List of boolean mask DataArrays to combine
+outputs:
+  mask:
+    type: DataArray
+    description: Combined boolean mask DataArray
+params:
+  mode:
+    type: str
+    description: "Combination mode: 'and' (all must be valid) or 'or' (any must be valid)"
+    required: false
+    default: "and"
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.combine_masks
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      mask: __return__

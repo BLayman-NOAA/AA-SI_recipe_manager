@@ -1,0 +1,39 @@
+op: compute_mvbs
+description: >
+  Compute Mean Volume Backscattering Strength by averaging Sv over range and
+  time bins. Returns a gridded MVBS Dataset.
+category: processing
+inputs:
+  ds_Sv:
+    type: Dataset
+    expected_variables:
+      - Sv
+outputs:
+  ds_MVBS:
+    type: Dataset
+    description: Gridded MVBS Dataset
+    expected_variables:
+      - Sv
+    expected_coords:
+      - ping_time
+      - echo_range
+      - channel
+params:
+  range_bin:
+    type: str
+    description: "Depth bin size for averaging (e.g. '2m')"
+    required: true
+  ping_time_bin:
+    type: str
+    description: "Ping-time bin size for averaging (e.g. '10s')"
+    required: true
+implementations:
+  - key: default
+    callable_path: echopype.commongrid.compute_MVBS
+    default: true
+    dependency:
+      name: echopype
+      version: ">=0.6.0"
+      source: pypi
+    output_map:
+      ds_MVBS: __return__

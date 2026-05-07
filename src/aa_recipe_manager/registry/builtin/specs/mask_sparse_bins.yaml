@@ -1,0 +1,40 @@
+op: mask_sparse_bins
+description: >
+  Remove spatiotemporal bins with fewer valid samples than a threshold,
+  reducing noise in MVBS computation.
+category: preprocessing
+inputs:
+  ds_Sv:
+    type: Dataset
+    expected_variables:
+      - Sv
+outputs:
+  ds_Sv:
+    type: Dataset
+    expected_variables:
+      - Sv
+params:
+  range_bin:
+    type: str
+    description: "Range bin size (e.g. '2m')"
+    required: true
+  ping_time_bin:
+    type: str
+    description: "Ping-time bin size (e.g. '10s')"
+    required: true
+  nan_threshold:
+    type: float
+    description: Fraction of NaN values above which a bin is masked (0.0 to 1.0)
+    required: false
+    default: 0.5
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.mask_sparse_bins
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      ds_Sv: __return__

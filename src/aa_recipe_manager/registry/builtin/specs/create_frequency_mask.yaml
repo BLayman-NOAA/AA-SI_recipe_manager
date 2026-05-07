@@ -1,0 +1,29 @@
+op: create_frequency_mask
+description: >
+  Build a mask that excludes selected frequency channels.
+  Implementation can be swapped to use different exclusion criteria.
+category: masking
+inputs:
+  ds_Sv:
+    type: Dataset
+outputs:
+  mask:
+    type: DataArray
+    description: Boolean mask DataArray; True means valid data
+params:
+  frequencies_to_mask:
+    type: list
+    units: kHz
+    required: false
+    default: []
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.create_frequency_mask
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      mask: __return__

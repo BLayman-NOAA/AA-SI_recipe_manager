@@ -1,0 +1,39 @@
+op: open_raw_files
+description: >
+  Open one or more raw echosounder files and combine them into a single EchoData
+  object. Intermediate NetCDF files are written for caching.
+category: io
+inputs:
+  raw_file_paths:
+    type: list
+    description: Paths to .raw files to open and concatenate
+outputs:
+  echodata:
+    type: EchoData
+    description: Combined echopype EchoData object
+params:
+  netcdf_output_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: false
+  sonar_model:
+    type: str
+    description: "Sonar model string recognized by echopype (e.g. 'EK60', 'EK80')"
+    required: true
+  include_bot:
+    type: bool
+    description: Include bottom-detection (.bot) data if available
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.open_and_combine_raw_files
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      echodata: __return__

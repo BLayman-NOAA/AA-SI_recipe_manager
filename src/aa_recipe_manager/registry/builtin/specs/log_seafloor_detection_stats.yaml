@@ -1,0 +1,35 @@
+op: log_seafloor_detection_stats
+description: >
+  Sink step. Compute and print summary statistics for seafloor detection across
+  all available channels. For each channel, reports depth range (min/max),
+  valid-ping count (pings where depth >= min_valid_depth_m), and 10th/50th/90th
+  percentile depths. Use this step before detect_seafloor to inspect per-channel
+  detection quality and inform the channel parameter choice. Produces no data
+  output.
+category: detection
+sink: true
+inputs:
+  echodata:
+    type: EchoData
+    description: "EchoData object containing .bot bottom-detection data"
+  ds_Sv:
+    type: Dataset
+    description: "Baseline Sv dataset used for channel-label alignment reference"
+    required: false
+outputs: {}
+params:
+  min_valid_depth_m:
+    type: float
+    units: m
+    description: Minimum depth (m) to consider a detection valid; shallower readings are excluded from statistics
+    required: false
+    default: 10.0
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.log_seafloor_detection_stats
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git

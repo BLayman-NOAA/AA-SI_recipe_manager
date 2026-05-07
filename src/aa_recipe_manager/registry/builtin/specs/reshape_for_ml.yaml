@@ -1,0 +1,43 @@
+op: reshape_for_ml
+description: >
+  Reshape an MVBS Dataset into a flat, ML-ready xarray Dataset where each
+  observation corresponds to one spatial or temporal bin.
+category: ml_preprocessing
+inputs:
+  ds_MVBS:
+    type: Dataset
+outputs:
+  ds_ml_ready:
+    type: Dataset
+    description: Flattened ML-ready Dataset
+params:
+  data_var:
+    type: str
+    description: Name of the data variable to use as features
+    required: true
+  dataset_name:
+    type: str
+    description: Label assigned to this ML dataset for tracking
+    required: true
+  feature_strategy:
+    type: str
+    description: "Feature construction strategy (e.g. 'mean_centered')"
+    required: true
+  baseline_channel:
+    type: int
+    description: Channel index used as the baseline when computing relative features
+    required: false
+    default: 0
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.reshape_data_for_ml
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    param_map:
+      ds_MVBS: ds_Sv
+    output_map:
+      ds_ml_ready: __return__

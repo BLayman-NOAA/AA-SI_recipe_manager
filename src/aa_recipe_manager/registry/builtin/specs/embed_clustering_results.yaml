@@ -1,0 +1,47 @@
+op: embed_clustering_results
+description: >
+  Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a
+  single result dict from run_hdbscan, or a collected list of result dicts
+  when used with the collect pattern for ensemble runs. For a list, one
+  cluster-label variable is embedded per collected result using deterministic
+  names derived from ml_result_name.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: Normalized ML Dataset to enrich with cluster-label variables
+  clustering_results:
+    type: dict
+    many: true
+    description: >
+      Clustering result dict from run_hdbscan. When collect is used for ensemble
+      runs, a list of result dicts is accepted (many: true).
+outputs:
+  ds_normalized:
+    type: Dataset
+    description: Normalized ML Dataset enriched with cluster-label variables
+  gridded_results:
+    type: DataArray
+    many: true
+    description: >
+      Gridded cluster labels as a DataArray for a single result, or a dict
+      keyed by embedded result name for multi-result fan-in (many: true).
+params:
+  dataset_name:
+    type: str
+    required: true
+  ml_result_name:
+    type: str
+    required: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.embed_clustering_results
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    output_map:
+      ds_normalized: "['ds_normalized']"
+      gridded_results: "['gridded_results']"

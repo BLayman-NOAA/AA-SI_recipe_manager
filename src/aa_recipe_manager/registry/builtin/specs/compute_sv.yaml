@@ -1,0 +1,41 @@
+op: compute_sv
+description: >
+  Compute volume backscattering strength (Sv) from raw EchoData.
+  When cal_params and env_params are supplied they are applied to the
+  computation. When omitted, echopype uses default environmental and
+  calibration values embedded in the raw file.
+category: calibration
+inputs:
+  echodata:
+    type: EchoData
+  cal_params:
+    type: dict
+    description: Optional calibration parameter overrides. When null, echopype uses values from the raw file.
+    required: false
+    default: null
+  env_params:
+    type: dict
+    description: Optional environmental parameter overrides. When null, echopype uses values from the raw file.
+    required: false
+    default: null
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: xarray Dataset containing Sv variable and ping_time, range_sample coordinates
+    expected_variables:
+      - Sv
+    expected_coords:
+      - ping_time
+      - range_sample
+      - channel
+params: {}
+implementations:
+  - key: default
+    callable_path: echopype.calibrate.compute_Sv
+    default: true
+    dependency:
+      name: echopype
+      version: ">=0.6.0"
+      source: pypi
+    output_map:
+      ds_Sv: __return__

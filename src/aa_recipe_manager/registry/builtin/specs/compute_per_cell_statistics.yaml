@@ -1,0 +1,54 @@
+op: compute_per_cell_statistics
+description: >
+  Compute per-MVBS-cell statistics (e.g. coefficient of variation) from
+  fine-resolution Sv data before masking or MVBS averaging. Results are
+  stored as new DataArrays in the returned dataset at MVBS-bin resolution.
+  Must be called with the same range_bin and ping_time_bin values used by
+  mask_sparse_bins and compute_mvbs so that bin grids align exactly.
+  Pass the returned dataset to add_auxiliary_features via the ds_sv input
+  to absorb the statistics into the ML feature matrix.
+category: ml_preprocessing
+inputs:
+  ds_Sv:
+    type: Dataset
+    expected_variables:
+      - Sv
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Input Dataset with per-cell statistic variables appended
+      (e.g. cell_cv with dims channel x cell_ping_time x cell_echo_range)
+    expected_variables:
+      - Sv
+params:
+  range_bin:
+    type: str
+    description: "Range bin size — must match mask_sparse_bins and compute_mvbs (e.g. '2m')"
+    required: true
+  ping_time_bin:
+    type: str
+    description: "Ping-time bin size — must match mask_sparse_bins and compute_mvbs (e.g. '10s')"
+    required: true
+  statistics:
+    type: list
+    description: "List of statistics to compute. Supported: ['cv']"
+    required: false
+    default:
+      - cv
+  data_var:
+    type: str
+    description: Name of the Sv variable in the input Dataset
+    required: false
+    default: "Sv"
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.compute_per_cell_statistics
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    output_map:
+      ds_Sv: __return__

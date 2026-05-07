@@ -1,0 +1,377 @@
+# =============================================================================
+# HB1603 Acoustic Survey — End-to-End Pipeline Recipe
+# =============================================================================
+# Recipe format version 1. Run this through aa-recipe-manager to generate
+# a Jupyter notebook or execute the pipeline directly.
+#
+# Usage: aa-recipe-manager generate hb1603_survey_pipeline.yaml
+
+recipe:
+  name: "hb1603_survey_pipeline"
+  description: "End-to-end EK60 acoustic survey processing pipeline for cruise HB1603."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+# ---------------------------------------------------------------------------
+# Pipeline-level inputs
+# Values a user supplies (or leaves as None to configure before running).
+# ---------------------------------------------------------------------------
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  output_base:
+    type: path
+    default: "./nefsc_uc_e2_cal_outputs"
+  netcdf_output_folder:
+    type: path
+    default: "./NetCDF-files"
+  sv_output_folder:
+    type: path
+    default: "./Sv-files"
+  output_logs_folder:
+    type: path
+    default: "./Output-Logs"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps:
+
+  # --------------------------------------------------------------------------
+  # Data retrieval
+  # --------------------------------------------------------------------------
+  - id: query_ncei
+    op: query_ncei_data
+    params:
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      filters:
+        CRUISE_NAME: "HB1603"
+
+  - id: download_raw
+    op: download_ncei_data
+    inputs:
+      results: ${query_ncei.ncei_results}
+    params:
+      output_dir: ${inputs.raw_input_folder}
+      companion_extensions:
+        - ".bot"
+        - ".idx"
+
+  # --------------------------------------------------------------------------
+  # File setup and calibration mapping
+  # --------------------------------------------------------------------------
+  - id: setup_raw_files
+    op: setup_raw_files
+    depends_on: [download_raw]
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      netcdf_output_folder: ${inputs.netcdf_output_folder}
+      sv_output_folder: ${inputs.sv_output_folder}
+      output_logs_folder: ${inputs.output_logs_folder}
+      raw_file_names: []
+      clear_previous_json_logs: true
+
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    depends_on: [download_raw]
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${inputs.output_base}
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+
+  # --------------------------------------------------------------------------
+  # Load raw data and extract calibration parameters
+  # --------------------------------------------------------------------------
+  - id: open_raw
+    op: open_raw_files
+    inputs:
+      raw_file_paths: ${setup_raw_files.raw_file_paths}
+    params:
+      netcdf_output_folder: ${inputs.netcdf_output_folder}
+      sonar_model: "EK60"
+      include_bot: true
+
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${open_raw.echodata}
+
+  # --------------------------------------------------------------------------
+  # Compute Sv (baseline for masking; calibrated for science)
+  # --------------------------------------------------------------------------
+  - id: compute_sv_baseline
+    op: compute_sv
+    inputs:
+      echodata: ${open_raw.echodata}
+
+  - id: compute_sv_calibrated
+    op: compute_sv
+    inputs:
+      echodata: ${open_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+
+  # --------------------------------------------------------------------------
+  # Seafloor detection (stats first, then detection)
+  # --------------------------------------------------------------------------
+  - id: log_seafloor_stats
+    op: log_seafloor_detection_stats
+    inputs:
+      echodata: ${open_raw.echodata}
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: detect_seafloor
+    op: detect_seafloor
+    depends_on: [log_seafloor_stats]
+    inputs:
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+      echodata: ${open_raw.echodata}
+    params:
+      min_valid_depth_m: 10.0
+
+  # --------------------------------------------------------------------------
+  # Mask construction
+  # --------------------------------------------------------------------------
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: 100
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+    params:
+      surface_depth_m: 10.0
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    inputs:
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+    params:
+      frequencies_to_mask: [70, 120, 200]
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  # --------------------------------------------------------------------------
+  # Apply mask
+  # --------------------------------------------------------------------------
+  - id: apply_mask_baseline
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv_baseline.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: apply_mask_calibrated
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv_calibrated.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  # --------------------------------------------------------------------------
+  # Noise removal, MVBS, and line overlay
+  # --------------------------------------------------------------------------
+  - id: remove_noise
+    op: remove_background_noise
+    inputs:
+      ds_Sv: ${apply_mask_calibrated.ds_Sv}
+    params:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+
+  - id: compute_cell_stats
+    op: compute_per_cell_statistics
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: &bin_range "2m"
+      ping_time_bin: &bin_time "10s"
+      statistics:
+        - cv
+
+  - id: mask_sparse
+    op: mask_sparse_bins
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: *bin_range
+      ping_time_bin: *bin_time
+      nan_threshold: 0.6
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      range_bin: *bin_range
+      ping_time_bin: *bin_time
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  # --------------------------------------------------------------------------
+  # Echogram visualization
+  # --------------------------------------------------------------------------
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  # --------------------------------------------------------------------------
+  # Machine learning: reshape → auxiliary features → normalize → plot → cluster
+  # --------------------------------------------------------------------------
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${add_line_overlay.ds}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      echodata: ${open_raw.echodata}
+      ds_sv: ${compute_cell_stats.ds_Sv}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - depth
+        - cell_cv
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+      feature_weights: [1, 1, 1, 1]
+      per_group_methods:
+        depth: "minmax"
+
+  - id: plot_normalized_ml
+    op: plot_ml_echogram
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size: 1400
+      min_samples: 4
+      sample_size: 1000000
+      cluster_selection_method: "eom"
+      use_hdbscan: true
+
+  - id: embed_results
+    op: embed_clustering_results
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: plot_clustering_report
+    op: plot_clustering_report
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      plot_window: [0, 1800, 0, 515]
+      overlay_line_var: "sw_dive_profile"
+      cluster_colors:
+        - "#F700FF"
+        - "#35E200"
+        - "#5EFC9B"
+        - "#2F00FF"
+        - "#E60000"
+        - "#FFFB1C"
+        - "#000F92"
+        - "#E70000"
+        - "#00948D"
+        - "#5BECFFFF"
+        - "#4100B9FF"

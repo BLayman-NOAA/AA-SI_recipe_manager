@@ -1,0 +1,39 @@
+op: add_line_overlay
+description: >
+  Join a CSV line or profile file (e.g. a dive profile) to a Dataset as a
+  new coordinate-aligned variable. The enriched Dataset is passed downstream
+  for plotting or analysis.
+category: annotation
+inputs:
+  ds:
+    type: Dataset
+outputs:
+  ds:
+    type: Dataset
+    description: Input Dataset with the line variable added
+params:
+  line_file_path:
+    type: path
+    description: Path to the CSV file containing the line data
+    required: true
+    constraints:
+      must_exist: true
+  line_name:
+    type: str
+    description: Name to assign to the new variable in the Dataset
+    required: true
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.add_dive_profile_to_dataset
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    param_map:
+      ds: ds_MVBS
+      line_file_path: csv_filepath
+      line_name: dive_profile_name
+    output_map:
+      ds: __return__

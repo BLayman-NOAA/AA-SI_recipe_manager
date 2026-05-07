@@ -1,0 +1,45 @@
+op: create_sv_mask
+description: >
+  Optional convenience op that wraps the modular mask chain
+  (detect_seafloor, create_surface_mask, create_frequency_mask, combine_masks).
+  Use the modular steps directly when method swapping or custom mask insertion is needed.
+category: masking
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Baseline Sv dataset used to build mask components
+    expected_variables:
+      - Sv
+  echodata:
+    type: EchoData
+    description: Optional source EchoData for .bot-based seafloor detection
+    required: false
+outputs:
+  mask:
+    type: Dataset
+    description: "Boolean mask Dataset; True means valid data"
+params:
+  seafloor_buffer_m:
+    type: float
+    units: m
+    description: Depth buffer below detected seafloor to include in mask
+    required: false
+    default: 0.0
+  min_valid_depth_m:
+    type: float
+    units: m
+    description: "Minimum valid depth; shallower pings are masked"
+    required: false
+    default: 0.0
+  surface_depth_m:
+    type: float
+    units: m
+    description: Depth threshold below which surface interference is masked
+    required: false
+    default: 0.0
+  frequencies_to_mask:
+    type: list
+    units: Hz
+    description: Frequency channels (Hz) to exclude entirely from Sv
+    required: false
+    default: []

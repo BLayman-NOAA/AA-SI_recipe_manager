@@ -1,0 +1,65 @@
+op: plot_sv_echogram
+description: >
+  Render an Sv echogram. Supports two call patterns: (1) single dataset,
+  plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes
+  from ds_Sv_source (useful for MVBS overlaid on the original Sv grid).
+  This is a sink step: it produces a side-effect (figure) with no data output.
+category: visualization
+sink: true
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Primary Sv dataset to plot
+  ds_Sv_source:
+    type: Dataset
+    description: Reference Sv dataset whose coordinates set the axes
+    required: false
+    default: null
+outputs: {}
+params:
+  min_depth:
+    type: float
+    description: Minimum depth (y-axis) in meters
+    required: false
+    default: 0
+  max_depth:
+    type: float
+    description: Maximum depth (y-axis) in meters
+    required: true
+  ping_min:
+    type: int
+    description: First ping index to display
+    required: false
+    default: 0
+  ping_max:
+    type: int
+    description: Last ping index to display
+    required: true
+  x_axis_units:
+    type: str
+    description: "Units for the x-axis ('seconds' or 'datetime')"
+    required: false
+    default: "seconds"
+  y_axis_units:
+    type: str
+    description: "Units for the y-axis ('meters' or 'samples')"
+    required: false
+    default: "meters"
+  overlay_lines:
+    type: list
+    description: >
+      Optional list of line overlays. Each entry is a dict with 'var'
+      (variable name in ds_Sv) and 'style' (dict of matplotlib kwargs).
+    required: false
+    default: []
+implementations:
+  - key: default
+    callable_path: aa_si_visualization.echogram.plot_sv_echogram
+    default: true
+    dependency:
+      name: aa-si-visualization
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Visualization.git
+    param_map:
+      ds_Sv_source: ds_Sv_original

@@ -1,0 +1,32 @@
+op: create_seafloor_mask
+description: >
+  Build a seafloor mask from baseline Sv and detected seafloor depth.
+  The seafloor depth is passed as an explicit input, enabling swappable
+  detection methods without modifying masking logic.
+category: masking
+inputs:
+  ds_Sv:
+    type: Dataset
+  seafloor_depth:
+    type: DataArray
+outputs:
+  mask:
+    type: DataArray
+    description: Boolean DataArray shaped like ds_Sv['Sv']; True means valid data (above seafloor)
+params:
+  seafloor_buffer_m:
+    type: float
+    units: m
+    required: false
+    default: 0.0
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.create_seafloor_mask
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      mask: __return__

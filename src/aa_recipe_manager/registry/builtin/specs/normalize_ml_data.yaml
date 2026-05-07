@@ -1,0 +1,52 @@
+op: normalize_ml_data
+description: >
+  Normalize ML features in the flattened Dataset. Supports per-feature
+  normalization methods via per_group_methods.
+category: ml_preprocessing
+inputs:
+  ds_ml:
+    type: Dataset
+outputs:
+  ds_normalized:
+    type: Dataset
+    description: Dataset with normalized feature values
+params:
+  method:
+    type: str
+    description: "Global normalization method (e.g. 'flatten', 'minmax', 'zscore')"
+    required: true
+  dataset_name:
+    type: str
+    required: true
+  normalization_name:
+    type: str
+    description: Label assigned to this normalization for downstream tracking
+    required: true
+  shift_positive:
+    type: bool
+    description: Shift all values to be non-negative after normalization
+    required: false
+    default: false
+  feature_weights:
+    type: list
+    description: Per-feature weight multipliers applied before normalization
+    required: false
+    default: []
+  per_group_methods:
+    type: dict
+    description: Map of feature name to individual normalization method override
+    required: false
+    default: {}
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.normalize_data
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    param_map:
+      ds_ml: ds_ml_ready
+    output_map:
+      ds_normalized: __return__

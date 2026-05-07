@@ -1,0 +1,49 @@
+op: detect_seafloor
+description: >
+  Detect seafloor depth across pings, returning a 1-D (ping_time,) DataArray.
+  Multiple implementations are supported (.bot-based, algorithmic Sv-based,
+  external or manual sources). When channel is null, the implementation
+  selects the highest-quality channel automatically. When channel is specified,
+  only that channel's detection is returned. Output is always 1-D (ping_time,).
+  Use log_seafloor_detection_stats before this step to compare per-channel
+  quality and inform the channel choice.
+category: detection
+inputs:
+  ds_Sv:
+    type: Dataset
+    required: false
+  echodata:
+    type: EchoData
+outputs:
+  seafloor_depth:
+    type: DataArray
+    description: >
+      Detected seafloor depth in metres, shape (ping_time,). Always 1-D
+      regardless of whether automatic best-channel selection or an explicit
+      channel is used.
+params:
+  channel:
+    type: str
+    description: >
+      Channel label to use for seafloor detection, matching the channel label
+      as it appears in the EchoData (e.g. "38000"). When null (the default),
+      the implementation selects the highest-quality channel automatically.
+    required: false
+    default: null
+  min_valid_depth_m:
+    type: float
+    units: m
+    description: Minimum depth (m) to consider a detection valid; shallower readings are discarded
+    required: false
+    default: 10.0
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.detect_seafloor
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      seafloor_depth: __return__

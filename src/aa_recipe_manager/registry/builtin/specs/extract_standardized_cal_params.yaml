@@ -1,0 +1,38 @@
+op: extract_standardized_cal_params
+description: >
+  Extract calibration parameters (gain, sa-correction, EBA) and environmental
+  parameters (sound speed, absorption) from standardized calibration files,
+  cross-referenced against the EchoData object for channel alignment.
+category: calibration
+inputs:
+  calibration_dict:
+    type: dict
+  mapping_dict:
+    type: dict
+  echodata:
+    type: EchoData
+outputs:
+  cal_params:
+    type: dict
+    description: "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)"
+  env_params:
+    type: dict
+    description: "Environmental parameters keyed by channel (sound_speed, sound_absorption)"
+  other_params:
+    type: dict
+    description: "Additional extracted calibration metadata keyed by channel and source file details"
+    required: false
+params: {}
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.extract_standardized_calibration_parameters
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_calibration.git
+    output_map:
+      cal_params: "['cal_params']"
+      env_params: "['env_params']"
+      other_params: "['other_params']"

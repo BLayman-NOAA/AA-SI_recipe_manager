@@ -1,0 +1,70 @@
+op: plot_clustering_report
+description: >
+  Render a full clustering report for one or more clustering results. Produces
+  the clustering echogram, per-cluster statistics report, and the HDBSCAN
+  hierarchy plot when the clustering result includes a model and hierarchy
+  plotting is applicable. This is a sink step: it produces figures with no
+  data output.
+category: visualization
+sink: true
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: Embedded normalized ML Dataset containing stored cluster-label variables
+  clustering_results:
+    type: dict
+    many: true
+    description: >
+      Clustering result dict from run_hdbscan. When collect is used for ensemble
+      runs, a list of result dicts is accepted (many: true).
+  ds_Sv:
+    type: Dataset
+    description: Original Sv Dataset for echogram depth reference
+    required: false
+outputs: {}
+params:
+  dataset_name:
+    type: str
+    required: true
+  ml_result_name:
+    type: str
+    required: true
+  plot_window:
+    type: list
+    description: "[min_depth, max_depth, ping_min, ping_max] for echogram display"
+    required: false
+    default: []
+  overlay_line_var:
+    type: str
+    description: Name of a variable in ds_normalized to draw as a line overlay
+    required: false
+    default: null
+  cluster_colors:
+    type: list
+    description: Hex color strings for each cluster label
+    required: false
+    default: []
+  y_to_x_aspect_ratio_override:
+    type: float
+    description: Override the echogram aspect ratio; null uses the default
+    required: false
+    default: null
+  cluster_stats_sv_data_var:
+    type: str
+    description: Sv variable name used when computing per-cluster statistics
+    required: false
+    default: "Sv"
+  cluster_stats_compute_pairwise_differences:
+    type: bool
+    description: Compute inter-channel pairwise diffs in cluster statistics
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.plot_clustering_report
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git

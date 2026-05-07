@@ -1,0 +1,87 @@
+op: run_hdbscan
+description: >
+  Run HDBSCAN unsupervised clustering on normalized feature data.
+  Pure-compute step: accepts normalized features and returns a clustering
+  result dict without modifying any Dataset. Designed to be a sweep target
+  for hyperparameter comparison.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+outputs:
+  clustering_results:
+    type: dict
+    description: >
+      Clustering result dict containing labels, sample indices, fitted model,
+      and silhouette scores.
+  background_label:
+    type: int
+    description: >
+      Cluster label identified as background. Only populated when
+      find_background_cluster is true; null otherwise.
+    required: false
+    default: null
+params:
+  dataset_name:
+    type: str
+    required: true
+  normalization_name:
+    type: str
+    required: true
+  ml_result_name:
+    type: str
+    description: Label assigned to this clustering result for downstream tracking
+    required: true
+  min_cluster_size:
+    type: int
+    required: true
+  min_samples:
+    type: int
+    required: false
+    default: 2
+  sample_size:
+    type: int
+    description: Maximum number of samples drawn for clustering; 
+    required: false
+    default: 100000
+  cluster_selection_method:
+    type: str
+    description: "HDBSCAN cluster selection method ('eom' or 'leaf')"
+    required: false
+    default: "leaf"
+  use_hdbscan:
+    type: bool
+    description: Use HDBSCAN; set false to fall back to a simpler clustering method
+    required: false
+    default: true
+  epsilon:
+    type: float
+    description: DBSCAN epsilon distance parameter
+    required: false
+    default: 0.004
+  find_background_cluster:
+    type: bool
+    description: >
+      Run background-cluster detection path instead of standard HDBSCAN.
+      When true, background_label output is populated.
+    required: false
+    default: false
+  soft_membership_threshold:
+    type: float
+    description: >
+      Reassign noise points via soft-membership probabilities when set.
+      null disables soft-membership reassignment.
+    required: false
+    default: null
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.run_hdbscan
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    output_map:
+      clustering_results: "['clustering_results']"
+      background_label: "['background_label']"

@@ -1,0 +1,55 @@
+op: setup_raw_files
+description: >
+  Validate the raw file set in the input directory, create output directories
+  if they do not exist, and return a list of raw file paths ready for processing.
+category: utility
+inputs: {}
+outputs:
+  raw_file_paths:
+    type: list
+    description: Ordered list of absolute paths to raw acoustic files
+params:
+  raw_input_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: true
+  netcdf_output_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: false
+  sv_output_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: false
+  output_logs_folder:
+    type: path
+    required: true
+    constraints:
+      must_exist: false
+  raw_file_names:
+    type: list
+    description: Explicit file name list; empty means include all files in folder
+    required: false
+    default: []
+  clear_previous_json_logs:
+    type: bool
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.initial_setup_and_validation
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    param_map:
+      netcdf_output_folder: netcdf_output_folder_string
+      sv_output_folder: sv_output_folder_string
+      output_logs_folder: output_logs_folder_string
+    output_map:
+      raw_file_paths: __return__

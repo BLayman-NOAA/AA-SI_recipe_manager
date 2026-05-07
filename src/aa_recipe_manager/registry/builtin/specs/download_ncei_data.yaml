@@ -1,0 +1,36 @@
+op: download_ncei_data
+description: >
+  Download raw acoustic files identified by an NCEI query result,
+  along with any specified companion file extensions (.bot, .idx, etc.).
+category: data_retrieval
+inputs:
+  results:
+    type: list
+    description: NCEI file metadata records from query_ncei_data
+outputs:
+  downloaded_paths:
+    type: list
+    description: List of downloaded file paths, including extracted tar contents when applicable
+params:
+  output_dir:
+    type: path
+    description: Local directory to write downloaded files into
+    required: true
+    constraints:
+      must_exist: false
+  companion_extensions:
+    type: list
+    description: Additional file extensions to download alongside each .raw file
+    required: false
+    default: []
+implementations:
+  - key: default
+    callable_path: aa_si_utils.data_retrieval.download_ncei_data
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+    output_map:
+      downloaded_paths: __return__

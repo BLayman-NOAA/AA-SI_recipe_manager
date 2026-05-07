@@ -1,0 +1,49 @@
+op: add_auxiliary_features
+description: >
+  Append auxiliary coordinate-derived features (e.g. depth, ping_time_seconds)
+  to the flattened ML-ready Dataset. Optional step; omit when no auxiliary
+  features are needed.
+category: ml_preprocessing
+inputs:
+  ds_ml:
+    type: Dataset
+  echodata:
+    type: EchoData
+    required: false
+  ds_sv:
+    type: Dataset
+    required: false
+    description: >
+      Dataset returned by compute_per_cell_statistics, carrying per-MVBS-cell
+      statistic variables (e.g. cell_cv). Required when 'cell_cv' is listed
+      in features.
+outputs:
+  ds_ml_ready:
+    type: Dataset
+    description: ML-ready Dataset with auxiliary features appended
+params:
+  dataset_name:
+    type: str
+    required: true
+  features:
+    type: list
+    description: >
+      List of built-in feature name strings to append. Supported built-ins:
+      'depth', 'ping_time_seconds', 'seafloor_depth', 'altitude', 'cell_cv'.
+      'seafloor_depth' and 'altitude' require the echodata input.
+      'cell_cv' requires the ds_sv input (from compute_per_cell_statistics).
+    required: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.add_auxiliary_features
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/nmfs-ost/AA-SI_ML.git
+    param_map:
+      ds_ml: ds_ml_ready
+    output_map:
+      ds_ml_ready: __return__
+
