@@ -17,7 +17,7 @@ A recipe is a YAML file that describes a complete data processing pipeline as a 
 
 ```bash
 # Clone the repository
-git clone https://github.com/nmfs-ost/AA-SI_recipe_manager.git
+git clone https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git
 cd AA-SI_recipe_manager
 
 # Install in development mode

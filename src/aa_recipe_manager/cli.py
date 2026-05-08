@@ -124,7 +124,7 @@ def generate_cmd(
 @click.option("--visualize", is_flag=True, default=False, help="Include a Mermaid DAG diagram.")
 @click.option(
     "--check-versions/--no-check-versions",
-    default=True,
+    default=False,
     show_default=True,
     help="Verify installed library versions against implementation declarations.",
 )

@@ -62,7 +62,7 @@ implementations:
       name: aa-si-calibration
       version: ">=0.1.0"
       source: git
-      url: https://github.com/nmfs-ost/AA-SI_calibration.git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
     output_map:
       mapping_dict: "['mapping_dict']"
       calibration_dict: "['calibration_dict']"

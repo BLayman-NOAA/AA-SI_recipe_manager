@@ -44,6 +44,6 @@ implementations:
       name: aa-si-utils
       version: ">=0.1.0"
       source: git
-      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     output_map:
       seafloor_depth: __return__

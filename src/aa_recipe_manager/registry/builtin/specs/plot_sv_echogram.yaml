@@ -60,6 +60,6 @@ implementations:
       name: aa-si-visualization
       version: ">=0.1.0"
       source: git
-      url: https://github.com/nmfs-ost/AA-SI_Visualization.git
+      url: https://github.com/BLayman-NOAA/AA-SI_Visualization.git
     param_map:
       ds_Sv_source: ds_Sv_original

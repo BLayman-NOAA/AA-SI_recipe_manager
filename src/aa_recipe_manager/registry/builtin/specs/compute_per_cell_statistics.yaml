@@ -49,6 +49,6 @@ implementations:
       name: aa-si-ml
       version: ">=0.1.0"
       source: git
-      url: https://github.com/nmfs-ost/AA-SI_ML.git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
     output_map:
       ds_Sv: __return__

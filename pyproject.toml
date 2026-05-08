@@ -67,9 +67,9 @@ aa-recipe-manager = "aa_recipe_manager.cli:main"
 aa_recipe_manager = "aa_recipe_manager.cli:main"
 
 [project.urls]
-Repository = "https://github.com/nmfs-ost/AA-SI_recipe_manager.git"
-Issues = "https://github.com/nmfs-ost/AA-SI_recipe_manager/issues"
-Changelog = "https://github.com/nmfs-ost/AA-SI_recipe_manager/blob/main/CHANGELOG.md"
+Repository = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git"
+Issues = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager/issues"
+Changelog = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -46,7 +46,7 @@ implementations:
       name: aa-si-utils
       version: ">=0.1.0"
       source: git
-      url: https://github.com/nmfs-ost/AA-SI_Utils.git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     param_map:
       netcdf_output_folder: netcdf_output_folder_string
       sv_output_folder: sv_output_folder_string

@@ -4,7 +4,7 @@ description: >
   When cal_params and env_params are supplied they are applied to the
   computation. When omitted, echopype uses default environmental and
   calibration values embedded in the raw file.
-category: calibration
+category: level 2
 inputs:
   echodata:
     type: EchoData
