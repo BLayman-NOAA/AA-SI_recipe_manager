@@ -119,7 +119,9 @@ def _build_title_cell(dag: PipelineDAG) -> nbformat.NotebookNode:
     return _md_cell("\n".join(lines))
 
 
-def _build_deps_cell(resolved_deps: ResolvedDependencies) -> nbformat.NotebookNode | None:
+def _build_deps_cell(
+    resolved_deps: ResolvedDependencies,
+) -> nbformat.NotebookNode | None:
     if not resolved_deps.packages:
         return None
     lines = ["# Uncomment the lines below to install required packages."]
@@ -182,14 +184,18 @@ def _build_imports_cell(
     dag: PipelineDAG,
     callable_aliases: dict[str, str],
     include_provenance: bool = True,
+    include_tracker: bool = True,
 ) -> nbformat.NotebookNode:
     imports = _collect_imports(dag, callable_aliases)
-    lines = imports + [
-        "",
-        "from aa_recipe_manager.tracker.pipeline_tracker import PipelineTracker",
-    ]
+    lines = imports + [""]
+    if include_tracker:
+        lines.append(
+            "from aa_recipe_manager.tracker.pipeline_tracker import PipelineTracker"
+        )
     if include_provenance:
-        lines.append("from aa_recipe_manager.provenance.recorder import ProvenanceRecorder")
+        lines.append(
+            "from aa_recipe_manager.provenance.recorder import ProvenanceRecorder"
+        )
     return _code_cell("\n".join(lines))
 
 
@@ -238,7 +244,7 @@ def _build_inputs_cell(
             lines.append(f"{name} = None  # TODO: set this value{comment}")
     if cache_aware:
         lines.append(
-            '_recipe_manager_cache_dir = "outputs"  # Cache directory for generated step outputs'
+            '_recipe_manager_cache_dir = "outputs"  # Generated step output cache'
         )
         lines.append("_recipe_manager_step_signatures = {}")
     return _code_cell("\n".join(lines))
@@ -252,8 +258,18 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
-def _build_step_markdown_source(step_id: str, node: DAGNode) -> str:
-    md_lines = [f"### Step: `{step_id}`", f"**Op:** `{node.spec.op}`"]
+def _build_step_markdown_source(
+    step_id: str,
+    node: DAGNode,
+    source: str | None = None,
+) -> str:
+    title = f"### Step: `{step_id}`"
+    if source:
+        title = f"{title} (from {source})"
+    op_label = f"`{node.spec.op}`"
+    if node.spec.op == "custom":
+        op_label = f"{op_label} (custom / unregistered)"
+    md_lines = [title, f"**Op:** {op_label}"]
     if node.spec.description:
         md_lines.append("")
         md_lines.append(node.spec.description.strip())
@@ -322,7 +338,10 @@ def _wrap_tracker_step(
 ) -> list[str]:
     scalar_params = _build_scalar_params(node)
     if param_var_names and scalar_params:
-        header = f"with tracker.step({repr(step_id)}, op={repr(node.spec.op)}, params={{"
+        header = (
+            f"with tracker.step({repr(step_id)}, "
+            f"op={repr(node.spec.op)}, params={{"
+        )
         param_items = [
             f"    {repr(k)}: {param_var_names[k]},"
             for k in scalar_params
@@ -332,7 +351,11 @@ def _wrap_tracker_step(
         ]
     else:
         lines = [
-            f"with tracker.step({repr(step_id)}, op={repr(node.spec.op)}, params={repr(scalar_params)}):"
+            (
+                f"with tracker.step({repr(step_id)}, "
+                f"op={repr(node.spec.op)}, "
+                f"params={repr(scalar_params)}):"
+            )
         ]
     return [*lines, *_indent_lines(body_lines or ["pass"])]
 
@@ -417,6 +440,7 @@ def _build_step_execution_lines(
     node: DAGNode,
     var_name_map: dict[tuple[str, str], str],
     callable_aliases: dict[str, str],
+    include_tracker: bool = True,
 ) -> list[str]:
     if node.implementation is None:
         return [f"# TODO: no implementation found for op '{node.spec.op}'"]
@@ -425,6 +449,8 @@ def _build_step_execution_lines(
     body_lines = _build_step_body_lines(
         step_id, node, var_name_map, callable_aliases, param_var_names=param_var_names
     )
+    if not include_tracker:
+        return decl_lines + body_lines
     return decl_lines + _wrap_tracker_step(
         step_id, node, body_lines, param_var_names=param_var_names
     )
@@ -463,11 +489,19 @@ def _collect_referenced_input_names(node: DAGNode) -> list[str]:
     return sorted(input_names)
 
 
+def _render_dependency_signature_item(step_id: str) -> str:
+    return (
+        f"{repr(step_id)}: "
+        f"_recipe_manager_step_signatures.get({repr(step_id)})"
+    )
+
+
 def _build_cache_aware_step_lines(
     step_id: str,
     node: DAGNode,
     var_name_map: dict[tuple[str, str], str],
     callable_aliases: dict[str, str],
+    include_tracker: bool = True,
 ) -> list[str]:
     param_var_names, decl_lines = _build_param_var_declarations(step_id, node)
     body_lines = _build_step_body_lines(
@@ -479,11 +513,14 @@ def _build_cache_aware_step_lines(
     )
     outputs = list(node.spec.outputs.keys())
     if node.implementation is None or node.spec.sink or not outputs:
-        return [f"# TODO: no implementation found for op '{node.spec.op}'"] if node.implementation is None else _build_step_execution_lines(
+        if node.implementation is None:
+            return [f"# TODO: no implementation found for op '{node.spec.op}'"]
+        return _build_step_execution_lines(
             step_id,
             node,
             var_name_map,
             callable_aliases,
+            include_tracker=include_tracker,
         )
 
     cache_targets = [
@@ -492,6 +529,12 @@ def _build_cache_aware_step_lines(
     ]
     dependency_ids = _collect_dependency_step_ids(node)
     input_names = _collect_referenced_input_names(node)
+    input_signature_items = ", ".join(
+        f"{repr(name)}: {name}" for name in input_names
+    )
+    dependency_signature_items = ", ".join(
+        _render_dependency_signature_item(name) for name in dependency_ids
+    )
     static_signature = _json_safe(
         {
             "step_id": step_id,
@@ -521,10 +564,19 @@ def _build_cache_aware_step_lines(
         "    except Exception:",
         "        _cache_meta = {}",
         f"_signature_payload = {repr(static_signature)}",
-        f"_signature_payload['inputs'] = {{{', '.join(f'{repr(name)}: {name}' for name in input_names)}}}",
-        f"_signature_payload['dependencies'] = {{{', '.join(f'{repr(name)}: _recipe_manager_step_signatures.get({repr(name)})' for name in dependency_ids)}}}",
-        "_signature_text = _json.dumps(_signature_payload, sort_keys=True, default=str)",
-        "_step_signature = _hashlib.sha256(_signature_text.encode('utf-8')).hexdigest()",
+        f"_signature_payload['inputs'] = {{{input_signature_items}}}",
+        (
+            f"_signature_payload['dependencies'] = "
+            f"{{{dependency_signature_items}}}"
+        ),
+        (
+            "_signature_text = _json.dumps("
+            "_signature_payload, sort_keys=True, default=str)"
+        ),
+        (
+            "_step_signature = _hashlib.sha256("
+            "_signature_text.encode('utf-8')).hexdigest()"
+        ),
     ]
 
     if len(cache_targets) == 1:
@@ -532,20 +584,53 @@ def _build_cache_aware_step_lines(
         cache_file = f"{step_id}_{out_name}.pkl"
         code_lines.append(f"_cache_path = _cache_dir / {repr(cache_file)}")
         code_lines.append(
-            "if _cache_path.exists() and _cache_meta.get('signature') == _step_signature:"
+            "if _cache_path.exists() "
+            "and _cache_meta.get('signature') == _step_signature:"
         )
         code_lines.append("    with _cache_path.open('rb') as _f:")
         code_lines.append(f"        {var_name} = _pickle.load(_f)")
-        code_lines.extend(_indent_lines(_wrap_tracker_step(step_id, node, param_var_names=param_var_names), prefix="    "))
-        code_lines.append(f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature")
-        code_lines.append(f"    print({repr(f'Loaded {step_id}.{out_name} from cache')})")
+        if include_tracker:
+            code_lines.extend(
+                _indent_lines(
+                    _wrap_tracker_step(
+                        step_id,
+                        node,
+                        param_var_names=param_var_names,
+                    ),
+                    prefix="    ",
+                )
+            )
+        code_lines.append(
+            f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature"
+        )
+        code_lines.append(
+            f"    print({repr(f'Loaded {step_id}.{out_name} from cache')})"
+        )
         code_lines.append("else:")
-        code_lines.extend(_indent_lines(_wrap_tracker_step(step_id, node, body_lines, param_var_names=param_var_names)))
+        if include_tracker:
+            code_lines.extend(
+                _indent_lines(
+                    _wrap_tracker_step(
+                        step_id,
+                        node,
+                        body_lines,
+                        param_var_names=param_var_names,
+                    )
+                )
+            )
+        else:
+            code_lines.extend(_indent_lines(body_lines))
         code_lines.append("    with _cache_path.open('wb') as _f:")
         code_lines.append(f"        _pickle.dump({var_name}, _f)")
-        code_lines.append("    with _cache_meta_path.open('w', encoding='utf-8') as _f:")
-        code_lines.append("        _json.dump({'signature': _step_signature}, _f, indent=2)")
-        code_lines.append(f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature")
+        code_lines.append(
+            "    with _cache_meta_path.open('w', encoding='utf-8') as _f:"
+        )
+        code_lines.append(
+            "        _json.dump({'signature': _step_signature}, _f, indent=2)"
+        )
+        code_lines.append(
+            f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature"
+        )
         return code_lines
 
     code_lines.append("_cache_paths = {")
@@ -554,22 +639,55 @@ def _build_cache_aware_step_lines(
         code_lines.append(f"    {repr(out_name)}: _cache_dir / {repr(cache_file)},")
     code_lines.append("}")
     code_lines.append(
-        "if all(_path.exists() for _path in _cache_paths.values()) and _cache_meta.get('signature') == _step_signature:"
+        "if all(_path.exists() for _path in _cache_paths.values()) "
+        "and _cache_meta.get('signature') == _step_signature:"
     )
     for out_name, var_name in cache_targets:
-        code_lines.append(f"    with _cache_paths[{repr(out_name)}].open('rb') as _f:")
+        code_lines.append(
+            f"    with _cache_paths[{repr(out_name)}].open('rb') as _f:"
+        )
         code_lines.append(f"        {var_name} = _pickle.load(_f)")
-    code_lines.extend(_indent_lines(_wrap_tracker_step(step_id, node, param_var_names=param_var_names), prefix="    "))
-    code_lines.append(f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature")
-    code_lines.append(f"    print({repr(f'Loaded cached outputs for {step_id}')})") 
+    if include_tracker:
+        code_lines.extend(
+            _indent_lines(
+                _wrap_tracker_step(
+                    step_id,
+                    node,
+                    param_var_names=param_var_names,
+                ),
+                prefix="    ",
+            )
+        )
+    code_lines.append(
+        f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature"
+    )
+    code_lines.append(f"    print({repr(f'Loaded cached outputs for {step_id}')})")
     code_lines.append("else:")
-    code_lines.extend(_indent_lines(_wrap_tracker_step(step_id, node, body_lines, param_var_names=param_var_names)))
+    if include_tracker:
+        code_lines.extend(
+            _indent_lines(
+                _wrap_tracker_step(
+                    step_id,
+                    node,
+                    body_lines,
+                    param_var_names=param_var_names,
+                )
+            )
+        )
+    else:
+        code_lines.extend(_indent_lines(body_lines))
     for out_name, var_name in cache_targets:
-        code_lines.append(f"    with _cache_paths[{repr(out_name)}].open('wb') as _f:")
+        code_lines.append(
+            f"    with _cache_paths[{repr(out_name)}].open('wb') as _f:"
+        )
         code_lines.append(f"        _pickle.dump({var_name}, _f)")
     code_lines.append("    with _cache_meta_path.open('w', encoding='utf-8') as _f:")
-    code_lines.append("        _json.dump({'signature': _step_signature}, _f, indent=2)")
-    code_lines.append(f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature")
+    code_lines.append(
+        "        _json.dump({'signature': _step_signature}, _f, indent=2)"
+    )
+    code_lines.append(
+        f"    _recipe_manager_step_signatures[{repr(step_id)}] = _step_signature"
+    )
     return code_lines
 
 
@@ -579,10 +697,12 @@ def _build_step_cells(
     var_name_map: dict[tuple[str, str], str],
     callable_aliases: dict[str, str],
     cache_aware: bool = False,
+    include_tracker: bool = True,
+    source: str | None = None,
 ) -> list[nbformat.NotebookNode]:
     cells: list[nbformat.NotebookNode] = []
 
-    cells.append(_md_cell(_build_step_markdown_source(step_id, node)))
+    cells.append(_md_cell(_build_step_markdown_source(step_id, node, source=source)))
 
     if cache_aware:
         code_lines = _build_cache_aware_step_lines(
@@ -590,6 +710,7 @@ def _build_step_cells(
             node,
             var_name_map,
             callable_aliases,
+            include_tracker=include_tracker,
         )
     else:
         code_lines = _build_step_execution_lines(
@@ -597,13 +718,16 @@ def _build_step_cells(
             node,
             var_name_map,
             callable_aliases,
+            include_tracker=include_tracker,
         )
 
     cells.append(_code_cell("\n".join(code_lines)))
     return cells
 
 
-def _build_save_recipe_cell(output_name: str = "pipeline_modified.yaml") -> nbformat.NotebookNode:
+def _build_save_recipe_cell(
+    output_name: str = "pipeline_modified.yaml",
+) -> nbformat.NotebookNode:
     return _code_cell(f"tracker.save_recipe({repr(output_name)})")
 
 
@@ -626,6 +750,47 @@ def _build_provenance_cell(dag: PipelineDAG) -> nbformat.NotebookNode:
         '        print(f"  {pkg}: {ver}")',
     ]
     return _code_cell("\n".join(lines))
+
+
+def _build_include_header_cell(
+    source: str,
+    step_ids: list[str],
+) -> nbformat.NotebookNode:
+    summary = ", ".join(step_ids) if step_ids else "no steps"
+    return _md_cell(f"## Included: {source}\n\nSteps: {summary}")
+
+
+def _build_include_footer_cell(source: str) -> nbformat.NotebookNode:
+    return _md_cell(f"*End of included section: {source}*")
+
+
+def _build_include_render_maps(
+    dag: PipelineDAG,
+) -> tuple[
+    dict[str, list[tuple[str, list[str]]]],
+    dict[str, list[str]],
+    dict[str, str],
+]:
+    starts: dict[str, list[tuple[str, list[str]]]] = {}
+    ends: dict[str, list[str]] = {}
+    sources_by_step: dict[str, str] = {}
+    topo_positions = {
+        step_id: index for index, step_id in enumerate(dag.topological_order)
+    }
+
+    for block in dag.recipe.include_blocks:
+        ordered_ids = [
+            step_id for step_id in block.step_ids if step_id in topo_positions
+        ]
+        if not ordered_ids:
+            continue
+        ordered_ids.sort(key=lambda step_id: topo_positions[step_id])
+        starts.setdefault(ordered_ids[0], []).append((block.source, ordered_ids))
+        ends.setdefault(ordered_ids[-1], []).append(block.source)
+        for step_id in ordered_ids:
+            sources_by_step[step_id] = block.source
+
+    return starts, ends, sources_by_step
 
 
 # ---------------------------------------------------------------------------
@@ -660,10 +825,12 @@ def _build_notebook_cells(
     recipe_path: str | None = opts.get("recipe_path")
     save_recipe_output: str = opts.get("save_recipe_output", "pipeline_modified.yaml")
     include_provenance: bool = opts.get("include_provenance", True)
+    include_tracker: bool = opts.get("include_tracker", True)
     cache_aware: bool = opts.get("cache_aware", False)
 
     var_name_map = _build_variable_name_map_from_dag(dag)
     callable_aliases = _build_callable_aliases(dag)
+    include_starts, include_ends, sources_by_step = _build_include_render_maps(dag)
     cells: list[nbformat.NotebookNode] = []
 
     cells.append(_build_title_cell(dag))
@@ -677,13 +844,17 @@ def _build_notebook_cells(
             dag,
             callable_aliases,
             include_provenance=include_provenance,
+            include_tracker=include_tracker,
         )
     )
-    cells.append(_build_tracker_init_cell(dag, recipe_path))
+    if include_tracker:
+        cells.append(_build_tracker_init_cell(dag, recipe_path))
     cells.append(_build_inputs_cell(dag, cache_aware=cache_aware))
 
     for step_id in dag.topological_order:
         node = dag.nodes[step_id]
+        for source, step_ids in include_starts.get(step_id, []):
+            cells.append(_build_include_header_cell(source, step_ids))
         cells.extend(
             _build_step_cells(
                 step_id,
@@ -691,10 +862,15 @@ def _build_notebook_cells(
                 var_name_map,
                 callable_aliases,
                 cache_aware=cache_aware,
+                include_tracker=include_tracker,
+                source=sources_by_step.get(step_id),
             )
         )
+        for source in reversed(include_ends.get(step_id, [])):
+            cells.append(_build_include_footer_cell(source))
 
-    cells.append(_build_save_recipe_cell(save_recipe_output))
+    if include_tracker:
+        cells.append(_build_save_recipe_cell(save_recipe_output))
     if include_provenance:
         cells.append(_build_provenance_cell(dag))
     return cells

@@ -1,0 +1,93 @@
+# HB1603 Acoustic Survey - Modular End-to-End Pipeline Recipe
+#
+# Composed variant of hb1603_survey_pipeline.yaml that delegates the
+# generic processing, visualization, and ML stages to dataset-agnostic
+# sub-recipes:
+#
+#   - processing_lvls_1_to_3.yaml  (raw -> Sv -> masks -> MVBS + lines)
+#   - visualization.yaml           (echogram plots)
+#   - machine_learning.yaml        (reshape, normalize, HDBSCAN, plots)
+#
+# This parent recipe owns everything HB1603-specific:
+#   - All path inputs and the line file path.
+#   - The data retrieval steps (query_ncei + download_raw).
+#   - The cruise id, record author, sonar model, and overlay line name
+#     passed into the processing sub-recipe.
+#
+# Usage: aa-recipe-manager generate hb1603_survey_pipeline_modular.yaml
+
+recipe:
+  name: "hb1603_survey_pipeline_modular"
+  description: "Modular HB1603 pipeline composed from generic sub-recipes."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  output_base:
+    type: path
+    default: "./nefsc_uc_e2_cal_outputs"
+  netcdf_output_folder:
+    type: path
+    default: "./NetCDF-files"
+  sv_output_folder:
+    type: path
+    default: "./Sv-files"
+  output_logs_folder:
+    type: path
+    default: "./Output-Logs"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+
+steps:
+
+  # Data retrieval (HB1603-specific)
+  - id: query_ncei
+    op: query_ncei_data
+    params:
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      filters:
+        CRUISE_NAME: "HB1603"
+
+  - id: download_raw
+    op: download_ncei_data
+    inputs:
+      results: ${query_ncei.ncei_results}
+    params:
+      output_dir: ${inputs.raw_input_folder}
+      companion_extensions:
+        - ".bot"
+        - ".idx"
+
+  # Generic processing pipeline (raw to MVBS with line overlay).
+  # Path inputs declared above are auto-merged into this include since
+  # the sub-recipe declares the same input names; only the cruise-level
+  # parameters need to be overridden explicitly.
+  - include: processing_lvls_1_to_3.yaml
+    input_overrides:
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+      line_name: "sw_dive_profile"
+
+  # Visualization wired to processing outputs.
+  - include: visualization.yaml
+    input_overrides:
+      sv_clean: ${mask_sparse.ds_Sv}
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile_fit"
+
+  # ML wired to processing outputs.
+  - include: machine_learning.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      sv_clean: ${mask_sparse.ds_Sv}
+      overlay_line_var: "sw_dive_profile"

@@ -187,6 +187,7 @@ EXPECTED_BUILTIN_OPS = {
     "embed_clustering_results",
     "plot_clustering_report",
     "log_seafloor_detection_stats",
+    "compute_per_cell_statistics",
 }
 
 

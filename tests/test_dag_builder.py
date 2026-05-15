@@ -13,6 +13,7 @@ import pytest
 
 from aa_recipe_manager.exceptions import RecipeValidationError
 from aa_recipe_manager.model.types import (
+  Dependency,
     ParamDeclaration,
     PortDeclaration,
     Recipe,
@@ -423,6 +424,90 @@ class TestMissingRequiredParam:
         )
         dag = build_dag(recipe, reg)
         assert dag.nodes["step1"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Custom steps
+# ---------------------------------------------------------------------------
+
+class TestCustomSteps:
+    def test_inline_custom_step_builds_spec_and_implementation(self, tmp_path):
+        content = """\
+            recipe:
+              name: custom_step_recipe
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: custom_filter
+                op: custom
+                custom_spec:
+                  description: Apply a custom filter
+                  callable_path: my_package.filters.apply_filter
+                  dependency:
+                    name: my-package
+                    version: ">=1.0"
+                    source: pypi
+                  outputs:
+                    ds_filtered:
+                      type: Dataset
+                  params:
+                    threshold:
+                      type: float
+                params:
+                  threshold: 0.5
+            """
+        recipe = load_recipe(_write_recipe(tmp_path, content))
+        dag = build_dag(recipe, Registry())
+
+        node = dag.nodes["custom_filter"]
+        assert node.spec.outputs["ds_filtered"].type == "Dataset"
+        assert node.implementation is not None
+        assert node.implementation.callable_path == "my_package.filters.apply_filter"
+        assert node.implementation.dependency == Dependency(
+            name="my-package",
+            version=">=1.0",
+            source="pypi",
+        )
+
+    def test_custom_step_extends_parent_spec(self):
+        reg = Registry()
+        reg.register_spec(
+            Spec(
+                op="parent_op",
+                description="Parent op",
+                inputs={"ds": PortDeclaration(type="Dataset", required=False)},
+                outputs={"ds_out": PortDeclaration(type="Dataset")},
+                params={"window": ParamDeclaration(type="int", default=5)},
+            )
+        )
+        recipe = Recipe(
+            name="extends_recipe",
+            version="1.0",
+            schema_version="1",
+            steps=[
+                Step(
+                    id="custom_parent",
+                    op="custom",
+                    custom_spec={
+                        "extends": "parent_op",
+                        "description": "Custom parent op",
+                        "callable_path": "my_package.ops.custom_parent",
+                        "params": {
+                            "threshold": {"type": "float", "default": 0.2}
+                        },
+                    },
+                )
+            ],
+        )
+
+        dag = build_dag(recipe, reg)
+        node = dag.nodes["custom_parent"]
+        assert "ds" in node.spec.inputs
+        assert "ds_out" in node.spec.outputs
+        assert "window" in node.spec.params
+        assert "threshold" in node.spec.params
+        assert node.implementation is not None
+        assert node.implementation.callable_path == "my_package.ops.custom_parent"
 
 
 # ---------------------------------------------------------------------------

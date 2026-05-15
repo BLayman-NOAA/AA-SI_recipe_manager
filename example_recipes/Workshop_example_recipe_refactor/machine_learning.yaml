@@ -1,0 +1,112 @@
+# Machine Learning Sub-Recipe
+#
+# Dataset-agnostic ML pipeline: reshape MVBS for ML, normalize, plot,
+# run HDBSCAN clustering, embed results back, and produce a clustering
+# report. Upstream datasets are supplied by the parent recipe via
+# input_overrides.
+
+recipe:
+  name: "machine_learning"
+  description: "ML reshape, normalization, and HDBSCAN clustering."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  mvbs_with_lines:
+    type: dataset
+    description: "MVBS dataset with line overlay variables added."
+  sv_clean:
+    type: dataset
+    description: "Clean Sv dataset used as a backdrop for ML plots."
+  overlay_line_var:
+    type: str
+    default: "overlay_line"
+    description: "Line variable to overlay on the clustering report plot."
+
+steps:
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${inputs.mvbs_with_lines}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+      feature_weights: [1, 1, 1, 1, 1]
+      per_group_methods:
+        depth: "minmax"
+
+  - id: plot_normalized_ml
+    op: plot_ml_echogram
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      ds_Sv: ${inputs.sv_clean}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size: 1400
+      min_samples: 4
+      sample_size: 1000000
+      cluster_selection_method: "eom"
+      use_hdbscan: true
+
+  - id: embed_results
+    op: embed_clustering_results
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: plot_clustering_report
+    op: plot_clustering_report
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      ds_Sv: ${inputs.sv_clean}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      plot_window: [0, 1800, 0, 515]
+      overlay_line_var: ${inputs.overlay_line_var}
+      cluster_colors:
+        - "#F700FF"
+        - "#35E200"
+        - "#5EFC9B"
+        - "#2F00FF"
+        - "#E60000"
+        - "#FFFB1C"
+        - "#000F92"
+        - "#E70000"
+        - "#00948D"
+        - "#5BECFFFF"
+        - "#4100B9FF"

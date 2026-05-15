@@ -405,8 +405,13 @@ def test_implementation_full():
 
 
 def test_implementation_missing_fields():
+    # `dependency` is optional (custom inline implementations may omit it),
+    # but `callable_path` remains required.
+    impl = Implementation(op="compute_sv", key="k", callable_path="a.b")
+    assert impl.dependency is None
+
     with pytest.raises(ValidationError):
-        Implementation(op="compute_sv", key="k", callable_path="a.b")  # no dependency
+        Implementation(op="compute_sv", key="k")  # missing callable_path
 
 
 # ---------------------------------------------------------------------------

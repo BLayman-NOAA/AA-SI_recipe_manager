@@ -143,7 +143,8 @@ def _resolve_step(
             )
             return None, None
         spec = _resolve_custom_spec(step, registry, errors)
-        return spec, None
+        impl = _resolve_custom_implementation(step)
+        return spec, impl
 
     try:
         spec = registry.get_spec(step.op)
@@ -222,6 +223,21 @@ def _resolve_custom_spec(
         inputs=merged_inputs,
         outputs=merged_outputs,
         params=merged_params,
+    )
+
+
+def _resolve_custom_implementation(step: Step) -> Implementation:
+    """Build an Implementation from a step's custom_spec declaration."""
+    cs = step.custom_spec
+    assert cs is not None
+    return Implementation(
+        op="custom",
+        key="custom",
+        callable_path=cs.callable_path,
+        dependency=cs.dependency,
+        param_map=cs.param_map or {},
+        output_map=cs.output_map or {},
+        default=True,
     )
 
 

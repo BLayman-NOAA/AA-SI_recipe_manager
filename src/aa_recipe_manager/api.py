@@ -100,6 +100,7 @@ def generate(
     output_format: str = "notebook",
     overwrite: bool = False,
     include_provenance: bool = True,
+    include_tracker: bool = True,
     implementation_override: str | None = None,
     cache_aware: bool = False,
     inputs: dict[str, Any] | None = None,
@@ -120,6 +121,9 @@ def generate(
         Overwrite the output file if it already exists.
     include_provenance:
         Include a provenance cell in the generated output.
+    include_tracker:
+        Include tracker setup, step wrappers, and recipe save cell in the
+        generated output.
     implementation_override:
         Force a specific implementation key for all steps.
     cache_aware:
@@ -153,6 +157,7 @@ def generate(
 
     options: dict[str, Any] = {
         "include_provenance": include_provenance,
+        "include_tracker": include_tracker,
         "cache_aware": cache_aware,
     }
     if recipe_path is not None:

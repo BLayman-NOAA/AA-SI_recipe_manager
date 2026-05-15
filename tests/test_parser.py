@@ -18,9 +18,6 @@ from aa_recipe_manager.resolver.params import (
     resolve_input_refs,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _write_recipe(tmp_path: Path, content: str) -> Path:
     p = tmp_path / "recipe.yaml"
@@ -43,10 +40,6 @@ MINIMAL_RECIPE = """\
     outputs: {}
     """
 
-
-# ---------------------------------------------------------------------------
-# load_recipe
-# ---------------------------------------------------------------------------
 
 class TestLoadRecipe:
     def test_valid_file_returns_recipe(self, tmp_path):
@@ -106,20 +99,165 @@ class TestLoadRecipe:
         assert recipe.steps[0].params == {}
 
 
-# ---------------------------------------------------------------------------
-# extract_edge_refs
-# ---------------------------------------------------------------------------
+class TestRecipeIncludes:
+    def test_include_flattens_child_steps(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: preprocess
+                op: query_ncei_data
+            """))
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+              - id: analyze
+                op: query_ncei_data
+                depends_on: [preprocess]
+            """)
+
+        recipe = load_recipe(parent)
+        assert [step.id for step in recipe.steps] == ["preprocess", "analyze"]
+        assert recipe.include_blocks[0].source == "child.yaml"
+        assert recipe.include_blocks[0].step_ids == ["preprocess"]
+
+    def test_include_input_overrides_remap_child_input_refs(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              raw_folder:
+                type: path
+            steps:
+              - id: preprocess
+                op: setup_raw_files
+                params:
+                  raw_input_folder: ${inputs.raw_folder}
+                  netcdf_output_folder: ${inputs.raw_folder}/netcdf
+            """))
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              my_raw_folder:
+                type: path
+            steps:
+              - include: child.yaml
+                input_overrides:
+                  raw_folder: ${inputs.my_raw_folder}
+            """)
+
+        recipe = load_recipe(parent)
+        params = recipe.steps[0].params
+        assert params["raw_input_folder"] == "${inputs.my_raw_folder}"
+        assert params["netcdf_output_folder"] == "${inputs.my_raw_folder}/netcdf"
+        assert "raw_folder" not in recipe.inputs
+
+    def test_include_merges_unoverridden_child_inputs(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              child_input:
+                type: str
+            steps:
+              - id: child_step
+                op: query_ncei_data
+                params:
+                  cruise: ${inputs.child_input}
+            """))
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+            """)
+
+        recipe = load_recipe(parent)
+        assert "child_input" in recipe.inputs
+
+    def test_include_step_id_collision_raises(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: duplicate
+                op: query_ncei_data
+            """))
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: duplicate
+                op: query_ncei_data
+              - include: child.yaml
+            """)
+
+        with pytest.raises(RecipeParseError, match="duplicate"):
+            load_recipe(parent)
+
+    def test_circular_include_raises(self, tmp_path):
+        first = tmp_path / "first.yaml"
+        second = tmp_path / "second.yaml"
+        first.write_text(textwrap.dedent("""\
+            recipe:
+              name: first
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: second.yaml
+            """))
+        second.write_text(textwrap.dedent("""\
+            recipe:
+              name: second
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: first.yaml
+            """))
+
+        with pytest.raises(RecipeParseError, match="Circular recipe include"):
+            load_recipe(first)
+
 
 class TestExtractEdgeRefs:
     def test_single_ref(self):
-        step = Step(id="b", op="compute_sv", inputs={"echodata": "${open_raw.echodata}"})
+        step = Step(
+            id="b",
+            op="compute_sv",
+            inputs={"echodata": "${open_raw.echodata}"},
+        )
         refs = extract_edge_refs(step)
         assert refs == [("open_raw", "echodata", "b", "echodata")]
 
     def test_list_refs_fan_in(self):
-        step = Step(id="c", op="combine_masks", inputs={
-            "masks": ["${a.mask}", "${b.mask}"]
-        })
+        step = Step(
+            id="c",
+            op="combine_masks",
+            inputs={"masks": ["${a.mask}", "${b.mask}"]},
+        )
         refs = extract_edge_refs(step)
         assert ("a", "mask", "c", "masks") in refs
         assert ("b", "mask", "c", "masks") in refs
@@ -134,10 +272,6 @@ class TestExtractEdgeRefs:
         assert extract_edge_refs(step) == []
 
 
-# ---------------------------------------------------------------------------
-# extract_input_refs
-# ---------------------------------------------------------------------------
-
 class TestExtractInputRefs:
     def test_full_match(self):
         result = extract_input_refs({"folder": "${inputs.raw_folder}"})
@@ -150,10 +284,6 @@ class TestExtractInputRefs:
     def test_empty(self):
         assert extract_input_refs({}) == {}
 
-
-# ---------------------------------------------------------------------------
-# resolve_input_refs
-# ---------------------------------------------------------------------------
 
 class TestResolveInputRefs:
     def test_full_substitution(self):

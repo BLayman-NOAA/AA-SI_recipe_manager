@@ -130,6 +130,13 @@ class Step(BaseModel):
     execution: StepExecutionHints | None = None
 
 
+class IncludeBlock(BaseModel):
+    """Metadata for steps contributed by an included recipe."""
+
+    source: str
+    step_ids: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Recipe (top-level file model)
 # ---------------------------------------------------------------------------
@@ -176,6 +183,7 @@ class Recipe(BaseModel):
     steps: list[Step] = Field(min_length=1)
     outputs: dict[str, OutputDeclaration] | None = None
     execution: ExecutionHints | None = None
+    include_blocks: list[IncludeBlock] = []
     schema_version: str
 
     @model_validator(mode="after")
@@ -212,7 +220,7 @@ class Implementation(BaseModel):
     op: str
     key: str
     callable_path: str
-    dependency: Dependency
+    dependency: Dependency | None = None
     param_map: dict[str, str] = {}
     output_map: dict[str, str] = {}
     default: bool = False

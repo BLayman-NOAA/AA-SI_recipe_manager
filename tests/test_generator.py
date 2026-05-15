@@ -110,6 +110,11 @@ def _read_notebook(path: Path) -> nbformat.NotebookNode:
         return nbformat.read(fh, as_version=4)
 
 
+def _combined_code_sources(path: Path) -> str:
+    nb = _read_notebook(path)
+    return "\n".join(c.source for c in nb.cells if c.cell_type == "code")
+
+
 class TestVariableNameMap:
     def test_unique_output_uses_output_name(self):
         """Steps with unique output names use just the output name."""
@@ -172,6 +177,66 @@ class TestVariableNameMap:
         assert name_map[("compute_calibrated_sv", "ds_Sv")] == "compute_calibrated_sv_ds_Sv"
 
 
+class TestIncludedRecipeNotebookRendering:
+    def test_included_steps_are_bracketed_and_annotated(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: preprocess
+                op: op_a
+            """))
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+              - id: analyze
+                op: op_b
+                inputs:
+                  x: ${preprocess.y}
+            """)
+        registry = Registry()
+        registry.register_spec(
+            Spec(
+                op="op_a",
+                description="Step A",
+                outputs={"y": PortDeclaration(type="Dataset")},
+            )
+        )
+        registry.register_spec(
+            Spec(
+                op="op_b",
+                description="Step B",
+                inputs={"x": PortDeclaration(type="Dataset")},
+            )
+        )
+
+        dag = build_dag(load_recipe(parent), registry)
+        notebook_path = _generate_notebook(dag, tmp_path)
+        markdown_sources = [
+            cell.source
+            for cell in _read_notebook(notebook_path).cells
+            if cell.cell_type == "markdown"
+        ]
+
+        assert any("## Included: child.yaml" in source for source in markdown_sources)
+        assert any("Steps: preprocess" in source for source in markdown_sources)
+        assert any(
+            "### Step: `preprocess` (from child.yaml)" in source
+            for source in markdown_sources
+        )
+        assert any(
+            "*End of included section: child.yaml*" in source
+            for source in markdown_sources
+        )
+
+
 class TestNotebookGeneration:
     def test_generates_valid_ipynb_json(self, tmp_path):
         dag = _build_four_step_dag(tmp_path)
@@ -213,6 +278,69 @@ class TestNotebookGeneration:
         combined = "\n".join(code_sources)
         assert "PipelineTracker" in combined
 
+    def test_include_tracker_false_omits_tracker_cells_and_wrappers(self, tmp_path):
+        dag = _build_four_step_dag(tmp_path)
+        out = tmp_path / "no_tracker.ipynb"
+        NotebookBackend().generate(
+            dag,
+            resolve_dependencies(dag),
+            out,
+            options={"include_tracker": False},
+        )
+        code_sources = _combined_code_sources(out)
+        assert "PipelineTracker" not in code_sources
+        assert "tracker =" not in code_sources
+        assert "tracker.step(" not in code_sources
+        assert "save_recipe" not in code_sources
+        assert "query_ncei_data(" in code_sources
+
+    def test_include_tracker_false_with_cache_aware_omits_tracker_wrappers(
+        self,
+        tmp_path,
+    ):
+        dep = Dependency(name="packaging", version=">=21.0", source="pypi")
+        spec = Spec(
+            op="compute_sv",
+            description="test",
+            outputs={"ds_Sv": PortDeclaration(type="Dataset")},
+        )
+        impl = Implementation(
+            op="compute_sv",
+            key="key",
+            callable_path="packaging.version.Version",
+            dependency=dep,
+            output_map={"ds_Sv": "__return__"},
+        )
+        recipe = Recipe(
+            name="test",
+            version="1.0",
+            schema_version="1",
+            steps=[Step(id="step1", op="compute_sv", params={"version": "1.0"})],
+        )
+        dag = PipelineDAG(
+            recipe=recipe,
+            nodes={
+                "step1": DAGNode(
+                    step=recipe.steps[0],
+                    spec=spec,
+                    implementation=impl,
+                )
+            },
+            edges=[],
+            topological_order=["step1"],
+        )
+        out = tmp_path / "cache_aware_no_tracker.ipynb"
+        NotebookBackend().generate(
+            dag,
+            resolve_dependencies(dag),
+            out,
+            options={"cache_aware": True, "include_tracker": False},
+        )
+        code_sources = _combined_code_sources(out)
+        assert '_recipe_manager_cache_dir = "outputs"' in code_sources
+        assert "with tracker.step(" not in code_sources
+        assert "ds_Sv = Version(version='1.0')" in code_sources
+
     def test_contains_inputs_cell(self, tmp_path):
         dag = _build_four_step_dag(tmp_path)
         out = _generate_notebook(dag, tmp_path)
@@ -245,6 +373,19 @@ class TestNotebookGeneration:
         code_sources = [c.source for c in nb.cells if c.cell_type == "code"]
         combined = "\n".join(code_sources)
         assert "ProvenanceRecorder" in combined
+
+    def test_public_api_can_omit_tracker(self, tmp_path):
+        raw_dir = tmp_path / "raw_files"
+        raw_dir.mkdir()
+        recipe_text = FOUR_STEP_RECIPE.replace(
+            "__RAW_INPUT_FOLDER__", raw_dir.as_posix()
+        ).replace(
+            "__NETCDF_OUTPUT_FOLDER__", (tmp_path / "netcdf").as_posix()
+        )
+        recipe_path = _write_recipe(tmp_path, recipe_text)
+        out = tmp_path / "api_no_tracker.ipynb"
+        public_api.generate(recipe_path, output=out, include_tracker=False)
+        assert "PipelineTracker" not in _combined_code_sources(out)
 
     def test_all_code_cells_are_syntactically_valid(self, tmp_path):
         dag = _build_four_step_dag(tmp_path)

@@ -1,0 +1,56 @@
+# Visualization Sub-Recipe
+#
+# Dataset-agnostic echogram visualization. Plots a clean Sv echogram and
+# an MVBS echogram with a line overlay. Upstream datasets are supplied
+# by the parent recipe via input_overrides.
+
+recipe:
+  name: "visualization"
+  description: "Echogram visualization (clean Sv and MVBS with line overlay)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  sv_clean:
+    type: dataset
+    description: "Clean Sv dataset (post mask + sparse-bin masking)."
+  mvbs_with_lines:
+    type: dataset
+    description: "MVBS dataset with line overlay variables added."
+  overlay_line_var:
+    type: str
+    default: "overlay_line_fit"
+    description: "Name of the line variable to plot on the MVBS echogram."
+
+steps:
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${inputs.sv_clean}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${inputs.mvbs_with_lines}
+      ds_Sv_source: ${inputs.sv_clean}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: ${inputs.overlay_line_var}
+          style:
+            color: "red"
+            linewidth: 3.5

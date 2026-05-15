@@ -65,8 +65,13 @@ class DryRunReport:
                     impl_str = f"{step.implementation_key or '?'} ({step.package_name or '?'})"
 
                 status_part = f" [{status_icon}]" if status_icon else ""
+                op_display = (
+                    f"{step.op} (custom / unregistered)"
+                    if step.op == "custom"
+                    else step.op
+                )
                 lines.append(
-                    f"    {i}. {step.step_id:<20} op: {step.op:<30} {impl_str}{status_part}"
+                    f"    {i}. {step.step_id:<20} op: {op_display:<30} {impl_str}{status_part}"
                 )
 
                 for param_name, value in step.params.items():

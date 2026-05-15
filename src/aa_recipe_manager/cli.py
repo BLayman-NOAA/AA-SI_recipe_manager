@@ -77,6 +77,12 @@ def main(log_level: str) -> None:
 @click.option("--implementation", default=None, help="Override implementation key for all steps.")
 @click.option("--overwrite", is_flag=True, default=False, help="Overwrite output if it exists.")
 @click.option("--no-provenance", is_flag=True, default=False, help="Omit the provenance cell.")
+@click.option(
+    "--no-tracker",
+    is_flag=True,
+    default=False,
+    help="Omit tracker setup and step wrappers.",
+)
 @click.option("--cache-aware", is_flag=True, default=False, help="Emit cache-aware step cells.")
 @click.option(
     "--input",
@@ -92,6 +98,7 @@ def generate_cmd(
     implementation: str | None,
     overwrite: bool,
     no_provenance: bool,
+    no_tracker: bool,
     cache_aware: bool,
     inputs: tuple[str, ...],
 ) -> None:
@@ -110,6 +117,7 @@ def generate_cmd(
             output_format=output_format,
             overwrite=overwrite,
             include_provenance=not no_provenance,
+            include_tracker=not no_tracker,
             implementation_override=implementation,
             cache_aware=cache_aware,
             inputs=parsed_inputs or None,

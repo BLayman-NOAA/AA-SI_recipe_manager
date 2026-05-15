@@ -132,6 +132,29 @@ class TestGenerateCommand:
         assert result.exit_code == 0, result.output
         assert "ProvenanceRecorder" not in out.read_text(encoding="utf-8")
 
+    def test_generate_no_tracker_omits_tracker_code(self, tmp_path):
+        recipe_path = _write_recipe(tmp_path)
+        out = tmp_path / "out.ipynb"
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["generate", str(recipe_path), "-o", str(out), "--no-tracker"],
+        )
+        assert result.exit_code == 0, result.output
+        notebook = json.loads(out.read_text(encoding="utf-8"))
+        sources: list[str] = []
+        for cell in notebook["cells"]:
+            source = cell["source"]
+            if isinstance(source, list):
+                sources.append("".join(source))
+            else:
+                sources.append(source)
+        combined = "\n".join(sources)
+        assert "PipelineTracker" not in combined
+        assert "tracker.step(" not in combined
+        assert "save_recipe" not in combined
+        assert "query_ncei_data(" in combined
+
     def test_generate_cache_aware_emits_cache_code(self, tmp_path):
         recipe_path = _write_recipe(tmp_path)
         out = tmp_path / "out.ipynb"

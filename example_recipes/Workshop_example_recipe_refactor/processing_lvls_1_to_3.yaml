@@ -1,0 +1,200 @@
+# Processing Levels 1 to 3 - Sub-Recipe
+#
+# Dataset-agnostic processing pipeline. Takes already-downloaded raw
+# acoustic files and produces a clean Sv dataset, MVBS, and an MVBS with
+# a line overlay applied. Intended to be included from a parent recipe
+# that handles data retrieval and supplies all path/cruise inputs.
+#
+# Convention: the parent recipe must provide a step named `download_raw`
+# (or any step with that id) that materializes files into
+# ${inputs.raw_input_folder} before this sub-recipe runs. The
+# `depends_on: [download_raw]` edges below enforce that ordering.
+
+recipe:
+  name: "processing_lvls_1_to_3"
+  description: "Raw acoustic files to clean Sv, MVBS, and line-overlay MVBS."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files."
+  cal_input_folder:
+    type: path
+    description: "Folder containing standardized calibration files."
+  output_base:
+    type: path
+    description: "Base output directory for calibration mapping artifacts."
+  netcdf_output_folder:
+    type: path
+    description: "Folder for NetCDF outputs."
+  sv_output_folder:
+    type: path
+    description: "Folder for Sv outputs."
+  output_logs_folder:
+    type: path
+    description: "Folder for JSON log outputs."
+  line_file_path:
+    type: path
+    description: "CSV line file used for the MVBS overlay."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK60"
+  line_name:
+    type: str
+    default: "overlay_line"
+
+steps:
+
+  - id: setup_raw_files
+    op: setup_raw_files
+    depends_on: [download_raw]
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      netcdf_output_folder: ${inputs.netcdf_output_folder}
+      sv_output_folder: ${inputs.sv_output_folder}
+      output_logs_folder: ${inputs.output_logs_folder}
+      raw_file_names: []
+      clear_previous_json_logs: true
+
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    depends_on: [download_raw]
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${inputs.output_base}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+
+  - id: open_raw
+    op: open_raw_files
+    inputs:
+      raw_file_paths: ${setup_raw_files.raw_file_paths}
+    params:
+      netcdf_output_folder: ${inputs.netcdf_output_folder}
+      sonar_model: ${inputs.sonar_model}
+      include_bot: true
+
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${open_raw.echodata}
+
+  - id: compute_sv
+    op: compute_sv
+    inputs:
+      echodata: ${open_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+
+  - id: log_seafloor_stats
+    op: log_seafloor_detection_stats
+    inputs:
+      echodata: ${open_raw.echodata}
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: detect_seafloor
+    op: detect_seafloor
+    depends_on: [log_seafloor_stats]
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${open_raw.echodata}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: 100
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: 10.0
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      frequencies_to_mask: [70, 120, 200]
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: remove_noise
+    op: remove_background_noise
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+
+  - id: compute_cell_stats
+    op: compute_per_cell_statistics
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: &bin_range "2m"
+      ping_time_bin: &bin_time "10s"
+      statistics:
+        - cv
+
+  - id: mask_sparse
+    op: mask_sparse_bins
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: *bin_range
+      ping_time_bin: *bin_time
+      nan_threshold: 0.6
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      range_bin: *bin_range
+      ping_time_bin: *bin_time
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: ${inputs.line_name}
