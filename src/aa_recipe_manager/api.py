@@ -330,6 +330,20 @@ def create_env(
             spec = dep.merged_specifier or ""
             regular_pkgs.append(f"{dep.name}{spec}" if spec else dep.name)
 
+    # Generated notebooks/scripts import aa_recipe_manager itself (for
+    # PipelineTracker, ProvenanceRecorder, etc.), and notebooks need
+    # ipykernel/ipywidgets to run interactively. env create otherwise only
+    # installs the per-step dependencies declared by the recipe, so add these
+    # runtime essentials here.
+    self_spec = _self_install_spec(local_overrides)
+    if self_spec is not None:
+        kind, value = self_spec
+        if kind == "editable":
+            local_pkgs.append(value)
+        else:
+            regular_pkgs.append(value)
+    regular_pkgs.extend(["ipykernel", "ipywidgets"])
+
     # Install all local (editable) packages in one pip call so pip can resolve
     # their interdependencies (e.g. aa-si-ml depends on aa-si-visualization).
     if local_pkgs:
@@ -350,3 +364,39 @@ def create_env(
         result.installed.extend(regular_pkgs)
 
     return result
+
+
+def _self_install_spec(
+    local_overrides: dict[str, str],
+) -> tuple[str, str] | None:
+    """Return how to install aa-recipe-manager into the new venv.
+
+    Returns ``("editable", path)`` to install from a local source tree, or
+    ``("pypi", "aa-recipe-manager==<version>")`` to install from PyPI. Returns
+    ``None`` if the user already supplied an override for this package.
+    """
+    if "aa-recipe-manager" in local_overrides:
+        # Caller is handling the install themselves via --local-pkg.
+        return None
+
+    import aa_recipe_manager as _self_pkg
+
+    pkg_dir = Path(_self_pkg.__file__).resolve().parent
+    # Walk up looking for a pyproject.toml that belongs to aa-recipe-manager.
+    for candidate in (pkg_dir.parent, pkg_dir.parent.parent):
+        pyproject = candidate / "pyproject.toml"
+        if pyproject.is_file():
+            try:
+                text = pyproject.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if 'name = "aa-recipe-manager"' in text:
+                return ("editable", str(candidate))
+
+    # Fall back to a versioned PyPI install.
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        return ("pypi", f"aa-recipe-manager=={_pkg_version('aa-recipe-manager')}")
+    except Exception:
+        return ("pypi", "aa-recipe-manager")

@@ -61,6 +61,20 @@ dask = [
 prefect = [
     "prefect>=2.0",
 ]
+# Bundle of every dependency declared by the built-in spec registry, plus the
+# Jupyter packages needed to run a generated notebook. Lets users install one
+# environment that can execute any recipe built from built-in specs without
+# running `aa-recipe-manager env create`. Keep this list in sync with the
+# `dependency:` blocks under src/aa_recipe_manager/registry/builtin/specs/.
+all-builtin-specs = [
+    "echopype>=0.6.0",
+    "aa-si-utils @ git+https://github.com/BLayman-NOAA/AA-SI_Utils.git",
+    "aa-si-calibration @ git+https://github.com/BLayman-NOAA/AA-SI_calibration.git",
+    "aa-si-ml @ git+https://github.com/BLayman-NOAA/AA-SI_ML.git",
+    "aa-si-visualization @ git+https://github.com/BLayman-NOAA/AA-SI_Visualization.git",
+    "ipykernel",
+    "ipywidgets",
+]
 
 [project.scripts]
 aa-recipe-manager = "aa_recipe_manager.cli:main"
@@ -79,6 +93,11 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aa_recipe_manager"]
+
+[tool.hatch.metadata]
+# Required so the `all-builtin-specs` extra can pull in dependencies hosted on
+# GitHub via `package @ git+https://…` direct references.
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
