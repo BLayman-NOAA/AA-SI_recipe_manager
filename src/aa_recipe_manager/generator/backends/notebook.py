@@ -199,32 +199,20 @@ def _build_imports_cell(
     return _code_cell("\n".join(lines))
 
 
-def _build_tracker_init_cell(
-    dag: PipelineDAG, recipe_path: str | None
-) -> nbformat.NotebookNode:
-    if recipe_path:
-        # Use pathlib.Path so forward/back-slash differences are handled at
-        # runtime rather than baking a repr() that double-escapes Windows paths.
-        src = (
-            "from pathlib import Path as _Path\n"
-            "from ruamel.yaml import YAML as _YAML\n"
-            f"with _Path({repr(recipe_path)}).open() as _f:\n"
-            "    _recipe_dict = _YAML().load(_f)\n"
-            "tracker = PipelineTracker(_recipe_dict)"
-        )
-    else:
-        import json as _json
-        # json.dumps produces clean JSON without Python repr() escaping; the
-        # notebook cell uses json.loads so Windows paths inside default values
-        # are not double-escaped by repr().
-        recipe_json = _json.dumps(
-            _json.loads(dag.recipe.model_dump_json()), ensure_ascii=False
-        )
-        src = (
-            "import json as _json\n"
-            f"_recipe_dict = _json.loads({repr(recipe_json)})\n"
-            "tracker = PipelineTracker(_recipe_dict)"
-        )
+def _build_tracker_init_cell(dag: PipelineDAG) -> nbformat.NotebookNode:
+    import json as _json
+
+    # The tracker needs the resolved recipe shape. For modular recipes, the
+    # source YAML contains include directives rather than the flattened steps
+    # emitted into the notebook.
+    recipe_json = _json.dumps(
+        _json.loads(dag.recipe.model_dump_json()), ensure_ascii=False
+    )
+    src = (
+        "import json as _json\n"
+        f"_recipe_dict = _json.loads({repr(recipe_json)})\n"
+        "tracker = PipelineTracker(_recipe_dict)"
+    )
     return _code_cell(src)
 
 
@@ -822,7 +810,6 @@ def _build_notebook_cells(
     options: dict[str, Any] | None = None,
 ) -> list[nbformat.NotebookNode]:
     opts = options or {}
-    recipe_path: str | None = opts.get("recipe_path")
     save_recipe_output: str = opts.get("save_recipe_output", "pipeline_modified.yaml")
     include_provenance: bool = opts.get("include_provenance", True)
     include_tracker: bool = opts.get("include_tracker", True)
@@ -848,7 +835,7 @@ def _build_notebook_cells(
         )
     )
     if include_tracker:
-        cells.append(_build_tracker_init_cell(dag, recipe_path))
+        cells.append(_build_tracker_init_cell(dag))
     cells.append(_build_inputs_cell(dag, cache_aware=cache_aware))
 
     for step_id in dag.topological_order:

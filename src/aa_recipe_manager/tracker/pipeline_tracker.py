@@ -76,8 +76,13 @@ class PipelineTracker:
 
         recipe = copy.deepcopy(self._original)
 
-        # Index original steps by id for lookup.
-        original_steps = {s["id"]: s for s in recipe.get("steps", [])}
+        # Index concrete original steps by id for lookup. Modular recipes can
+        # also contain include directives, which do not have step IDs.
+        original_steps = {
+            step["id"]: step
+            for step in recipe.get("steps", [])
+            if isinstance(step, dict) and "id" in step
+        }
 
         new_steps: list[dict[str, Any]] = []
         for step_id, op, recorded_params in self._executed:

@@ -185,6 +185,27 @@ class TestSaveRecipe:
         assert recipe.name == "test_pipeline"
         assert recipe.schema_version == "1"
 
+    def test_save_recipe_ignores_include_entries_when_indexing_original_steps(self):
+        recipe = {
+            "recipe": {
+                "name": "modular_pipeline",
+                "version": "1.0",
+                "schema_version": "1",
+            },
+            "steps": [
+                {"id": "query_ncei", "op": "query_ncei_data"},
+                {"include": "processing_lvls_1_to_3.yaml"},
+            ],
+        }
+        tracker = PipelineTracker(recipe)
+
+        with tracker.step("query_ncei", op="query_ncei_data"):
+            pass
+
+        serialized = tracker.save_recipe()
+        parsed = YAML().load(serialized)
+        assert [step["id"] for step in parsed["steps"]] == ["query_ncei"]
+
 
 class TestNonScalarParamWarning:
     def test_non_scalar_param_emits_warning(self):

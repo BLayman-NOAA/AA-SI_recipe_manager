@@ -236,6 +236,41 @@ class TestIncludedRecipeNotebookRendering:
             for source in markdown_sources
         )
 
+        def test_tracker_init_uses_flattened_recipe_for_includes(self, tmp_path):
+                child = tmp_path / "child.yaml"
+                child.write_text(textwrap.dedent("""\
+                        recipe:
+                            name: child
+                            version: "1.0"
+                            schema_version: "1"
+                        steps:
+                            - id: preprocess
+                                op: op_a
+                        """))
+                parent = _write_recipe(tmp_path, """\
+                        recipe:
+                            name: parent
+                            version: "1.0"
+                            schema_version: "1"
+                        steps:
+                            - include: child.yaml
+                        """)
+                registry = Registry()
+                registry.register_spec(Spec(op="op_a", outputs={"y": PortDeclaration()}))
+
+                dag = build_dag(load_recipe(parent), registry)
+                out = tmp_path / "pipeline.ipynb"
+                NotebookBackend().generate(
+                        dag,
+                        resolve_dependencies(dag),
+                        out,
+                        options={"recipe_path": str(parent)},
+                )
+
+                code_sources = _combined_code_sources(out)
+                assert "preprocess" in code_sources
+                assert "_Path(" not in code_sources
+
 
 class TestNotebookGeneration:
     def test_generates_valid_ipynb_json(self, tmp_path):
