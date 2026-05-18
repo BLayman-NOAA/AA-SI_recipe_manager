@@ -18,12 +18,16 @@ params:
     description: Folder containing raw acoustic files; used to determine channel configuration
     required: true
     constraints:
-      must_exist: true
+      # Auto-create if missing: typically populated by download_ncei_data.
+      create_if_missing: true
   cal_input_folder:
     type: path
     required: true
     constraints:
-      must_exist: true
+      # Auto-create if missing so dry-run does not fail before the user has
+      # placed calibration files. The step itself will error at run time if
+      # the folder is empty.
+      create_if_missing: true
   output_base:
     type: path
     required: true

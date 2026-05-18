@@ -294,10 +294,28 @@ def _validate_path_param(
         return
 
     must_exist = True
+    create_if_missing = False
     if param_decl.constraints is not None:
         must_exist = param_decl.constraints.get("must_exist", True)
+        create_if_missing = bool(param_decl.constraints.get("create_if_missing", False))
 
-    if must_exist and not Path(value).exists():
+    path_obj = Path(value)
+
+    # `create_if_missing` is a user-friendly convenience: if the directory does
+    # not yet exist, create it instead of failing validation. This lets a
+    # downstream step accept a folder that an upstream step will populate, and
+    # spares users from having to pre-create staging directories by hand.
+    if create_if_missing and not path_obj.exists():
+        try:
+            path_obj.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            errors.append(
+                f"Step '{step.id}': could not create path param '{param_name}' "
+                f"at {value}: {exc}"
+            )
+            return
+
+    if must_exist and not path_obj.exists():
         errors.append(
             f"Step '{step.id}': path param '{param_name}' does not exist: {value}"
         )

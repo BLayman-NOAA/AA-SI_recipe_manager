@@ -13,7 +13,9 @@ params:
     type: path
     required: true
     constraints:
-      must_exist: true
+      # Auto-create if missing: an upstream step (e.g. download_ncei_data)
+      # may populate this folder, and at dry-run time it may not yet exist.
+      create_if_missing: true
   netcdf_output_folder:
     type: path
     required: true

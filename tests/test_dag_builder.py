@@ -372,6 +372,76 @@ class TestPathValidation:
             tmp_path / "not-created-yet"
         )
 
+    def test_create_if_missing_auto_creates_directory(self, tmp_path):
+        reg = Registry()
+        reg.register_spec(
+            Spec(
+                op="needs_staging_dir",
+                description="Accepts a staging folder that should be auto-created",
+                params={
+                    "staging_dir": ParamDeclaration(
+                        type="path",
+                        required=True,
+                        constraints={"create_if_missing": True},
+                    )
+                },
+            )
+        )
+
+        target_dir = tmp_path / "auto" / "nested" / "staging"
+        recipe = Recipe(
+            name="auto_create",
+            version="1.0",
+            schema_version="1",
+            steps=[
+                Step(
+                    id="stager",
+                    op="needs_staging_dir",
+                    params={"staging_dir": str(target_dir)},
+                )
+            ],
+        )
+
+        assert not target_dir.exists()
+        build_dag(recipe, reg)
+        assert target_dir.is_dir()
+
+    def test_create_if_missing_is_a_noop_when_directory_already_exists(self, tmp_path):
+        reg = Registry()
+        reg.register_spec(
+            Spec(
+                op="needs_staging_dir",
+                description="Accepts a staging folder",
+                params={
+                    "staging_dir": ParamDeclaration(
+                        type="path",
+                        required=True,
+                        constraints={"create_if_missing": True},
+                    )
+                },
+            )
+        )
+
+        existing = tmp_path / "already_here"
+        existing.mkdir()
+        (existing / "marker.txt").write_text("keep me")
+
+        recipe = Recipe(
+            name="exists_ok",
+            version="1.0",
+            schema_version="1",
+            steps=[
+                Step(
+                    id="stager",
+                    op="needs_staging_dir",
+                    params={"staging_dir": str(existing)},
+                )
+            ],
+        )
+
+        build_dag(recipe, reg)
+        assert (existing / "marker.txt").read_text() == "keep me"
+
 
 # ---------------------------------------------------------------------------
 # Validation — missing required param
