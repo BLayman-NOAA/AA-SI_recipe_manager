@@ -228,13 +228,106 @@ class TestIncludedRecipeNotebookRendering:
         assert any("## Included: child.yaml" in source for source in markdown_sources)
         assert any("Steps: preprocess" in source for source in markdown_sources)
         assert any(
-            "### Step: `preprocess` (from child.yaml)" in source
+            "### Step: `preprocess`" in source
             for source in markdown_sources
         )
         assert any(
             "*End of included section: child.yaml*" in source
             for source in markdown_sources
         )
+
+    def test_parent_step_between_includes_renders_before_next_include(self, tmp_path):
+        spec_a = Spec(
+            op="op_a",
+            description="Step A",
+            outputs={"y": PortDeclaration(type="Dataset")},
+        )
+        spec_b = Spec(
+            op="op_b",
+            description="Step B",
+            inputs={"x": PortDeclaration(type="Dataset")},
+            outputs={"z": PortDeclaration(type="Dataset")},
+        )
+        spec_c = Spec(
+            op="op_c",
+            description="Step C",
+            inputs={"x": PortDeclaration(type="Dataset")},
+        )
+        steps = [
+            Step(id="preprocess", op="op_a"),
+            Step(id="overlay", op="op_b", inputs={"x": "${preprocess.y}"}),
+            Step(id="plot_clean", op="op_c", inputs={"x": "${preprocess.y}"}),
+            Step(id="plot_overlay", op="op_c", inputs={"x": "${overlay.z}"}),
+        ]
+        recipe = Recipe(
+            name="parent",
+            version="1.0",
+            schema_version="1",
+            steps=steps,
+            include_blocks=[
+                {"source": "processing.yaml", "step_ids": ["preprocess"]},
+                {"source": "visualization.yaml", "step_ids": ["plot_clean", "plot_overlay"]},
+            ],
+        )
+        dag = PipelineDAG(
+            recipe=recipe,
+            nodes={
+                "preprocess": DAGNode(step=steps[0], spec=spec_a),
+                "overlay": DAGNode(step=steps[1], spec=spec_b),
+                "plot_clean": DAGNode(step=steps[2], spec=spec_c),
+                "plot_overlay": DAGNode(step=steps[3], spec=spec_c),
+            },
+            edges=[
+                DAGEdge(
+                    source_step_id="preprocess",
+                    source_output="y",
+                    target_step_id="overlay",
+                    target_input="x",
+                ),
+                DAGEdge(
+                    source_step_id="preprocess",
+                    source_output="y",
+                    target_step_id="plot_clean",
+                    target_input="x",
+                ),
+                DAGEdge(
+                    source_step_id="overlay",
+                    source_output="z",
+                    target_step_id="plot_overlay",
+                    target_input="x",
+                ),
+            ],
+            topological_order=[
+                "preprocess",
+                "plot_clean",
+                "overlay",
+                "plot_overlay",
+            ],
+        )
+
+        notebook_path = _generate_notebook(dag, tmp_path)
+        markdown_sources = [
+            cell.source
+            for cell in _read_notebook(notebook_path).cells
+            if cell.cell_type == "markdown"
+        ]
+        overlay_index = next(
+            index
+            for index, source in enumerate(markdown_sources)
+            if "## Step: `overlay`" in source
+        )
+        visualization_index = next(
+            index
+            for index, source in enumerate(markdown_sources)
+            if "## Included: visualization.yaml" in source
+        )
+        plot_clean_index = next(
+            index
+            for index, source in enumerate(markdown_sources)
+            if "### Step: `plot_clean`" in source
+        )
+
+        assert overlay_index < visualization_index < plot_clean_index
 
         def test_tracker_init_uses_flattened_recipe_for_includes(self, tmp_path):
                 child = tmp_path / "child.yaml"
@@ -392,6 +485,48 @@ class TestNotebookGeneration:
         all_sources = "\n".join(c.source for c in nb.cells)
         for step_id in ["query_ncei", "download_raw", "setup_files", "open_raw"]:
             assert step_id in all_sources
+
+        def test_step_reference_params_render_as_variables(self, tmp_path):
+                recipe_text = """\
+                        recipe:
+                            name: param_ref_notebook
+                            version: "1.0"
+                            schema_version: "1"
+                        inputs:
+                            raw_file_names:
+                                type: list
+                                default: []
+                        steps:
+                            - id: query_ncei
+                                op: query_ncei_data
+                                params:
+                                    file_time_start: "2016-07-25T20:58"
+                                    file_time_end: "2016-07-25T21:45"
+                            - id: download_raw
+                                op: download_ncei_data
+                                inputs:
+                                    results: ${query_ncei.ncei_results}
+                                params:
+                                    output_dir: "./raw_file_inputs"
+                            - id: setup_files
+                                op: setup_raw_files
+                                params:
+                                    raw_input_folder: ${download_raw.download_dir}
+                                    netcdf_output_folder: "./NetCDF-files"
+                                    sv_output_folder: "./Sv-files"
+                                    output_logs_folder: "./Output-Logs"
+                                    raw_file_names: ${inputs.raw_file_names}
+                """
+                recipe = load_recipe(_write_recipe(tmp_path, recipe_text))
+                dag = build_dag(recipe, load_builtin_registry(), check_versions=False)
+                out = _generate_notebook(dag, tmp_path)
+                combined = _combined_code_sources(out)
+
+                assert combined.index("with tracker.step('download_raw'") < combined.index("with tracker.step('setup_files'")
+                assert "_setup_files__raw_input_folder = download_dir" in combined
+                assert "_setup_files__raw_input_folder = '${download_raw.download_dir}'" not in combined
+                assert "_setup_files__raw_file_names = []" in combined
+                assert "_setup_files__raw_file_names = '[]'" not in combined
 
     def test_save_recipe_cell_present(self, tmp_path):
         dag = _build_four_step_dag(tmp_path)

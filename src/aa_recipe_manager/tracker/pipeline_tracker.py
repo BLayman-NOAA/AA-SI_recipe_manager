@@ -47,11 +47,13 @@ class PipelineTracker:
         scalars) should be passed. Data objects are not recorded.
         """
         _scalar_types = (int, float, str, bool, type(None))
+        recorded: dict[str, Any] = {}
         if params:
             for key, value in params.items():
-                is_scalar = isinstance(value, _scalar_types) or (
-                    isinstance(value, list)
-                    and all(isinstance(i, _scalar_types) for i in value)
+                coerced = _coerce_param_value(value)
+                is_scalar = isinstance(coerced, _scalar_types) or (
+                    isinstance(coerced, list)
+                    and all(isinstance(i, _scalar_types) for i in coerced)
                 )
                 if not is_scalar:
                     warnings.warn(
@@ -61,7 +63,9 @@ class PipelineTracker:
                         UserWarning,
                         stacklevel=2,
                     )
-        self._executed.append((step_id, op, params or {}))
+                    continue
+                recorded[key] = coerced
+        self._executed.append((step_id, op, recorded))
         yield
 
     def save_recipe(self, path: str | Path | None = None) -> str:
@@ -134,3 +138,16 @@ def _normalize_recipe_dict(recipe_dict: dict[str, Any]) -> dict[str, Any]:
 
     normalized["recipe"] = recipe_meta
     return normalized
+
+
+def _coerce_param_value(value: Any) -> Any:
+    """Convert YAML-unfriendly scalar wrappers to plain Python scalars.
+
+    Path objects are stringified so that recorded params remain round-trippable
+    when serialized back to YAML. Lists are coerced element-wise.
+    """
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, list):
+        return [_coerce_param_value(item) for item in value]
+    return value

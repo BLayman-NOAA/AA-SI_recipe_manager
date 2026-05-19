@@ -18,20 +18,36 @@ _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
 
 def extract_edge_refs(step: Step) -> list[tuple[str, str, str, str]]:
-    """Return DAG edge tuples from a step's input wiring.
+    """Return DAG edge tuples from a step's input and param wiring.
 
     Each tuple is (source_step_id, source_output, target_step_id, target_input).
-    List-valued inputs (e.g. combine_masks.masks) produce one tuple per element.
+    List-valued inputs/params (e.g. combine_masks.masks) produce one tuple per
+    element. Param references are dependency edges too because generated code
+    must run the producer step before rendering/passing that param value.
     """
     edges = []
     for input_name, value in step.inputs.items():
-        items: list[Any] = value if isinstance(value, list) else [value]
-        for item in items:
-            if isinstance(item, str):
-                m = _EDGE_REF.match(item)
-                if m:
-                    edges.append((m.group(1), m.group(2), step.id, input_name))
+        for src_step, src_output in _iter_edge_refs(value):
+            edges.append((src_step, src_output, step.id, input_name))
+    for param_name, value in step.params.items():
+        for src_step, src_output in _iter_edge_refs(value):
+            edges.append((src_step, src_output, step.id, param_name))
     return edges
+
+
+def _iter_edge_refs(value: Any) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    if isinstance(value, str):
+        match = _EDGE_REF.match(value)
+        if match and match.group(1) != "inputs":
+            refs.append((match.group(1), match.group(2)))
+    elif isinstance(value, list):
+        for item in value:
+            refs.extend(_iter_edge_refs(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            refs.extend(_iter_edge_refs(item))
+    return refs
 
 
 def extract_input_refs(params: dict[str, Any]) -> dict[str, str]:
@@ -61,6 +77,11 @@ def resolve_input_refs(
     resolved: dict[str, Any] = {}
     for key, value in params.items():
         if isinstance(value, str) and "${inputs." in value:
+            full_match = _INPUT_REF.fullmatch(value)
+            if full_match:
+                input_value = input_values.get(full_match.group(1))
+                resolved[key] = value if input_value is None else input_value
+                continue
 
             def _replace(m: re.Match, _iv: dict = input_values) -> str:
                 sub = _iv.get(m.group(1))

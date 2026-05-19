@@ -19,6 +19,12 @@ inputs:
   sv_clean:
     type: dataset
     description: "Clean Sv dataset used as a backdrop for ML plots."
+  echodata:
+    type: echodata
+    description: "EchoData object used for auxiliary ML features."
+  sv_cell_stats:
+    type: dataset
+    description: "Sv dataset with per-cell statistics used as auxiliary ML features."
   overlay_line_var:
     type: str
     default: "overlay_line"
@@ -36,10 +42,22 @@ steps:
       feature_strategy: "mean_centered"
       baseline_channel: 0
 
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      echodata: ${inputs.echodata}
+      ds_sv: ${inputs.sv_cell_stats}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - depth
+        - cell_cv
+
   - id: normalize_ml
     op: normalize_ml_data
     inputs:
-      ds_ml: ${reshape_ml.ds_ml_ready}
+      ds_ml: ${add_aux_features.ds_ml_ready}
     params:
       method: "flatten"
       dataset_name: "ml_dataset"

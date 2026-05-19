@@ -4,7 +4,7 @@
 # generic processing, visualization, and ML stages to dataset-agnostic
 # sub-recipes:
 #
-#   - processing_lvls_1_to_3.yaml  (raw -> Sv -> masks -> MVBS + lines)
+#   - processing_lvls_1_to_3.yaml  (raw -> Sv -> masks -> MVBS)
 #   - visualization.yaml           (echogram plots)
 #   - machine_learning.yaml        (reshape, normalize, HDBSCAN, plots)
 #
@@ -79,6 +79,14 @@ steps:
       cruise_id: "HB1603"
       record_author: "<Your Name>"
       sonar_model: "EK60"
+
+  # Dataset-specific line overlay applied by the parent recipe.
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
       line_name: "sw_dive_profile"
 
   # Visualization wired to processing outputs.
@@ -93,4 +101,6 @@ steps:
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
       sv_clean: ${mask_sparse.ds_Sv}
+      echodata: ${open_raw.echodata}
+      sv_cell_stats: ${compute_cell_stats.ds_Sv}
       overlay_line_var: "sw_dive_profile"

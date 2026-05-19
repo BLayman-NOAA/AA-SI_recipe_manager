@@ -15,6 +15,32 @@ A recipe is a YAML file that describes a complete data processing pipeline as a 
 
 ## Installation
 
+### Google Cloud Workstations
+
+Run the following command in a terminal to clone the repository, create a Conda
+environment, install the recipe manager with all built-in recipe dependencies,
+and register the environment as a Jupyter kernel:
+
+```bash
+cd ~ && \
+git clone https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git && \
+cd AA-SI_recipe_manager && \
+source "$(conda info --base)/etc/profile.d/conda.sh" && \
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+conda create -y -n recipe-manager python=3.12 && \
+conda activate recipe-manager && \
+python -m pip install --upgrade pip && \
+python -m pip install -e ".[all-builtin-specs]" && \
+python -m ipykernel install --user --name recipe-manager --display-name "Python (recipe-manager)"
+```
+
+After installation, select **Python (recipe-manager)** as the notebook kernel.
+If `conda tos accept` is not available in your Conda installation, skip those
+two lines and rerun the command starting at `conda create`.
+
+### Development Install
+
 ```bash
 # Clone the repository
 git clone https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git

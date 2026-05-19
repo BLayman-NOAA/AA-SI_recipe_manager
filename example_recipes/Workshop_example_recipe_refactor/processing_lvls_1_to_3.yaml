@@ -1,9 +1,9 @@
 # Processing Levels 1 to 3 - Sub-Recipe
 #
 # Dataset-agnostic processing pipeline. Takes already-downloaded (or
-# user-provided) raw acoustic files and produces a clean Sv dataset, MVBS,
-# and an MVBS with a line overlay applied. Intended to be included from a
-# parent recipe that supplies all path/cruise inputs.
+# user-provided) raw acoustic files and produces a clean Sv dataset and MVBS.
+# Intended to be included from a parent recipe that supplies all path/cruise
+# inputs and any dataset-specific overlays.
 #
 # Two supported usage modes:
 #   - "BYO folder": parent passes a literal raw_input_folder pointing at a
@@ -16,7 +16,7 @@
 
 recipe:
   name: "processing_lvls_1_to_3"
-  description: "Raw acoustic files to clean Sv, MVBS, and line-overlay MVBS."
+  description: "Raw acoustic files to clean Sv and MVBS."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -40,9 +40,6 @@ inputs:
   output_logs_folder:
     type: path
     description: "Folder for JSON log outputs."
-  line_file_path:
-    type: path
-    description: "CSV line file used for the MVBS overlay."
   cruise_id:
     type: str
     description: "Cruise identifier used in calibration mapping."
@@ -52,9 +49,6 @@ inputs:
   sonar_model:
     type: str
     default: "EK60"
-  line_name:
-    type: str
-    default: "overlay_line"
   raw_file_names:
     type: list
     default: []
@@ -200,11 +194,3 @@ steps:
     params:
       range_bin: *bin_range
       ping_time_bin: *bin_time
-
-  - id: add_line_overlay
-    op: add_line_overlay
-    inputs:
-      ds: ${compute_mvbs.ds_MVBS}
-    params:
-      line_file_path: ${inputs.line_file_path}
-      line_name: ${inputs.line_name}

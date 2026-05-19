@@ -153,6 +153,50 @@ class TestFourStepPipeline:
         dag = build_dag(recipe, reg)
         assert dag.nodes["open_raw"].spec is not None
 
+    def test_step_reference_in_param_creates_dependency_edge(self, tmp_path):
+        content = """\
+            recipe:
+              name: param_edge_pipeline
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              raw_file_names:
+                type: list
+                default: []
+            steps:
+              - id: query_ncei
+                op: query_ncei_data
+                params:
+                  file_time_start: "2016-07-25T20:58"
+                  file_time_end: "2016-07-25T21:45"
+              - id: download_raw
+                op: download_ncei_data
+                inputs:
+                  results: ${query_ncei.ncei_results}
+                params:
+                  output_dir: "./raw_file_inputs"
+              - id: setup_files
+                op: setup_raw_files
+                params:
+                  raw_input_folder: ${download_raw.download_dir}
+                  netcdf_output_folder: "./NetCDF-files"
+                  sv_output_folder: "./Sv-files"
+                  output_logs_folder: "./Output-Logs"
+                  raw_file_names: ${inputs.raw_file_names}
+        """
+        recipe = load_recipe(_write_recipe(tmp_path, content))
+        dag = build_dag(recipe, load_builtin_registry(), check_versions=False)
+
+        assert dag.topological_order.index("download_raw") < dag.topological_order.index("setup_files")
+        assert any(
+            edge.source_step_id == "download_raw"
+            and edge.source_output == "download_dir"
+            and edge.target_step_id == "setup_files"
+            and edge.target_input == "raw_input_folder"
+            for edge in dag.edges
+        )
+        assert dag.nodes["setup_files"].resolved_params["raw_file_names"] == []
+
 
 # ---------------------------------------------------------------------------
 # Validation — unknown op

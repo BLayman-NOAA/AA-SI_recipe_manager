@@ -61,16 +61,26 @@ def _render_single_ref(raw: Any, var_name_map: dict[tuple[str, str], str]) -> st
 
 
 def _render_param_value(raw: Any, var_name_map: dict[tuple[str, str], str]) -> str:
-    """Render a param value, resolving ${inputs.x} references if present."""
+    """Render a param value, resolving ${inputs.x} and ${step.output} refs."""
     if not isinstance(raw, str):
         return repr(raw)
     # Full-match ${inputs.x}
     m = _INPUT_REF.fullmatch(raw)
     if m:
         return m.group(1)
+    m_step = _STEP_REF.fullmatch(raw)
+    if m_step:
+        step_id, output_name = m_step.group(1), m_step.group(2)
+        return var_name_map.get((step_id, output_name), f"{step_id}_{output_name}")
     # Partial interpolation: "some/${inputs.x}/path" -> f-string
-    if "${inputs." in raw:
+    if "${inputs." in raw or "${" in raw:
         result = _INPUT_REF.sub(r"{\1}", raw)
+
+        def _replace_step_ref(match: re.Match) -> str:
+            key = (match.group(1), match.group(2))
+            return "{" + var_name_map.get(key, f"{key[0]}_{key[1]}") + "}"
+
+        result = _STEP_REF.sub(_replace_step_ref, result)
         return f'f"{result}"'
     return repr(raw)
 
@@ -251,9 +261,8 @@ def _build_step_markdown_source(
     node: DAGNode,
     source: str | None = None,
 ) -> str:
-    title = f"### Step: `{step_id}`"
-    if source:
-        title = f"{title} (from {source})"
+    heading_prefix = "###" if source else "##"
+    title = f"{heading_prefix} Step: `{step_id}`"
     op_label = f"`{node.spec.op}`"
     if node.spec.op == "custom":
         op_label = f"{op_label} (custom / unregistered)"
@@ -296,6 +305,7 @@ def _param_var_name(step_id: str, param_name: str) -> str:
 def _build_param_var_declarations(
     step_id: str,
     node: DAGNode,
+    var_name_map: dict[tuple[str, str], str],
 ) -> tuple[dict[str, str], list[str]]:
     """Return (param_var_names, declaration_lines) for scalar params.
 
@@ -312,7 +322,7 @@ def _build_param_var_declarations(
     }
     decl_lines = ["# --- Parameters ---"]
     for param_name, var_name in param_var_names.items():
-        value_expr = _render_param_value(scalar_params[param_name], {})
+        value_expr = _render_param_value(scalar_params[param_name], var_name_map)
         decl_lines.append(f"{var_name} = {value_expr}")
     decl_lines.append("")
     return param_var_names, decl_lines
@@ -433,7 +443,9 @@ def _build_step_execution_lines(
     if node.implementation is None:
         return [f"# TODO: no implementation found for op '{node.spec.op}'"]
 
-    param_var_names, decl_lines = _build_param_var_declarations(step_id, node)
+    param_var_names, decl_lines = _build_param_var_declarations(
+        step_id, node, var_name_map
+    )
     body_lines = _build_step_body_lines(
         step_id, node, var_name_map, callable_aliases, param_var_names=param_var_names
     )
@@ -446,13 +458,23 @@ def _build_step_execution_lines(
 
 def _collect_dependency_step_ids(node: DAGNode) -> list[str]:
     dependency_ids = set(node.step.depends_on or [])
+
+    def _collect(value: Any) -> None:
+        if isinstance(value, str):
+            match = _STEP_REF.fullmatch(value)
+            if match:
+                dependency_ids.add(match.group(1))
+        elif isinstance(value, list):
+            for item in value:
+                _collect(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                _collect(item)
+
     for raw_value in node.step.inputs.values():
-        values = raw_value if isinstance(raw_value, list) else [raw_value]
-        for value in values:
-            if isinstance(value, str):
-                match = _STEP_REF.fullmatch(value)
-                if match:
-                    dependency_ids.add(match.group(1))
+        _collect(raw_value)
+    for raw_value in node.step.params.values():
+        _collect(raw_value)
     return sorted(dependency_ids)
 
 
@@ -491,7 +513,9 @@ def _build_cache_aware_step_lines(
     callable_aliases: dict[str, str],
     include_tracker: bool = True,
 ) -> list[str]:
-    param_var_names, decl_lines = _build_param_var_declarations(step_id, node)
+    param_var_names, decl_lines = _build_param_var_declarations(
+        step_id, node, var_name_map
+    )
     body_lines = _build_step_body_lines(
         step_id,
         node,
@@ -754,6 +778,7 @@ def _build_include_footer_cell(source: str) -> nbformat.NotebookNode:
 
 def _build_include_render_maps(
     dag: PipelineDAG,
+    step_order: list[str],
 ) -> tuple[
     dict[str, list[tuple[str, list[str]]]],
     dict[str, list[str]],
@@ -762,23 +787,46 @@ def _build_include_render_maps(
     starts: dict[str, list[tuple[str, list[str]]]] = {}
     ends: dict[str, list[str]] = {}
     sources_by_step: dict[str, str] = {}
-    topo_positions = {
-        step_id: index for index, step_id in enumerate(dag.topological_order)
-    }
+    step_positions = {step_id: index for index, step_id in enumerate(step_order)}
 
     for block in dag.recipe.include_blocks:
         ordered_ids = [
-            step_id for step_id in block.step_ids if step_id in topo_positions
+            step_id for step_id in block.step_ids if step_id in step_positions
         ]
         if not ordered_ids:
             continue
-        ordered_ids.sort(key=lambda step_id: topo_positions[step_id])
+        ordered_ids.sort(key=lambda step_id: step_positions[step_id])
         starts.setdefault(ordered_ids[0], []).append((block.source, ordered_ids))
         ends.setdefault(ordered_ids[-1], []).append(block.source)
         for step_id in ordered_ids:
             sources_by_step[step_id] = block.source
 
     return starts, ends, sources_by_step
+
+
+def _build_notebook_step_order(dag: PipelineDAG) -> list[str]:
+    """Return a dependency-safe render order that prefers recipe step order.
+
+    The DAG topological order is valid for execution, but equally valid sorts can
+    interleave independent parent steps with included sections. For notebooks,
+    the recipe-authored order is easier to read when it already satisfies all
+    dependency edges.
+    """
+    recipe_order = [step.id for step in dag.recipe.steps if step.id in dag.nodes]
+    topo_set = set(dag.topological_order)
+    if set(recipe_order) != topo_set:
+        return dag.topological_order
+
+    positions = {step_id: index for index, step_id in enumerate(recipe_order)}
+    for edge in dag.edges:
+        source_pos = positions.get(edge.source_step_id)
+        target_pos = positions.get(edge.target_step_id)
+        if source_pos is None or target_pos is None:
+            continue
+        if source_pos >= target_pos:
+            return dag.topological_order
+
+    return recipe_order
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +865,10 @@ def _build_notebook_cells(
 
     var_name_map = _build_variable_name_map_from_dag(dag)
     callable_aliases = _build_callable_aliases(dag)
-    include_starts, include_ends, sources_by_step = _build_include_render_maps(dag)
+    step_order = _build_notebook_step_order(dag)
+    include_starts, include_ends, sources_by_step = _build_include_render_maps(
+        dag, step_order
+    )
     cells: list[nbformat.NotebookNode] = []
 
     cells.append(_build_title_cell(dag))
@@ -838,7 +889,7 @@ def _build_notebook_cells(
         cells.append(_build_tracker_init_cell(dag))
     cells.append(_build_inputs_cell(dag, cache_aware=cache_aware))
 
-    for step_id in dag.topological_order:
+    for step_id in step_order:
         node = dag.nodes[step_id]
         for source, step_ids in include_starts.get(step_id, []):
             cells.append(_build_include_header_cell(source, step_ids))
