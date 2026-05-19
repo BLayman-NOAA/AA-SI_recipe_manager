@@ -61,6 +61,7 @@ steps:
     op: download_ncei_data
     inputs:
       results: ${query_ncei.ncei_results}
+      query_label: ${query_ncei.query_label}
     params:
       output_dir: ${inputs.raw_input_folder}
       companion_extensions:
@@ -68,11 +69,13 @@ steps:
         - ".idx"
 
   # Generic processing pipeline (raw to MVBS with line overlay).
-  # Path inputs declared above are auto-merged into this include since
-  # the sub-recipe declares the same input names; only the cruise-level
-  # parameters need to be overridden explicitly.
+  # The raw_input_folder override points at the per-query subfolder created
+  # by download_raw, so processing only sees this query's files. The value
+  # reference also creates the DAG edge that orders processing after the
+  # download step.
   - include: processing_lvls_1_to_3.yaml
     input_overrides:
+      raw_input_folder: ${download_raw.download_dir}
       cruise_id: "HB1603"
       record_author: "<Your Name>"
       sonar_model: "EK60"

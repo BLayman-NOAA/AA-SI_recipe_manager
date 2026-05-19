@@ -83,8 +83,17 @@ def hb1603_recipe_path():
 
 
 @pytest.fixture
-def hb1603_example_inputs(hb1603_recipe_path):
-    recipe_dir = hb1603_recipe_path.parent
+def hb1603_extra_calibration_recipe_path():
+    return (
+        Path(__file__).parent.parent
+        / "example_recipes"
+        / "Workshop_example_recipe_refactor"
+        / "extra_calibration_hb1603_survey_pipeline.yaml"
+    )
+
+
+def _hb1603_example_inputs(recipe_path):
+    recipe_dir = recipe_path.parent
     return {
         "raw_input_folder": str(recipe_dir / "raw_file_inputs"),
         "cal_input_folder": str(recipe_dir / "calibration_files" / "HB201607_cal"),
@@ -98,6 +107,16 @@ def hb1603_example_inputs(hb1603_recipe_path):
             / "SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
         ),
     }
+
+
+@pytest.fixture
+def hb1603_example_inputs(hb1603_recipe_path):
+    return _hb1603_example_inputs(hb1603_recipe_path)
+
+
+@pytest.fixture
+def hb1603_extra_calibration_inputs(hb1603_extra_calibration_recipe_path):
+    return _hb1603_example_inputs(hb1603_extra_calibration_recipe_path)
 
 
 @pytest.fixture

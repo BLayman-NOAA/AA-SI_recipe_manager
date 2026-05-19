@@ -1,0 +1,76 @@
+# BYO Folder Example - Modular Pipeline Recipe
+#
+# Companion to hb1603_survey_pipeline_modular.yaml that demonstrates the
+# "bring your own folder" mode: no NCEI query or download is performed.
+# The user points raw_input_folder at a directory that already contains
+# .raw files (e.g. files copied from a vessel or a previous download)
+# and the processing sub-recipe globs that folder directly.
+#
+# To restrict processing to a subset of files in the folder, set
+# raw_file_names to a list of filenames within raw_input_folder. Leave it
+# as an empty list to process every .raw file in the folder.
+#
+# Usage: aa-recipe-manager generate byo_folder_example.yaml
+
+recipe:
+  name: "byo_folder_example"
+  description: >
+    BYO-folder variant of the modular pipeline; no NCEI download, just
+    process a directory the user already has on disk.
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs/HB1603_local"
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  output_base:
+    type: path
+    default: "./nefsc_uc_e2_cal_outputs"
+  netcdf_output_folder:
+    type: path
+    default: "./NetCDF-files"
+  sv_output_folder:
+    type: path
+    default: "./Sv-files"
+  output_logs_folder:
+    type: path
+    default: "./Output-Logs"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  # Optional subset of files within raw_input_folder. Leave empty to use
+  # every .raw file in the folder.
+  raw_file_names:
+    type: list
+    default: []
+
+steps:
+
+  # Generic processing pipeline. No query/download step - the parent's
+  # raw_input_folder is used directly. The optional raw_file_names input
+  # is forwarded so users can restrict processing to a subset.
+  - include: processing_lvls_1_to_3.yaml
+    input_overrides:
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+      line_name: "sw_dive_profile"
+
+  # Visualization wired to processing outputs.
+  - include: visualization.yaml
+    input_overrides:
+      sv_clean: ${mask_sparse.ds_Sv}
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile_fit"
+
+  # ML wired to processing outputs.
+  - include: machine_learning.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      sv_clean: ${mask_sparse.ds_Sv}
+      overlay_line_var: "sw_dive_profile"

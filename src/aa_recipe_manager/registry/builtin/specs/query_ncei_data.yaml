@@ -8,6 +8,12 @@ outputs:
   ncei_results:
     type: list
     description: List of NCEI file metadata records (dicts) matching the query
+  query_label:
+    type: str
+    description: >
+      Readable, folder-safe slug derived from the query parameters. Intended
+      to be passed to download_ncei_data so that each query writes into its
+      own subfolder under output_dir.
 params:
   file_time_start:
     type: str
@@ -32,4 +38,5 @@ implementations:
       source: git
       url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     output_map:
-      ncei_results: __return__
+      ncei_results: "['records']"
+      query_label: "['query_label']"

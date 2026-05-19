@@ -1,14 +1,18 @@
 # Processing Levels 1 to 3 - Sub-Recipe
 #
-# Dataset-agnostic processing pipeline. Takes already-downloaded raw
-# acoustic files and produces a clean Sv dataset, MVBS, and an MVBS with
-# a line overlay applied. Intended to be included from a parent recipe
-# that handles data retrieval and supplies all path/cruise inputs.
+# Dataset-agnostic processing pipeline. Takes already-downloaded (or
+# user-provided) raw acoustic files and produces a clean Sv dataset, MVBS,
+# and an MVBS with a line overlay applied. Intended to be included from a
+# parent recipe that supplies all path/cruise inputs.
 #
-# Convention: the parent recipe must provide a step named `download_raw`
-# (or any step with that id) that materializes files into
-# ${inputs.raw_input_folder} before this sub-recipe runs. The
-# `depends_on: [download_raw]` edges below enforce that ordering.
+# Two supported usage modes:
+#   - "BYO folder": parent passes a literal raw_input_folder pointing at a
+#     directory the user already has. Optionally pass raw_file_names to
+#     restrict processing to a subset of files within that folder.
+#   - "Download": parent runs query_ncei_data + download_ncei_data and
+#     overrides raw_input_folder with ${download_raw.download_dir}. The
+#     value reference automatically creates a DAG edge so this sub-recipe
+#     runs after the download step (no depends_on needed).
 
 recipe:
   name: "processing_lvls_1_to_3"
@@ -51,23 +55,29 @@ inputs:
   line_name:
     type: str
     default: "overlay_line"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder". Note that
+      generate_standardized_cal_mapping always scans the full folder; this
+      input only constrains the set of files that get opened and processed.
 
 steps:
 
   - id: setup_raw_files
     op: setup_raw_files
-    depends_on: [download_raw]
     params:
       raw_input_folder: ${inputs.raw_input_folder}
       netcdf_output_folder: ${inputs.netcdf_output_folder}
       sv_output_folder: ${inputs.sv_output_folder}
       output_logs_folder: ${inputs.output_logs_folder}
-      raw_file_names: []
+      raw_file_names: ${inputs.raw_file_names}
       clear_previous_json_logs: true
 
   - id: gen_cal_mapping
     op: generate_standardized_cal_mapping
-    depends_on: [download_raw]
     params:
       raw_input_folder: ${inputs.raw_input_folder}
       cal_input_folder: ${inputs.cal_input_folder}

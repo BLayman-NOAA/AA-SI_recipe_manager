@@ -60,6 +60,7 @@ steps:
     op: download_ncei_data
     inputs:
       results: ${query_ncei.ncei_results}
+      query_label: ${query_ncei.query_label}
     params:
       output_dir: ${inputs.raw_input_folder}
       companion_extensions:
@@ -69,11 +70,11 @@ steps:
   # --------------------------------------------------------------------------
   # File setup and calibration mapping
   # --------------------------------------------------------------------------
+  # Both steps point at the per-query subfolder created by download_raw.
   - id: setup_raw_files
     op: setup_raw_files
-    depends_on: [download_raw]
     params:
-      raw_input_folder: ${inputs.raw_input_folder}
+      raw_input_folder: ${download_raw.download_dir}
       netcdf_output_folder: ${inputs.netcdf_output_folder}
       sv_output_folder: ${inputs.sv_output_folder}
       output_logs_folder: ${inputs.output_logs_folder}
@@ -82,9 +83,8 @@ steps:
 
   - id: gen_cal_mapping
     op: generate_standardized_cal_mapping
-    depends_on: [download_raw]
     params:
-      raw_input_folder: ${inputs.raw_input_folder}
+      raw_input_folder: ${download_raw.download_dir}
       cal_input_folder: ${inputs.cal_input_folder}
       output_base: ${inputs.output_base}
       cruise_id: "HB1603"

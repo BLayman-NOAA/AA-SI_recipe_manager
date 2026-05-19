@@ -283,7 +283,10 @@ class TestBuiltinLoader:
 
         download_impl = reg.get_implementation("download_ncei_data")
         assert download_impl.callable_path == "aa_si_utils.data_retrieval.download_ncei_data"
-        assert download_impl.output_map == {"downloaded_paths": "__return__"}
+        assert download_impl.output_map == {
+            "downloaded_paths": "['downloaded_paths']",
+            "download_dir": "['download_dir']",
+        }
 
         overlay_impl = reg.get_implementation("add_line_overlay")
         assert overlay_impl.param_map == {

@@ -6,15 +6,29 @@ category: data_retrieval
 inputs:
   results:
     type: list
-    description: NCEI file metadata records from query_ncei_data
+    description: NCEI file metadata records from query_ncei_data (ncei_results)
+  query_label:
+    type: str
+    description: >
+      Readable slug from query_ncei_data, used as the per-query subfolder
+      name unless overridden by the query_id param.
+    required: false
 outputs:
   downloaded_paths:
     type: list
     description: List of downloaded file paths, including extracted tar contents when applicable
+  download_dir:
+    type: path
+    description: >
+      Per-query subfolder under output_dir where the files were written.
+      Downstream steps should pass this as their raw_input_folder so each
+      query's data stays isolated.
 params:
   output_dir:
     type: path
-    description: Local directory to write downloaded files into
+    description: >
+      Local *base* directory. Each query writes into
+      output_dir/<query_id or query_label>/.
     required: true
     constraints:
       must_exist: false
@@ -23,6 +37,12 @@ params:
     description: Additional file extensions to download alongside each .raw file
     required: false
     default: []
+  query_id:
+    type: str
+    description: >
+      Optional explicit subfolder name. Overrides the query_label input.
+      Useful when you want a stable, human-chosen folder name.
+    required: false
 implementations:
   - key: default
     callable_path: aa_si_utils.data_retrieval.download_ncei_data
@@ -33,4 +53,5 @@ implementations:
       source: git
       url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     output_map:
-      downloaded_paths: __return__
+      downloaded_paths: "['downloaded_paths']"
+      download_dir: "['download_dir']"
