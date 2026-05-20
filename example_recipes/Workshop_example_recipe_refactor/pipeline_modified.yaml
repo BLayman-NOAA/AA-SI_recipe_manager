@@ -1,0 +1,672 @@
+inputs:
+  raw_input_folder:
+    type: path
+    description:
+    default: ./raw_file_inputs
+    required: false
+  cal_input_folder:
+    type: path
+    description:
+    default: ./calibration_files/HB201607_cal
+    required: false
+  output_base:
+    type: path
+    description:
+    default: ./nefsc_uc_e2_cal_outputs
+    required: false
+  netcdf_output_folder:
+    type: path
+    description:
+    default: ./NetCDF-files
+    required: false
+  sv_output_folder:
+    type: path
+    description:
+    default: ./Sv-files
+    required: false
+  output_logs_folder:
+    type: path
+    description:
+    default: ./Output-Logs
+    required: false
+  line_file_path:
+    type: path
+    description:
+    default: ./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
+    required: false
+  raw_file_names:
+    type: list
+    description: "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\". Note that generate_standardized_cal_mapping always scans the full folder; this input only constrains the set of files that get opened and processed.\n"
+    default: []
+    required: false
+steps:
+- id: query_ncei
+  op: query_ncei_data
+  description:
+  inputs: {}
+  params:
+    file_time_start: 2016-07-25T20:58
+    file_time_end: 2016-07-25T21:45
+    filters:
+      CRUISE_NAME: HB1603
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: download_raw
+  op: download_ncei_data
+  description:
+  inputs:
+    results: ${query_ncei.ncei_results}
+    query_label: ${query_ncei.query_label}
+  params:
+    output_dir: ./raw_file_inputs
+    companion_extensions:
+    - .bot
+    - .idx
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: setup_raw_files
+  op: setup_raw_files
+  description:
+  inputs: {}
+  params:
+    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2145
+    netcdf_output_folder: ./NetCDF-files
+    sv_output_folder: ./Sv-files
+    output_logs_folder: ./Output-Logs
+    raw_file_names: []
+    clear_previous_json_logs: true
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: gen_cal_mapping
+  op: generate_standardized_cal_mapping
+  description:
+  inputs: {}
+  params:
+    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2145
+    cal_input_folder: ./calibration_files/HB201607_cal
+    output_base: ./nefsc_uc_e2_cal_outputs
+    cruise_id: HB1603
+    record_author: <Your Name>
+    short_filenames: true
+    keep_unused: true
+    conflict_resolution: error
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: open_raw
+  op: open_raw_files
+  description:
+  inputs:
+    raw_file_paths: ${setup_raw_files.raw_file_paths}
+  params:
+    netcdf_output_folder: ./NetCDF-files
+    sonar_model: EK60
+    include_bot: true
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: extract_cal_params
+  op: extract_standardized_cal_params
+  description:
+  inputs:
+    calibration_dict: ${gen_cal_mapping.calibration_dict}
+    mapping_dict: ${gen_cal_mapping.mapping_dict}
+    echodata: ${open_raw.echodata}
+  params: {}
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: compute_sv
+  op: compute_sv
+  description:
+  inputs:
+    echodata: ${open_raw.echodata}
+    cal_params: ${extract_cal_params.cal_params}
+    env_params: ${extract_cal_params.env_params}
+  params: {}
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: ep_add_depth
+  op: ep_add_depth
+  description:
+  inputs:
+    ds_Sv: ${compute_sv.ds_Sv}
+    echodata: ${open_raw.echodata}
+  params: {}
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: log_seafloor_stats
+  op: log_seafloor_detection_stats
+  description:
+  inputs:
+    echodata: ${open_raw.echodata}
+    ds_Sv: ${compute_sv.ds_Sv}
+  params:
+    min_valid_depth_m: 10.0
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: detect_seafloor
+  op: detect_seafloor
+  description:
+  inputs:
+    ds_Sv: ${compute_sv.ds_Sv}
+    echodata: ${open_raw.echodata}
+  params:
+    min_valid_depth_m: 10.0
+  depends_on:
+  - log_seafloor_stats
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: create_seafloor_mask
+  op: create_seafloor_mask
+  description:
+  inputs:
+    ds_Sv: ${ep_add_depth.ds_Sv}
+    seafloor_depth: ${detect_seafloor.seafloor_depth}
+  params:
+    seafloor_buffer_m: 100
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: create_surface_mask
+  op: create_surface_mask
+  description:
+  inputs:
+    ds_Sv: ${compute_sv.ds_Sv}
+  params:
+    surface_depth_m: 10.0
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: create_frequency_mask
+  op: create_frequency_mask
+  description:
+  inputs:
+    ds_Sv: ${compute_sv.ds_Sv}
+  params:
+    frequencies_to_mask:
+    - 70
+    - 120
+    - 200
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: combine_masks
+  op: combine_masks
+  description:
+  inputs:
+    masks:
+    - ${create_seafloor_mask.mask}
+    - ${create_surface_mask.mask}
+    - ${create_frequency_mask.mask}
+  params:
+    mode: and
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: apply_mask
+  op: apply_sv_mask
+  description:
+  inputs:
+    ds_Sv: ${compute_sv.ds_Sv}
+    mask: ${combine_masks.mask}
+  params: {}
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: remove_noise
+  op: remove_background_noise
+  description:
+  inputs:
+    ds_Sv: ${apply_mask.ds_Sv}
+  params:
+    noise_range_sample_num: 10
+    noise_ping_num: 5
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: compute_cell_stats
+  op: compute_per_cell_statistics
+  description:
+  inputs:
+    ds_Sv: ${remove_noise.ds_Sv}
+  params:
+    range_bin: 2m
+    ping_time_bin: 10s
+    statistics:
+    - cv
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: mask_sparse
+  op: mask_sparse_bins
+  description:
+  inputs:
+    ds_Sv: ${remove_noise.ds_Sv}
+  params:
+    range_bin: 2m
+    ping_time_bin: 10s
+    nan_threshold: 0.6
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: compute_mvbs
+  op: compute_mvbs
+  description:
+  inputs:
+    ds_Sv: ${mask_sparse.ds_Sv}
+  params:
+    range_bin: 2m
+    ping_time_bin: 10s
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: add_line_overlay
+  op: add_line_overlay
+  description:
+  inputs:
+    ds: ${compute_mvbs.ds_MVBS}
+  params:
+    line_file_path: ./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
+    line_name: sw_dive_profile
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: plot_sv_clean
+  op: plot_sv_echogram
+  description:
+  inputs:
+    ds_Sv: ${mask_sparse.ds_Sv}
+  params:
+    min_depth: 0
+    max_depth: 1800
+    ping_min: 0
+    ping_max: 515
+    x_axis_units: seconds
+    y_axis_units: meters
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: plot_mvbs
+  op: plot_sv_echogram
+  description:
+  inputs:
+    ds_Sv: ${add_line_overlay.ds}
+    ds_Sv_source: ${mask_sparse.ds_Sv}
+  params:
+    min_depth: 0
+    max_depth: 1800
+    ping_min: 0
+    ping_max: 515
+    x_axis_units: seconds
+    y_axis_units: meters
+    overlay_lines:
+    - var: sw_dive_profile_fit
+      style:
+        color: red
+        linewidth: 3.5
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: reshape_ml
+  op: reshape_for_ml
+  description:
+  inputs:
+    ds_MVBS: ${add_line_overlay.ds}
+  params:
+    data_var: Sv
+    dataset_name: ml_dataset
+    feature_strategy: mean_centered
+    baseline_channel: 0
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: add_aux_features
+  op: add_auxiliary_features
+  description:
+  inputs:
+    ds_ml: ${reshape_ml.ds_ml_ready}
+    echodata: ${open_raw.echodata}
+    ds_sv: ${compute_cell_stats.ds_Sv}
+  params:
+    dataset_name: ml_dataset
+    features:
+    - depth
+    - cell_cv
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: normalize_ml
+  op: normalize_ml_data
+  description:
+  inputs:
+    ds_ml: ${add_aux_features.ds_ml_ready}
+  params:
+    method: flatten
+    dataset_name: ml_dataset
+    normalization_name: normalized_flatten_mean_centered
+    shift_positive: false
+    feature_weights:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    per_group_methods:
+      depth: minmax
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: plot_normalized_ml
+  op: plot_ml_echogram
+  description:
+  inputs:
+    ds_normalized: ${normalize_ml.ds_normalized}
+    ds_Sv: ${mask_sparse.ds_Sv}
+  params:
+    dataset_name: ml_dataset
+    normalization_name: normalized_flatten_mean_centered
+    min_depth: 0
+    max_depth: 1800
+    ping_min: 0
+    ping_max: 515
+    x_axis_units: seconds
+    y_axis_units: meters
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: run_hdbscan
+  op: run_hdbscan
+  description:
+  inputs:
+    ds_normalized: ${normalize_ml.ds_normalized}
+  params:
+    dataset_name: ml_dataset
+    normalization_name: normalized_flatten_mean_centered
+    ml_result_name: hdbscan_results
+    min_cluster_size: 1400
+    min_samples: 4
+    sample_size: 1000000
+    cluster_selection_method: eom
+    use_hdbscan: true
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: embed_results
+  op: embed_clustering_results
+  description:
+  inputs:
+    ds_normalized: ${normalize_ml.ds_normalized}
+    clustering_results: ${run_hdbscan.clustering_results}
+  params:
+    dataset_name: ml_dataset
+    ml_result_name: hdbscan_results
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: plot_clustering_report
+  op: plot_clustering_report
+  description:
+  inputs:
+    ds_normalized: ${embed_results.ds_normalized}
+    clustering_results: ${run_hdbscan.clustering_results}
+    ds_Sv: ${mask_sparse.ds_Sv}
+  params:
+    dataset_name: ml_dataset
+    ml_result_name: hdbscan_results
+    plot_window:
+    - 0
+    - 1800
+    - 0
+    - 515
+    overlay_line_var: sw_dive_profile
+    cluster_colors:
+    - '#F700FF'
+    - '#35E200'
+    - '#5EFC9B'
+    - '#2F00FF'
+    - '#E60000'
+    - '#FFFB1C'
+    - '#000F92'
+    - '#E70000'
+    - '#00948D'
+    - '#5BECFFFF'
+    - '#4100B9FF'
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: run_hdbscan
+  op: run_hdbscan
+  description:
+  inputs:
+    ds_normalized: ${normalize_ml.ds_normalized}
+  params:
+    dataset_name: ml_dataset
+    normalization_name: normalized_flatten_mean_centered
+    ml_result_name: hdbscan_results
+    min_cluster_size: 1400
+    min_samples: 4
+    sample_size: 1000000
+    cluster_selection_method: leaf
+    use_hdbscan: true
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: embed_results
+  op: embed_clustering_results
+  description:
+  inputs:
+    ds_normalized: ${normalize_ml.ds_normalized}
+    clustering_results: ${run_hdbscan.clustering_results}
+  params:
+    dataset_name: ml_dataset
+    ml_result_name: hdbscan_results
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: plot_clustering_report
+  op: plot_clustering_report
+  description:
+  inputs:
+    ds_normalized: ${embed_results.ds_normalized}
+    clustering_results: ${run_hdbscan.clustering_results}
+    ds_Sv: ${mask_sparse.ds_Sv}
+  params:
+    dataset_name: ml_dataset
+    ml_result_name: hdbscan_results
+    plot_window:
+    - 0
+    - 1800
+    - 0
+    - 515
+    overlay_line_var: sw_dive_profile
+    cluster_colors:
+    - '#F700FF'
+    - '#35E200'
+    - '#5EFC9B'
+    - '#2F00FF'
+    - '#E60000'
+    - '#FFFB1C'
+    - '#000F92'
+    - '#E70000'
+    - '#00948D'
+    - '#5BECFFFF'
+    - '#4100B9FF'
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+outputs:
+execution:
+include_blocks:
+- source: processing_lvls_1_to_3.yaml
+  step_ids:
+  - setup_raw_files
+  - gen_cal_mapping
+  - open_raw
+  - extract_cal_params
+  - compute_sv
+  - ep_add_depth
+  - log_seafloor_stats
+  - detect_seafloor
+  - create_seafloor_mask
+  - create_surface_mask
+  - create_frequency_mask
+  - combine_masks
+  - apply_mask
+  - remove_noise
+  - compute_cell_stats
+  - mask_sparse
+  - compute_mvbs
+- source: visualization.yaml
+  step_ids:
+  - plot_sv_clean
+  - plot_mvbs
+- source: machine_learning.yaml
+  step_ids:
+  - reshape_ml
+  - add_aux_features
+  - normalize_ml
+  - plot_normalized_ml
+  - run_hdbscan
+  - embed_results
+  - plot_clustering_report
+recipe:
+  name: hb1603_survey_pipeline_modular
+  version: '1.0'
+  description: Modular HB1603 pipeline composed from generic sub-recipes.
+  author: <Your Name>
+  schema_version: '1'

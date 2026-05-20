@@ -1,0 +1,53 @@
+"source_filenames": ["HBB_120kHz_18July2016.cal"]
+"record_created": "2026-05-20T16:02:27.986625+00:00"
+"record_author": "<Your Name>"
+"channel": "GPT 120 kHz 0090720580f1 3-1 ES120-7"
+"transceiver_id": "0090720580f1"
+"transceiver_model": "GPT"
+"transceiver_ethernet_address": "0090720580f1"
+"transceiver_serial_number": null
+"transceiver_number": 3
+"transceiver_port": 1
+"channel_instance_number": 1
+"transducer_model": "ES120-7"
+"transducer_serial_number": null
+"pulse_form": "0"
+"frequency_start": 120000.0
+"frequency_end": 120000.0
+"nominal_transducer_frequency": 120000.0
+"transmit_power": 500.0
+"transmit_duration_nominal": 0.001024
+"multiplexing_found": null
+"calibration_date": "2016-07-18"
+"calibration_comments": "HB Bigelow 120 kHz calibration, 38.1-mm WC sphere, Newport\
+  \ naval anchorage south of bridge, 18 July 2016"
+"calibration_version": null
+"absorption_indicative": 0.0445
+"sound_speed_indicative": 1522.6
+"temperature": null
+"salinity": null
+"acidity": null
+"pressure": null
+"sample_interval": 0.000128
+"transmit_bandwidth": 3030.0
+"beam_type": null
+"calibration_acquisition_method": null
+"sphere_diameter": null
+"sphere_material": null
+"source_file_type": ".cal"
+"source_file_location": null
+"sonar_software_version": "2.4.3"
+"sonar_software_name": null
+"equivalent_beam_angle": -20.8
+"gain_correction": [26.95]
+"sa_correction": [-0.34]
+"frequency": [120000.0]
+"beamwidth_transmit_major": [7.07]
+"beamwidth_receive_major": [7.07]
+"beamwidth_transmit_minor": [7.09]
+"beamwidth_receive_minor": [7.09]
+"echoangle_major": [0.05]
+"echoangle_minor": [-0.05]
+"echoangle_major_sensitivity": [21.0]
+"echoangle_minor_sensitivity": [21.0]
+"source_file_paths": null

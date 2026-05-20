@@ -1,0 +1,82 @@
+op: ep_add_depth
+description: >
+  Add a surface-referenced ``depth`` data variable to an Sv Dataset using
+  echopype's ``consolidate.add_depth``. The result preserves all existing
+  variables (including ``echo_range``) and adds ``depth`` on
+  ``(channel, ping_time, range_sample)`` in metres below surface.
+
+  Whatever depth-computation technique is selected (constant ``depth_offset``,
+  Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``)
+  is fully captured in the values of the resulting ``depth`` array, so
+  downstream consumers can treat the dataset as the single source of truth
+  for vertical reference frame without knowing which technique was used.
+category: consolidate
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Calibrated Sv dataset (typically from compute_sv).
+  echodata:
+    type: EchoData
+    description: >
+      Source EchoData. Required when any of ``use_platform_vertical_offsets``,
+      ``use_platform_angles``, or ``use_beam_angles`` is true.
+    required: false
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: Input Sv dataset with an added ``depth`` variable.
+params:
+  depth_offset:
+    type: float
+    units: m
+    description: >
+      Constant vertical offset for the transducer position. When set, takes
+      precedence over Platform vertical offsets.
+    required: false
+    default: null
+  tilt:
+    type: float
+    units: degree
+    description: >
+      Constant transducer tilt; 0 corresponds to a vertically-pointing
+      transducer. When set, takes precedence over Platform/Beam angles.
+    required: false
+    default: null
+  downward:
+    type: bool
+    description: True when transducers point downward (typical hull-mounted).
+    required: false
+    default: true
+  use_platform_vertical_offsets:
+    type: bool
+    description: >
+      Use Echodata Platform group vertical offsets to compute transducer
+      depth. EK60/EK80 only. Ignored when ``depth_offset`` is set.
+    required: false
+    default: false
+  use_platform_angles:
+    type: bool
+    description: >
+      Use Echodata Platform group angles to compute echo_range scaling.
+      EK60/EK80 only. Cannot be combined with ``use_beam_angles``.
+    required: false
+    default: false
+  use_beam_angles:
+    type: bool
+    description: >
+      Use Echodata Beam group angles to compute echo_range scaling.
+      EK60/EK80 only. Cannot be combined with ``use_platform_angles``.
+    required: false
+    default: false
+implementations:
+  - key: default
+    callable_path: echopype.consolidate.add_depth
+    default: true
+    dependency:
+      name: echopype
+      version: ">=0.6.0"
+      source: pypi
+    param_map:
+      ds_Sv: ds
+    output_map:
+      ds_Sv: __return__

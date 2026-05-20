@@ -19,6 +19,16 @@ params:
     units: m
     required: false
     default: 0.0
+  range_var:
+    type: str
+    description: >
+      Name of the meter-valued variable on ds_Sv to compare against the
+      seafloor line. Must use the same vertical reference as the seafloor
+      line. When null (the default), auto-selects "depth" if present on
+      ds_Sv (i.e., add_depth was run upstream), otherwise falls back to
+      "echo_range".
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.create_seafloor_mask

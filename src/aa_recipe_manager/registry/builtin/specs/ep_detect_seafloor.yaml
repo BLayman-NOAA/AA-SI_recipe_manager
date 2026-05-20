@@ -1,0 +1,86 @@
+op: ep_detect_seafloor
+description: >
+  Detect seafloor depth using echopype's bottom detection dispatcher and
+  return a 1-D (ping_time,) DataArray. Dispatches to one of echopype's
+  built-in implementations ("basic" Sv-threshold or "blackwell" Sv +
+  split-beam angle) selected by the ``method`` parameter, with the
+  method-specific keyword arguments passed via ``method_params``.
+
+  Drop-in swap with the ``detect_seafloor`` op: the output port name
+  (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream
+  steps such as ``create_seafloor_mask`` work unchanged. The recipe step's
+  ``inputs`` must drop the ``echodata`` line (echopype's detector does not
+  use a separate EchoData source) and the ``params`` block must use
+  ``method`` + ``method_params`` instead of ``channel`` /
+  ``min_valid_depth_m``.
+category: detection
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset containing the variables and coordinates
+      required by the chosen echopype method (at minimum ping_time, a
+      vertical coordinate such as depth, and Sv; the ``blackwell`` method
+      additionally requires split-beam angle variables).
+outputs:
+  seafloor_depth:
+    type: DataArray
+    description: >
+      Detected seafloor depth in metres, shape (ping_time,). Always 1-D
+      (no channel dimension), matching the output of the ``detect_seafloor``
+      op so downstream masking steps are interchangeable.
+params:
+  method:
+    type: str
+    description: >
+      Echopype bottom-detection method. Supported values:
+        - "basic": Sv threshold-only detector.
+        - "blackwell": Sv + split-beam angle detector.
+    required: false
+    default: "basic"
+  method_params:
+    type: dict
+    description: >
+      Method-specific keyword arguments forwarded to the chosen echopype
+      detector. Unspecified keys fall back to that method's defaults.
+
+      basic:
+        var_name (str): Name of Sv variable (dB), e.g. "Sv".
+        channel (str): Channel identifier to select.
+        threshold (float | (float, float), default -50.0): Sv threshold in
+          dB; a single value is treated as the lower bound (upper = lower
+          + 10 dB), or pass a 2-tuple (tmin, tmax) for both bounds.
+        offset_m (float, default 0.5): Metres subtracted from the detected
+          crossing.
+        bin_skip_from_surface (int, default 200): Number of shallow range
+          bins to ignore before searching.
+
+      blackwell:
+        var_name (str): Name of the Sv variable to use.
+        channel (str): Channel identifier to select.
+        threshold (float | (float, float, float), default -75): Either a
+          single Sv dB threshold (angle thresholds use defaults), or a
+          3-tuple (tSv_dB, ttheta, tphi) after angle smoothing.
+        offset (float, default 0.3): Metres subtracted from the detected
+          bottom.
+        r0 (float, default 0): Shallow bound (m) of the detection range.
+        r1 (float, default 500): Deep bound (m) of the detection range.
+        wtheta (int, default 28): Square smoothing window (pixels) for
+          along-ship angle.
+        wphi (int, default 52): Square smoothing window (pixels) for
+          athwart-ship angle.
+    required: false
+    default: {}
+implementations:
+  - key: default
+    callable_path: echopype.mask.api.detect_seafloor
+    default: true
+    dependency:
+      name: echopype
+      version: ">=0.6.0"
+      source: pypi
+    param_map:
+      ds_Sv: ds
+      method_params: params
+    output_map:
+      seafloor_depth: __return__

@@ -105,6 +105,18 @@ steps:
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
 
+  - id: ep_add_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${open_raw.echodata}
+    # params:
+      # NOTE: keep depth grid uniform across ping_time so echopype's
+      # ``basic`` seafloor detector accepts the dataset. Enable
+      # ``use_platform_vertical_offsets`` (or set ``depth_offset``) only
+      # when downstream consumers do not require a uniform depth grid.
+      # depth_offset: 0.0
+
   - id: log_seafloor_stats
     op: log_seafloor_detection_stats
     inputs:
@@ -122,10 +134,23 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
+  # - id: detect_seafloor
+  #   op: ep_detect_seafloor
+  #   inputs:
+  #     ds_Sv: ${ep_add_depth.ds_Sv}
+  #   params:
+  #     method: "basic"
+  #     method_params:
+  #       var_name: "Sv"
+  #       channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
+  #       threshold: -50.0
+  #       offset_m: 0.5
+  #       bin_skip_from_surface: 200
+
   - id: create_seafloor_mask
     op: create_seafloor_mask
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
+      ds_Sv: ${ep_add_depth.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
       seafloor_buffer_m: 100
