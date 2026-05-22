@@ -46,7 +46,7 @@ steps:
   inputs: {}
   params:
     file_time_start: 2016-07-25T20:58
-    file_time_end: 2016-07-25T21:45
+    file_time_end: 2016-07-25T23:45
     filters:
       CRUISE_NAME: HB1603
   depends_on:
@@ -79,7 +79,7 @@ steps:
   description:
   inputs: {}
   params:
-    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2145
+    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2345
     netcdf_output_folder: ./NetCDF-files
     sv_output_folder: ./Sv-files
     output_logs_folder: ./Output-Logs
@@ -97,7 +97,7 @@ steps:
   description:
   inputs: {}
   params:
-    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2145
+    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2345
     cal_input_folder: ./calibration_files/HB201607_cal
     output_base: ./nefsc_uc_e2_cal_outputs
     cruise_id: HB1603
@@ -164,7 +164,25 @@ steps:
   inputs:
     ds_Sv: ${compute_sv.ds_Sv}
     echodata: ${open_raw.echodata}
-  params: {}
+  params:
+    depth_offset: 0.0
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+- id: ep_add_splitbeam_angle
+  op: ep_add_splitbeam_angle
+  description:
+  inputs:
+    ds_Sv: ${ep_add_depth.ds_Sv}
+    echodata: ${open_raw.echodata}
+  params:
+    waveform_mode: CW
+    encode_mode: power
+    to_disk: false
   depends_on:
   implementation_override:
   custom_spec:
@@ -188,15 +206,16 @@ steps:
   sweep:
   execution:
 - id: detect_seafloor
-  op: detect_seafloor
+  op: ep_detect_seafloor
   description:
   inputs:
-    ds_Sv: ${compute_sv.ds_Sv}
-    echodata: ${open_raw.echodata}
+    ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
   params:
-    min_valid_depth_m: 10.0
+    method: basic
+    method_params:
+      var_name: Sv
+      channel: GPT  38 kHz 0090720346bc 1-1 ES38B
   depends_on:
-  - log_seafloor_stats
   implementation_override:
   custom_spec:
   map_over:
@@ -207,7 +226,7 @@ steps:
   op: create_seafloor_mask
   description:
   inputs:
-    ds_Sv: ${ep_add_depth.ds_Sv}
+    ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
     seafloor_depth: ${detect_seafloor.seafloor_depth}
   params:
     seafloor_buffer_m: 100
@@ -295,30 +314,13 @@ steps:
   collect:
   sweep:
   execution:
-- id: compute_cell_stats
-  op: compute_per_cell_statistics
-  description:
-  inputs:
-    ds_Sv: ${remove_noise.ds_Sv}
-  params:
-    range_bin: 2m
-    ping_time_bin: 10s
-    statistics:
-    - cv
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
 - id: mask_sparse
   op: mask_sparse_bins
   description:
   inputs:
     ds_Sv: ${remove_noise.ds_Sv}
   params:
-    range_bin: 2m
+    range_bin: 10m
     ping_time_bin: 10s
     nan_threshold: 0.6
   depends_on:
@@ -334,7 +336,7 @@ steps:
   inputs:
     ds_Sv: ${mask_sparse.ds_Sv}
   params:
-    range_bin: 2m
+    range_bin: 10m
     ping_time_bin: 10s
   depends_on:
   implementation_override:
@@ -402,6 +404,23 @@ steps:
   collect:
   sweep:
   execution:
+- id: compute_cell_stats
+  op: compute_per_cell_statistics
+  description:
+  inputs:
+    ds_Sv: ${remove_noise.ds_Sv}
+  params:
+    range_bin: 20m
+    ping_time_bin: 20s
+    statistics:
+    - cv
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
 - id: reshape_ml
   op: reshape_for_ml
   description:
@@ -429,7 +448,6 @@ steps:
   params:
     dataset_name: ml_dataset
     features:
-    - depth
     - cell_cv
   depends_on:
   implementation_override:
@@ -448,14 +466,6 @@ steps:
     dataset_name: ml_dataset
     normalization_name: normalized_flatten_mean_centered
     shift_positive: false
-    feature_weights:
-    - 1
-    - 1
-    - 1
-    - 1
-    - 1
-    per_group_methods:
-      depth: minmax
   depends_on:
   implementation_override:
   custom_spec:
@@ -468,7 +478,7 @@ steps:
   description:
   inputs:
     ds_normalized: ${normalize_ml.ds_normalized}
-    ds_Sv: ${mask_sparse.ds_Sv}
+    ds_Sv: ${remove_noise.ds_Sv}
   params:
     dataset_name: ml_dataset
     normalization_name: normalized_flatten_mean_centered
@@ -494,83 +504,12 @@ steps:
     dataset_name: ml_dataset
     normalization_name: normalized_flatten_mean_centered
     ml_result_name: hdbscan_results
-    min_cluster_size: 1400
-    min_samples: 4
-    sample_size: 1000000
-    cluster_selection_method: eom
-    use_hdbscan: true
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
-- id: embed_results
-  op: embed_clustering_results
-  description:
-  inputs:
-    ds_normalized: ${normalize_ml.ds_normalized}
-    clustering_results: ${run_hdbscan.clustering_results}
-  params:
-    dataset_name: ml_dataset
-    ml_result_name: hdbscan_results
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
-- id: plot_clustering_report
-  op: plot_clustering_report
-  description:
-  inputs:
-    ds_normalized: ${embed_results.ds_normalized}
-    clustering_results: ${run_hdbscan.clustering_results}
-    ds_Sv: ${mask_sparse.ds_Sv}
-  params:
-    dataset_name: ml_dataset
-    ml_result_name: hdbscan_results
-    plot_window:
-    - 0
-    - 1800
-    - 0
-    - 515
-    overlay_line_var: sw_dive_profile
-    cluster_colors:
-    - '#F700FF'
-    - '#35E200'
-    - '#5EFC9B'
-    - '#2F00FF'
-    - '#E60000'
-    - '#FFFB1C'
-    - '#000F92'
-    - '#E70000'
-    - '#00948D'
-    - '#5BECFFFF'
-    - '#4100B9FF'
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
-- id: run_hdbscan
-  op: run_hdbscan
-  description:
-  inputs:
-    ds_normalized: ${normalize_ml.ds_normalized}
-  params:
-    dataset_name: ml_dataset
-    normalization_name: normalized_flatten_mean_centered
-    ml_result_name: hdbscan_results
-    min_cluster_size: 1400
+    min_cluster_size_fraction: 0.02
     min_samples: 4
     sample_size: 1000000
     cluster_selection_method: leaf
     use_hdbscan: true
+    soft_membership_threshold: 0.6
   depends_on:
   implementation_override:
   custom_spec:
@@ -600,7 +539,7 @@ steps:
   inputs:
     ds_normalized: ${embed_results.ds_normalized}
     clustering_results: ${run_hdbscan.clustering_results}
-    ds_Sv: ${mask_sparse.ds_Sv}
+    ds_Sv: ${remove_noise.ds_Sv}
   params:
     dataset_name: ml_dataset
     ml_result_name: hdbscan_results
@@ -611,17 +550,18 @@ steps:
     - 515
     overlay_line_var: sw_dive_profile
     cluster_colors:
-    - '#F700FF'
+    - '#9D00FF'
     - '#35E200'
-    - '#5EFC9B'
+    - '#FF0000'
     - '#2F00FF'
-    - '#E60000'
+    - '#FF8800'
     - '#FFFB1C'
-    - '#000F92'
-    - '#E70000'
-    - '#00948D'
-    - '#5BECFFFF'
-    - '#4100B9FF'
+    - '#FF44E9'
+    - '#00BE8BCA'
+    - '#00FFE5'
+    - '#3D8D00FF'
+    - '#9C67FFFF'
+    cluster_stats_sv_data_var: Sv
   depends_on:
   implementation_override:
   custom_spec:
@@ -640,6 +580,7 @@ include_blocks:
   - extract_cal_params
   - compute_sv
   - ep_add_depth
+  - ep_add_splitbeam_angle
   - log_seafloor_stats
   - detect_seafloor
   - create_seafloor_mask
@@ -648,7 +589,6 @@ include_blocks:
   - combine_masks
   - apply_mask
   - remove_noise
-  - compute_cell_stats
   - mask_sparse
   - compute_mvbs
 - source: visualization.yaml
@@ -657,6 +597,7 @@ include_blocks:
   - plot_mvbs
 - source: machine_learning.yaml
   step_ids:
+  - compute_cell_stats
   - reshape_ml
   - add_aux_features
   - normalize_ml

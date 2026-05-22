@@ -51,7 +51,7 @@ params:
     default: null
   cluster_stats_sv_data_var:
     type: str
-    description: Sv variable name used when computing per-cluster statistics
+    description: Sv variable name used when computing per-cluster statistics, or "ml_features" to plot the flattened ML features used for clustering
     required: false
     default: "Sv"
   cluster_stats_compute_pairwise_differences:

@@ -167,6 +167,9 @@ EXPECTED_BUILTIN_OPS = {
     "open_raw_files",
     "extract_standardized_cal_params",
     "compute_sv",
+    "ep_add_depth",
+    "ep_add_splitbeam_angle",
+    "ep_detect_seafloor",
     "detect_seafloor",
     "create_seafloor_mask",
     "create_surface_mask",
@@ -301,6 +304,21 @@ class TestBuiltinLoader:
         compute_sv_impl = reg.get_implementation("compute_sv")
         assert compute_sv_impl.callable_path == "echopype.calibrate.compute_Sv"
         assert compute_sv_impl.output_map == {"ds_Sv": "__return__"}
+
+        add_depth_impl = reg.get_implementation("ep_add_depth")
+        assert add_depth_impl.callable_path == "echopype.consolidate.add_depth"
+        assert add_depth_impl.param_map == {"ds_Sv": "ds"}
+        assert add_depth_impl.output_map == {"ds_Sv": "__return__"}
+
+        add_splitbeam_impl = reg.get_implementation("ep_add_splitbeam_angle")
+        assert add_splitbeam_impl.callable_path == "echopype.consolidate.add_splitbeam_angle"
+        assert add_splitbeam_impl.param_map == {"ds_Sv": "source_Sv"}
+        assert add_splitbeam_impl.output_map == {"ds_Sv": "__return__"}
+
+        ep_detect_impl = reg.get_implementation("ep_detect_seafloor")
+        assert ep_detect_impl.callable_path == "echopype.mask.api.detect_seafloor"
+        assert ep_detect_impl.param_map == {"ds_Sv": "ds", "method_params": "params"}
+        assert ep_detect_impl.output_map == {"seafloor_depth": "__return__"}
 
         compute_mvbs_impl = reg.get_implementation("compute_mvbs")
         assert compute_mvbs_impl.callable_path == "echopype.commongrid.compute_MVBS"

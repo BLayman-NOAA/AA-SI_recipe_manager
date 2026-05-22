@@ -34,7 +34,16 @@ params:
     required: true
   min_cluster_size:
     type: int
-    required: true
+    description: Absolute minimum cluster size. Mutually exclusive with min_cluster_size_fraction.
+    required: false
+  min_cluster_size_fraction:
+    type: float
+    description: >
+      Fraction of extracted data points used to derive min_cluster_size when
+      min_cluster_size is omitted. Mutually exclusive with min_cluster_size.
+      When omitted, the ML function defaults to 0.03.
+    required: false
+    default: null
   min_samples:
     type: int
     required: false

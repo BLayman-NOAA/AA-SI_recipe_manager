@@ -1,0 +1,75 @@
+op: ep_add_splitbeam_angle
+description: >
+  Add split-beam alongship and athwartship angle variables to an Sv Dataset
+  using echopype's ``consolidate.add_splitbeam_angle``. The result preserves
+  the input Sv data and adds ``angle_alongship`` and ``angle_athwartship`` on
+  ``(channel, ping_time, range_sample)`` when the source EchoData contains the
+  required split-beam angle data.
+
+  This step is required before echopype's Blackwell seafloor detector because
+  that detector thresholds the per-sample split-beam angle fields. Calibration
+  parameters such as ``angle_offset_alongship`` are used by echopype to compute
+  these variables, but they are not themselves the angle fields consumed by the
+  detector.
+category: consolidate
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Calibrated Sv dataset, typically after ``ep_add_depth``.
+  echodata:
+    type: EchoData
+    description: Source EchoData object containing split-beam samples.
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Input Sv dataset with ``angle_alongship`` and ``angle_athwartship``
+      variables added.
+params:
+  waveform_mode:
+    type: str
+    description: >
+      Transmit waveform mode. Use ``CW`` for narrowband EK60/EK80 power/angle
+      data, or ``BB`` for broadband complex samples.
+    required: false
+    default: "CW"
+  encode_mode:
+    type: str
+    description: >
+      Return echo encoding mode. Use ``power`` for EK60/EK80 power/angle data,
+      or ``complex`` for complex samples.
+    required: false
+    default: "power"
+  pulse_compression:
+    type: bool
+    description: >
+      Whether to pulse-compress broadband complex samples. Only valid for
+      ``waveform_mode: BB`` and ``encode_mode: complex``.
+    required: false
+    default: false
+  to_disk:
+    type: bool
+    description: >
+      Write split-beam angles back to disk when ``ds_Sv`` is a path. Keep false
+      for in-memory recipe execution.
+    required: false
+    default: false
+  drop_last_hanning_zero:
+    type: bool
+    description: >
+      Echopype compatibility option for broadband pulse compression. Usually
+      leave false.
+    required: false
+    default: false
+implementations:
+  - key: default
+    callable_path: echopype.consolidate.add_splitbeam_angle
+    default: true
+    dependency:
+      name: echopype
+      version: ">=0.6.0"
+      source: pypi
+    param_map:
+      ds_Sv: source_Sv
+    output_map:
+      ds_Sv: __return__

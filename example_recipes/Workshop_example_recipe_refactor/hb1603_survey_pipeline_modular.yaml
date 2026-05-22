@@ -53,7 +53,7 @@ steps:
     op: query_ncei_data
     params:
       file_time_start: "2016-07-25T20:58"
-      file_time_end: "2016-07-25T21:45"
+      file_time_end: "2016-07-25T23:45"
       filters:
         CRUISE_NAME: "HB1603"
 
@@ -79,6 +79,8 @@ steps:
       cruise_id: "HB1603"
       record_author: "<Your Name>"
       sonar_model: "EK60"
+      range_bin: "10m"
+      ping_time_bin: "10s"
 
   # Dataset-specific line overlay applied by the parent recipe.
   - id: add_line_overlay
@@ -100,7 +102,6 @@ steps:
   - include: machine_learning.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
-      sv_clean: ${mask_sparse.ds_Sv}
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
       echodata: ${open_raw.echodata}
-      sv_cell_stats: ${compute_cell_stats.ds_Sv}
       overlay_line_var: "sw_dive_profile"
