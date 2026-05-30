@@ -28,6 +28,14 @@ inputs:
     description: >
       Pre-sparse-mask Sv used for per-cell statistics and as the backdrop /
       ping-index reference for ML and cluster echogram plots.
+  range_bin:
+    type: str
+    default: "20m"
+    description: "Range bin size shared with sparse masking and MVBS generation."
+  ping_time_bin:
+    type: str
+    default: "20s"
+    description: "Ping-time bin size shared with sparse masking and MVBS generation."
 
 steps:
 
@@ -61,6 +69,7 @@ steps:
       dataset_name: "ml_dataset"
       features:
         - cell_cv
+        - depth
 
   - id: normalize_ml
     op: normalize_ml_data
@@ -96,7 +105,7 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       ml_result_name: "hdbscan_results"
       min_cluster_size_fraction: 0.02
-      min_samples: 4
+      min_samples: 2
       sample_size: 1000000
       cluster_selection_method: "leaf"
       use_hdbscan: true
@@ -116,6 +125,7 @@ steps:
     inputs:
       ds_normalized: ${embed_results.ds_normalized}
       clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
       ds_Sv: ${inputs.sv_clean_unmasked}
     params:
       dataset_name: "ml_dataset"

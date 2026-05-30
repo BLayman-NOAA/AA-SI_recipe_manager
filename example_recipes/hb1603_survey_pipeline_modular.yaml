@@ -45,6 +45,12 @@ inputs:
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  range_bin:
+    type: str
+    default: "10m"
+  ping_time_bin:
+    type: str
+    default: "10s"
 
 steps:
 
@@ -53,7 +59,7 @@ steps:
     op: query_ncei_data
     params:
       file_time_start: "2016-07-25T20:58"
-      file_time_end: "2016-07-25T23:45"
+      file_time_end: "2016-07-25T21:45"
       filters:
         CRUISE_NAME: "HB1603"
 
@@ -68,19 +74,17 @@ steps:
         - ".bot"
         - ".idx"
 
-  # Generic processing pipeline (raw to MVBS with line overlay).
+  # Generic processing pipeline (raw to MVBS).
   # The raw_input_folder override points at the per-query subfolder created
-  # by download_raw, so processing only sees this query's files. The value
-  # reference also creates the DAG edge that orders processing after the
-  # download step.
+  # by download_raw, so processing only sees this query's files. 
   - include: processing_lvls_1_to_3.yaml
     input_overrides:
       raw_input_folder: ${download_raw.download_dir}
       cruise_id: "HB1603"
       record_author: "<Your Name>"
       sonar_model: "EK60"
-      range_bin: "10m"
-      ping_time_bin: "10s"
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
 
   # Dataset-specific line overlay applied by the parent recipe.
   - id: add_line_overlay
@@ -105,3 +109,5 @@ steps:
       sv_clean_unmasked: ${remove_noise.ds_Sv}
       echodata: ${open_raw.echodata}
       overlay_line_var: "sw_dive_profile"
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}

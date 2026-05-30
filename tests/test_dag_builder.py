@@ -262,6 +262,54 @@ class TestDanglingRefs:
         with pytest.raises(RecipeValidationError, match="ghost_step"):
             build_dag(recipe, reg)
 
+    def test_undeclared_pipeline_input_ref_in_param_raises(self, tmp_path):
+        content = """\
+            recipe:
+              name: missing_pipeline_input
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: stats
+                op: compute_per_cell_statistics
+                inputs:
+                  ds_Sv: ${source.ds_Sv}
+                params:
+                  range_bin: ${inputs.range_bin}
+                  ping_time_bin: "10s"
+                  statistics: [cv]
+              - id: source
+                op: remove_background_noise
+                inputs:
+                  ds_Sv: ${upstream.ds_Sv}
+                params:
+                  noise_range_sample_num: 10
+                  noise_ping_num: 5
+              - id: upstream
+                op: apply_sv_mask
+                inputs:
+                  ds_Sv: ${seed.ds_Sv}
+                  mask: ${mask.mask}
+              - id: seed
+                op: compute_sv
+                inputs:
+                  echodata: ${raw.echodata}
+              - id: raw
+                op: open_raw_files
+                params:
+                  netcdf_output_folder: "./out"
+                  sonar_model: "EK60"
+              - id: mask
+                op: create_surface_mask
+                inputs:
+                  ds_Sv: ${seed.ds_Sv}
+                params:
+                  surface_depth_m: 10.0
+            """
+        recipe = load_recipe(_write_recipe(tmp_path, content))
+        reg = load_builtin_registry()
+        with pytest.raises(RecipeValidationError, match="undeclared pipeline input 'range_bin'"):
+            build_dag(recipe, reg, check_versions=False)
+
 
 # ---------------------------------------------------------------------------
 # Validation — duplicate step IDs

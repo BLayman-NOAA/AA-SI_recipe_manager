@@ -52,6 +52,31 @@ params:
       (variable name in ds_Sv) and 'style' (dict of matplotlib kwargs).
     required: false
     default: []
+  save_image:
+    type: bool
+    description: Save the rendered figure to an image file; null uses runtime defaults
+    required: false
+    default: null
+  save_formats:
+    type: list
+    description: Image formats to save, chosen from png, svg, jpeg, jpg, and pdf
+    required: false
+    default: null
+  save_dir:
+    type: str
+    description: Optional directory override for saved image artifacts
+    required: false
+    default: null
+  show:
+    type: bool
+    description: Whether to display the figure interactively or inline; null uses runtime defaults
+    required: false
+    default: null
+  dpi:
+    type: int
+    description: Optional DPI override for raster image outputs
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_visualization.echogram.plot_sv_echogram

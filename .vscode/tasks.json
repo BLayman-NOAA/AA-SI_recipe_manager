@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "pytest checkpoint stem regression",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"-lc",
+				"source .venv/Scripts/activate && pytest tests/test_executor.py -k \"checkpoint_artifact_stem or zarr_checkpoint_round_trip or echodata_zarr_checkpoint_round_trip\" -q"
+			],
+			"isBackground": false,
+			"group": "test"
+		}
+	]
+}

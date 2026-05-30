@@ -11,11 +11,11 @@ inputs:
     type: Dataset
     description: Normalized ML Dataset to enrich with cluster-label variables
   clustering_results:
-    type: dict
+    type: Dataset
     many: true
     description: >
-      Clustering result dict from run_hdbscan. When collect is used for ensemble
-      runs, a list of result dicts is accepted (many: true).
+      Clustering result dataset from run_hdbscan. When collect is used for
+      ensemble runs, a list of result datasets is accepted (many: true).
 outputs:
   ds_normalized:
     type: Dataset

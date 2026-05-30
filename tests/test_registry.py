@@ -358,6 +358,7 @@ class TestBuiltinLoader:
         assert run_impl.callable_path == "aa_si_ml.ml.run_hdbscan"
         assert run_impl.output_map == {
             "clustering_results": "['clustering_results']",
+            "clustering_model": "['clustering_model']",
             "background_label": "['background_label']",
         }
 

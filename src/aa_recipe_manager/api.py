@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.executor.checkpoint import OTHER_DATA_DIR
 from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -25,7 +26,7 @@ from aa_recipe_manager.exceptions import (
 )
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import PipelineDAG, Recipe
+    from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
 
 
 @dataclass
@@ -400,3 +401,158 @@ def _self_install_spec(
         return ("pypi", f"aa-recipe-manager=={_pkg_version('aa-recipe-manager')}")
     except Exception:
         return ("pypi", "aa-recipe-manager")
+
+
+def execute(
+    recipe: str | Path | Recipe,
+    *,
+    inputs: dict[str, Any] | None = None,
+    executor: str = "sequential",
+    output_dir: str | Path | None = None,
+    implementation_override: str | None = None,
+    force: bool = False,
+    no_checkpoints: bool = False,
+    skip_sinks: bool = False,
+    checkpoint_mode: CheckpointMode | str | None = None,
+    checkpoint_steps: list[str] | None = None,
+    checkpoint_format: str | None = None,
+    save_provenance: str | Path | None = None,
+    progress: Any = None,
+) -> Any:
+    """Execute a recipe's pipeline directly in the current process.
+
+    Parameters
+    ----------
+    recipe:
+        Recipe file path or pre-loaded Recipe object.
+    inputs:
+        Pipeline-level input values, used both for DAG resolution and as
+        runtime values for ``${inputs.x}`` references.
+    executor:
+        Executor backend name. Only ``"sequential"`` is implemented in Stage 6;
+        ``"dask"`` and ``"prefect"`` are reserved for Stage 9.
+    output_dir:
+        Directory used for step-output checkpoints. When ``None`` no checkpoint
+        files are written; explicit checkpoint options require a non-None
+        ``output_dir``.
+    implementation_override:
+        Force a single implementation key for every step.
+    force:
+        Re-run every step even if a valid checkpoint exists.
+    no_checkpoints:
+        Skip both checkpoint reads and writes for this run.
+    skip_sinks:
+        Skip steps marked ``sink: true`` in their spec.
+    checkpoint_mode:
+        Override the recipe's ``execution.checkpoint_mode``. One of
+        ``"eager"`` (default), ``"explicit"`` (only steps marked
+        ``checkpoint: always``), ``"terminal"`` (only leaf steps), or
+        ``"none"``. Cannot be combined with ``no_checkpoints``.
+    checkpoint_steps:
+        Ad-hoc list of step ids to checkpoint regardless of mode. Useful
+        for pinning resume points without editing the recipe.
+    checkpoint_format:
+        Serialization format for checkpoint files. One of ``"zarr"`` (default),
+        ``"netcdf"``, or ``"pickle"``. Overrides the recipe's
+        ``execution.checkpoint_format`` setting when provided.
+    save_provenance:
+        If provided, write the captured provenance as YAML at this path. When
+        ``output_dir`` is set and this is None, a default sidecar named
+        ``provenance.yaml`` is written under ``output_dir/other``.
+
+    Returns the :class:`ExecutionResult`.
+    """
+    from aa_recipe_manager.executor import SequentialExecutor
+
+    if no_checkpoints and (checkpoint_mode or checkpoint_steps):
+        raise ValueError(
+            "no_checkpoints=True cannot be combined with checkpoint_mode or "
+            "checkpoint_steps; pick one."
+        )
+    if output_dir is None and not no_checkpoints and (
+        checkpoint_steps
+        or (checkpoint_mode is not None and checkpoint_mode != "none")
+    ):
+        raise ValueError(
+            "checkpoint_mode / checkpoint_steps require output_dir; pass an "
+            "output_dir or set no_checkpoints=True."
+        )
+
+    dag = _load_dag(
+        recipe,
+        input_values=inputs,
+        implementation_override=implementation_override,
+        check_versions=False,
+    )
+
+    if executor == "sequential":
+        impl = SequentialExecutor()
+    else:
+        raise ValueError(
+            f"executor backend {executor!r} is not implemented yet "
+            "(only 'sequential' is available in Stage 6)"
+        )
+
+    result = impl.execute(
+        dag,
+        inputs=inputs,
+        output_dir=output_dir,
+        force=force,
+        no_checkpoints=no_checkpoints,
+        skip_sinks=skip_sinks,
+        checkpoint_mode=checkpoint_mode,
+        checkpoint_steps=checkpoint_steps,
+        checkpoint_format=checkpoint_format,
+        progress=progress,
+    )
+
+    sidecar_path: Path | None = None
+    if save_provenance is not None:
+        sidecar_path = Path(save_provenance)
+    elif output_dir is not None and not no_checkpoints:
+        sidecar_path = Path(output_dir) / OTHER_DATA_DIR / "provenance.yaml"
+    if sidecar_path is not None and result.provenance is not None:
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_provenance_sidecar(result.provenance, sidecar_path)
+
+    return result
+
+
+def _write_provenance_sidecar(provenance: Any, path: Path) -> None:
+    """Serialize a Provenance object to YAML (or JSON if PyYAML is missing)."""
+    payload = provenance.model_dump(mode="json")
+    try:
+        import yaml  # type: ignore
+
+        path.write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+    except Exception:
+        import json as _json
+
+        path.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def clean(
+    recipe: str | Path | Recipe,
+    output_dir: str | Path,
+    *,
+    inputs: dict[str, Any] | None = None,
+    mode: str = "intermediate",
+    dry_run: bool = False,
+) -> list[Path]:
+    """Remove checkpoint files for a recipe under ``output_dir``.
+
+    Modes are ``"intermediate"`` (default), ``"all"``, and ``"stale"``. When
+    ``dry_run`` is true the files that would be deleted are returned without
+    being removed.
+    """
+    from aa_recipe_manager.executor import CheckpointManager, compute_recipe_hash
+
+    if mode not in {"intermediate", "all", "stale"}:
+        raise ValueError(
+            f"clean mode must be 'intermediate', 'all', or 'stale'; got {mode!r}"
+        )
+    dag = _load_dag(recipe, input_values=inputs, check_versions=False)
+    manager = CheckpointManager(output_dir, compute_recipe_hash(dag))
+    return manager.clean(dag, mode=mode, dry_run=dry_run)  # type: ignore[arg-type]

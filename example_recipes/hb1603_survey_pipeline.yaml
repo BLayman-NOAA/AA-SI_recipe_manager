@@ -292,7 +292,6 @@ steps:
       dataset_name: "ml_dataset"
       normalization_name: "normalized_flatten_mean_centered"
       shift_positive: false
-      feature_weights: [1, 1, 1, 1, 1]
       per_group_methods:
         depth: "minmax"
 

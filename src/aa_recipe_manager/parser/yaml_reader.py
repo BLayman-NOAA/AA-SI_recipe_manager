@@ -17,6 +17,36 @@ _yaml = YAML()
 _yaml.preserve_quotes = True
 
 
+def _strip_ruamel_types(value: Any) -> Any:
+    """Recursively convert ruamel.yaml container/scalar subclasses to plain types.
+
+    ruamel.yaml's round-trip loader (which we use to preserve quote style) returns
+    subclasses such as ``CommentedMap``, ``CommentedSeq``, ``DoubleQuotedScalarString``,
+    ``ScalarInt``, etc. Downstream user callables often serialize values with
+    PyYAML's ``SafeDumper``/custom ``Dumper`` subclasses, whose single-type
+    representer dispatch keys on ``type(data) is X`` (no MRO walk). Subclass
+    instances therefore raise ``RepresenterError`` even though they ARE ``str``
+    or ``int``. Stripping to plain Python types at the parser boundary removes
+    this whole class of foot-gun.
+
+    Booleans must be checked before ``int`` because ``bool`` subclasses ``int``.
+    Unknown types are returned unchanged.
+    """
+    if isinstance(value, dict):
+        return {_strip_ruamel_types(k): _strip_ruamel_types(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_ruamel_types(item) for item in value]
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, str):
+        return str(value)
+    return value
+
+
 def load_recipe(path: str | Path) -> Recipe:
     """Parse a YAML recipe file and return a validated Recipe object.
 
@@ -25,7 +55,7 @@ def load_recipe(path: str | Path) -> Recipe:
     path = Path(path)
     try:
         with open(path, encoding="utf-8") as f:
-            raw = _yaml.load(f)
+            raw = _strip_ruamel_types(_yaml.load(f))
     except FileNotFoundError:
         raise RecipeParseError(f"Recipe file not found: {path}")
     except Exception as exc:
@@ -132,7 +162,7 @@ def _resolve_includes(
 def _load_raw_recipe(path: Path) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as f:
-            raw = _yaml.load(f)
+            raw = _strip_ruamel_types(_yaml.load(f))
     except FileNotFoundError:
         raise RecipeParseError(f"Included recipe file not found: {path}")
     except Exception as exc:

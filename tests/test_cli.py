@@ -173,7 +173,7 @@ class TestGenerateCommand:
             else:
                 sources.append(source)
         combined = "\n".join(sources)
-        assert '_recipe_manager_cache_dir = "outputs"' in combined
+        assert "_recipe_manager_cache_dir = 'recipe_cache'" in combined
 
     def test_generate_default_output_path_next_to_recipe(self, tmp_path):
         recipe_path = _write_recipe(tmp_path)
@@ -331,3 +331,57 @@ class TestHelpOutput:
         assert "dry-run" in result.output
         assert "deps" in result.output
         assert "schema" in result.output
+
+    def test_run_help_lists_checkpoint_format(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "checkpoint-format" in result.output
+
+
+class TestRunCommandValidation:
+    def test_no_checkpoints_conflicts_with_checkpoint_mode(self, tmp_path):
+        recipe_path = _write_recipe(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "run",
+                str(recipe_path),
+                "--no-checkpoints",
+                "--checkpoint-mode",
+                "explicit",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "cannot be combined" in result.output
+
+    def test_no_checkpoints_conflicts_with_checkpoint_step(self, tmp_path):
+        recipe_path = _write_recipe(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "run",
+                str(recipe_path),
+                "--no-checkpoints",
+                "--checkpoint",
+                "query_ncei",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "cannot be combined" in result.output
+
+    def test_invalid_checkpoint_format_rejected(self, tmp_path):
+        recipe_path = _write_recipe(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "run",
+                str(recipe_path),
+                "--checkpoint-format",
+                "hdf5",
+            ],
+        )
+        assert result.exit_code != 0

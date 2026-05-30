@@ -218,6 +218,45 @@ class TestDryRunPublicAPI:
         assert report.is_valid is False
         assert len(report.errors) > 0
 
+        def test_api_dry_run_reports_undeclared_pipeline_input(self, tmp_path):
+                recipe = _write_recipe(
+                        tmp_path,
+                        """\
+                        recipe:
+                            name: missing_pipeline_input
+                            version: "1.0"
+                            schema_version: "1"
+                        steps:
+                            - id: query
+                                op: query_ncei_data
+                                params:
+                                    file_time_start: "2016-07-25T20:58"
+                                    file_time_end: "2016-07-25T21:45"
+                            - id: setup
+                                op: setup_raw_files
+                                params:
+                                    raw_input_folder: "./raw"
+                                    netcdf_output_folder: ${inputs.netcdf_output_folder}
+                                    sv_output_folder: "./sv"
+                                    output_logs_folder: "./logs"
+                                    raw_file_names: ${inputs.raw_file_names}
+                            - id: stats
+                                op: compute_per_cell_statistics
+                                inputs:
+                                    ds_Sv: ${setup.raw_file_paths}
+                                params:
+                                    range_bin: ${inputs.range_bin}
+                                    ping_time_bin: "10s"
+                                    statistics:
+                                        - cv
+                        """,
+                )
+
+                report = aa_recipe_manager.dry_run(recipe, check_versions=False)
+
+                assert report.is_valid is False
+                assert any("undeclared pipeline input 'range_bin'" in err for err in report.errors)
+
     def test_api_dry_run_never_raises(self):
         try:
             report = aa_recipe_manager.dry_run("/totally/fake/path.yaml", check_versions=False)

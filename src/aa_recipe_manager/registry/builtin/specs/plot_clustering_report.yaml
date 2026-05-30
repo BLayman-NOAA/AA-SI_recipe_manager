@@ -12,11 +12,18 @@ inputs:
     type: Dataset
     description: Embedded normalized ML Dataset containing stored cluster-label variables
   clustering_results:
-    type: dict
+    type: Dataset
     many: true
     description: >
-      Clustering result dict from run_hdbscan. When collect is used for ensemble
-      runs, a list of result dicts is accepted (many: true).
+      Clustering result Dataset from run_hdbscan. Legacy dict results and
+      collected lists are also accepted (many: true).
+  clustering_model:
+    type: object
+    description: >
+      Optional fitted clustering model from run_hdbscan, used only for the
+      HDBSCAN hierarchy plot. Other report panels use clustering_results.
+    required: false
+    default: null
   ds_Sv:
     type: Dataset
     description: Original Sv Dataset for echogram depth reference
@@ -59,6 +66,31 @@ params:
     description: Compute inter-channel pairwise diffs in cluster statistics
     required: false
     default: true
+  save_image:
+    type: bool
+    description: Save the rendered figures to image files; null uses runtime defaults
+    required: false
+    default: null
+  save_formats:
+    type: list
+    description: Image formats to save, chosen from png, svg, jpeg, jpg, and pdf
+    required: false
+    default: null
+  save_dir:
+    type: str
+    description: Optional directory override for saved image artifacts
+    required: false
+    default: null
+  show:
+    type: bool
+    description: Whether to display figures interactively or inline; null uses runtime defaults
+    required: false
+    default: null
+  dpi:
+    type: int
+    description: Optional DPI override for raster image outputs
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.plot_clustering_report

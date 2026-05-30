@@ -465,7 +465,7 @@ class TestNotebookGeneration:
             options={"cache_aware": True, "include_tracker": False},
         )
         code_sources = _combined_code_sources(out)
-        assert '_recipe_manager_cache_dir = "outputs"' in code_sources
+        assert "_recipe_manager_cache_dir = 'recipe_cache'" in code_sources
         assert "with tracker.step(" not in code_sources
         assert "ds_Sv = Version(version='1.0')" in code_sources
 
@@ -635,9 +635,9 @@ class TestNotebookGeneration:
         backend.generate(dag, resolved_deps, out, options={"cache_aware": True})
         nb = _read_notebook(out)
         code_sources = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
-        assert '_recipe_manager_cache_dir = "outputs"' in code_sources
+        assert "_recipe_manager_cache_dir = 'recipe_cache'" in code_sources
         assert '_cache_dir = _Path(_recipe_manager_cache_dir)' in code_sources
-        assert '_cache_meta_path = _cache_dir / ' in code_sources
+        assert '_cache_meta_dir = _cache_dir / ' in code_sources
         assert 'step1_ds_Sv.pkl' in code_sources
         assert '_step_signature = _hashlib.sha256(' in code_sources
         assert code_sources.count("with tracker.step(") == 2
@@ -682,7 +682,7 @@ class TestNotebookGeneration:
         code_sources = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
         assert "output_dir = '/tmp/user-output'" in code_sources
         assert 'output_dir = "outputs"' not in code_sources
-        assert '_recipe_manager_cache_dir = "outputs"' in code_sources
+        assert "_recipe_manager_cache_dir = 'recipe_cache'" in code_sources
 
     def test_cache_aware_script_invalidates_stale_cache_and_tracks_cache_hits(
         self,

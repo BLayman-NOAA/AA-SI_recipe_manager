@@ -98,6 +98,75 @@ class TestLoadRecipe:
         recipe = load_recipe(p)
         assert recipe.steps[0].params == {}
 
+    def test_quoted_scalars_are_plain_python_str(self, tmp_path):
+        """Quoted YAML scalars must come back as plain ``str``, not ruamel subclasses.
+
+        ruamel.yaml's round-trip loader returns ``DoubleQuotedScalarString`` for
+        double-quoted values when ``preserve_quotes=True``. Downstream user code
+        often serializes step params with PyYAML, whose representer dispatch keys
+        on exact type and rejects ``str`` subclasses with ``RepresenterError``.
+        The parser must therefore strip ruamel scalar subclasses at load time.
+        """
+        content = """\
+            recipe:
+              name: quoted_scalar_pipeline
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - id: open_raw
+                op: open_raw_files
+                params:
+                  netcdf_output_folder: "./out"
+                  sonar_model: "EK60"
+                  record_author: "<Your Name>"
+                  retry_count: 3
+                  enabled: true
+            """
+        p = _write_recipe(tmp_path, content)
+        recipe = load_recipe(p)
+        params = recipe.steps[0].params
+        for key, value in params.items():
+            assert type(value) in (str, int, bool, float), (
+                f"param {key!r} has subclass type {type(value).__name__}; "
+                f"expected a plain builtin so PyYAML can serialize it."
+            )
+
+    def test_quoted_scalars_in_include_overrides_are_plain_str(self, tmp_path):
+        """Values flowing through ``input_overrides`` must also be plain types."""
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""\
+            recipe:
+              name: child_pipeline
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              record_author:
+                type: string
+                default: "<Your Name>"
+            steps:
+              - id: open_raw
+                op: open_raw_files
+                params:
+                  netcdf_output_folder: "./out"
+                  sonar_model: "EK60"
+                  record_author: ${inputs.record_author}
+            """))
+        parent = tmp_path / "parent.yaml"
+        parent.write_text(textwrap.dedent("""\
+            recipe:
+              name: parent_pipeline
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+                input_overrides:
+                  record_author: "Brett Layman"
+            """))
+        recipe = load_recipe(parent)
+        author = recipe.steps[0].params["record_author"]
+        assert type(author) is str
+        assert author == "Brett Layman"
+
 
 class TestRecipeIncludes:
     def test_include_flattens_child_steps(self, tmp_path):

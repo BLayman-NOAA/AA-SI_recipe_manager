@@ -40,3 +40,26 @@ class AmbiguousImplementationError(LookupError):
 
 class DependencyVersionError(Exception):
     """Raised when an implementation's dependency is missing or outside the declared version range."""
+
+
+class PipelineExecutionError(Exception):
+    """Raised when a step callable fails during direct pipeline execution.
+
+    Attributes:
+        step_id: Recipe step id where the failure occurred.
+        callable_path: Dotted import path of the failing callable, when known.
+        original: The original exception raised by the callable.
+    """
+
+    def __init__(
+        self,
+        step_id: str,
+        message: str,
+        *,
+        callable_path: str | None = None,
+        original: BaseException | None = None,
+    ) -> None:
+        self.step_id = step_id
+        self.callable_path = callable_path
+        self.original = original
+        super().__init__(message)

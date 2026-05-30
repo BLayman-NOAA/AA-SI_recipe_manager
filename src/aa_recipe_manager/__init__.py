@@ -136,4 +136,52 @@ __all__ = [
     "dry_run",
     "export_dependencies",
     "create_env",
+    "execute",
+    "clean",
 ]
+
+
+def execute(
+    recipe,
+    *,
+    inputs=None,
+    executor="sequential",
+    output_dir=None,
+    implementation_override=None,
+    force=False,
+    no_checkpoints=False,
+    skip_sinks=False,
+    save_provenance=None,
+    progress=None,
+):
+    """Execute a recipe's DAG directly in the current process.
+
+    Thin re-export of :func:`aa_recipe_manager.api.execute`. Returns the
+    :class:`ExecutionResult`.
+    """
+    from aa_recipe_manager.api import execute as _execute
+
+    return _execute(
+        recipe,
+        inputs=inputs,
+        executor=executor,
+        output_dir=output_dir,
+        implementation_override=implementation_override,
+        force=force,
+        no_checkpoints=no_checkpoints,
+        skip_sinks=skip_sinks,
+        save_provenance=save_provenance,
+        progress=progress,
+    )
+
+
+def clean(recipe, output_dir, *, inputs=None, mode="intermediate", dry_run=False):
+    """Remove checkpoint files for ``recipe`` under ``output_dir``.
+
+    Thin re-export of :func:`aa_recipe_manager.api.clean`.
+    """
+    from aa_recipe_manager.api import clean as _clean
+
+    return _clean(
+        recipe, output_dir, inputs=inputs, mode=mode, dry_run=dry_run
+    )

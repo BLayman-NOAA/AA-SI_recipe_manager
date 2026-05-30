@@ -9,8 +9,8 @@ A recipe is a YAML file that describes a complete data processing pipeline as a 
 - **Recipe files** (YAML) capture pipeline structure, steps, dependencies, and parameters without containing implementation code
 - **Step registry** defines scientific specifications for each operation along with implementation mappings to real functions
 - **Code generation** produces Jupyter notebooks or Python scripts from a recipe
-- **Direct execution** runs the DAG as a background process, optionally using Dask or Prefect
-- **Hybrid mode** executes early steps directly, then generates interactive code for the rest
+- **Direct execution** runs the DAG in process with the sequential executor, checkpoint/resume, and progress reporting
+- **Hybrid mode** (planned) executes early steps directly, then generates interactive code for the rest
 - **Round trip** captures parameters from an interactive session back to a recipe file
 
 ## Installation
@@ -53,11 +53,11 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
-Optional extras for distributed execution:
+Optional extras reserved for planned distributed execution backends:
 
 ```bash
-pip install -e ".[dask]"     # Dask executor
-pip install -e ".[prefect]"  # Prefect executor
+pip install -e ".[dask]"     # planned Dask executor
+pip install -e ".[prefect]"  # planned Prefect executor
 ```
 
 ## Usage
@@ -72,8 +72,11 @@ aa-recipe-manager generate my_recipe.yaml
 # Generate a Python script
 aa-recipe-manager generate my_recipe.yaml --format script
 
-# Run a pipeline directly
-aa-recipe-manager run my_recipe.yaml --input raw_folder=/data/survey
+# Run a pipeline directly with checkpoint/resume
+aa-recipe-manager run my_recipe.yaml --input raw_folder=/data/survey --output-dir ./outputs
+
+# Keep only selected checkpoint save points
+aa-recipe-manager run my_recipe.yaml --checkpoint-mode explicit --checkpoint calibrated_sv
 ```
 
 Python API:
@@ -81,8 +84,9 @@ Python API:
 ```python
 from aa_recipe_manager import api
 
-api.generate("my_recipe.yaml", output_format="script")
-api.generate("my_recipe.yaml", output_format="notebook")
+api.generate("my_recipe.yaml", format="script")
+api.generate("my_recipe.yaml", format="notebook")
+api.execute("my_recipe.yaml", output_dir="./outputs")
 ```
 
 ## Development

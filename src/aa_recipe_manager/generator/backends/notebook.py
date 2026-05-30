@@ -11,6 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 import nbformat
 
+from aa_recipe_manager.executor.checkpoint import (
+    CACHE_METADATA_DIR,
+    DEFAULT_OUTPUT_ROOT,
+    OTHER_DATA_DIR,
+)
+
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import DAGNode, PipelineDAG
     from aa_recipe_manager.resolver.dependencies import ResolvedDependencies
@@ -242,7 +248,7 @@ def _build_inputs_cell(
             lines.append(f"{name} = None  # TODO: set this value{comment}")
     if cache_aware:
         lines.append(
-            '_recipe_manager_cache_dir = "outputs"  # Generated step output cache'
+            f'_recipe_manager_cache_dir = {DEFAULT_OUTPUT_ROOT!r}  # Generated step output cache'
         )
         lines.append("_recipe_manager_step_signatures = {}")
     return _code_cell("\n".join(lines))
@@ -567,7 +573,11 @@ def _build_cache_aware_step_lines(
         "import json as _json",
         "_cache_dir = _Path(_recipe_manager_cache_dir)",
         "_cache_dir.mkdir(parents=True, exist_ok=True)",
-        f"_cache_meta_path = _cache_dir / {repr(f'{step_id}__cache_meta.json')}",
+        f"_cache_data_dir = _cache_dir / {OTHER_DATA_DIR!r}",
+        f"_cache_meta_dir = _cache_dir / {CACHE_METADATA_DIR!r}",
+        "_cache_data_dir.mkdir(parents=True, exist_ok=True)",
+        "_cache_meta_dir.mkdir(parents=True, exist_ok=True)",
+        f"_cache_meta_path = _cache_meta_dir / {repr(f'{step_id}__cache_meta.json')}",
         "_cache_meta = {}",
         "if _cache_meta_path.exists():",
         "    try:",
@@ -594,7 +604,7 @@ def _build_cache_aware_step_lines(
     if len(cache_targets) == 1:
         out_name, var_name = cache_targets[0]
         cache_file = f"{step_id}_{out_name}.pkl"
-        code_lines.append(f"_cache_path = _cache_dir / {repr(cache_file)}")
+        code_lines.append(f"_cache_path = _cache_data_dir / {repr(cache_file)}")
         code_lines.append(
             "if _cache_path.exists() "
             "and _cache_meta.get('signature') == _step_signature:"
@@ -648,7 +658,7 @@ def _build_cache_aware_step_lines(
     code_lines.append("_cache_paths = {")
     for out_name, _ in cache_targets:
         cache_file = f"{step_id}_{out_name}.pkl"
-        code_lines.append(f"    {repr(out_name)}: _cache_dir / {repr(cache_file)},")
+        code_lines.append(f"    {repr(out_name)}: _cache_data_dir / {repr(cache_file)},")
     code_lines.append("}")
     code_lines.append(
         "if all(_path.exists() for _path in _cache_paths.values()) "

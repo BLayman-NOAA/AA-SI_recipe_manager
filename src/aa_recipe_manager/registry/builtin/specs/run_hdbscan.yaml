@@ -10,10 +10,18 @@ inputs:
     type: Dataset
 outputs:
   clustering_results:
-    type: dict
+    type: Dataset
     description: >
-      Clustering result dict containing labels, sample indices, fitted model,
-      and silhouette scores.
+      Checkpoint-friendly xarray Dataset containing cluster labels, sample
+      indices, and scalar metadata. Saved as Zarr by default.
+  clustering_model:
+    type: object
+    description: >
+      Optional fitted clustering model used for HDBSCAN hierarchy plots.
+      This output is intentionally separate from clustering_results so the
+      label data can checkpoint as Zarr while the model falls back to pickle.
+    required: false
+    default: null
   background_label:
     type: int
     description: >
@@ -93,4 +101,5 @@ implementations:
       url: https://github.com/BLayman-NOAA/AA-SI_ML.git
     output_map:
       clustering_results: "['clustering_results']"
+      clustering_model: "['clustering_model']"
       background_label: "['background_label']"

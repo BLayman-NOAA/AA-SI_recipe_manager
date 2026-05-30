@@ -97,6 +97,27 @@ class StepExecutionHints(BaseModel):
     prefect_config: dict[str, Any] | None = None
 
 
+CheckpointMode = Literal["eager", "explicit", "terminal", "none"]
+"""Recipe/run-level checkpoint policy.
+
+``eager`` writes a checkpoint after every successful step (default).
+``explicit`` writes only for steps marked ``checkpoint: always``.
+``terminal`` writes only for steps with no downstream consumers.
+``none`` writes nothing (equivalent to ``--no-checkpoints``).
+A per-step ``Step.checkpoint`` value overrides the mode when set.
+"""
+
+CheckpointFormat = Literal["zarr", "netcdf", "pickle"]
+"""Serialization format used when writing checkpoints.
+
+``zarr``    – Zarr v2 store (default).  Best for chunked/dask arrays.
+``netcdf``  – NetCDF4 file via xarray / echopype APIs.
+``pickle``  – Python pickle; last-resort fallback for arbitrary objects.
+JSON-serialisable values are always stored as ``.json`` regardless of this
+setting.
+"""
+
+
 class ExecutionHints(BaseModel):
     """Pipeline-level annotations that influence execution behavior."""
 
@@ -104,6 +125,8 @@ class ExecutionHints(BaseModel):
     parallel_branches: bool = False
     output_format: str | None = None
     executor: str | None = None
+    checkpoint_mode: CheckpointMode | None = None
+    checkpoint_format: CheckpointFormat | None = None
     dask_config: dict[str, Any] | None = None
     prefect_config: dict[str, Any] | None = None
 
@@ -128,6 +151,7 @@ class Step(BaseModel):
     collect: str | None = None
     sweep: SweepDeclaration | None = None
     execution: StepExecutionHints | None = None
+    checkpoint: Literal["always", "never"] | None = None
 
 
 class IncludeBlock(BaseModel):

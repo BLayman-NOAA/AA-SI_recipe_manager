@@ -7,10 +7,12 @@ import sys
 import click
 
 from aa_recipe_manager import api
+from aa_recipe_manager.executor.checkpoint import DEFAULT_OUTPUT_ROOT
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
     DependencyVersionError,
     ImplementationNotFoundError,
+    PipelineExecutionError,
     RecipeParseError,
     RecipeValidationError,
     SpecNotFoundError,
@@ -41,6 +43,11 @@ def _handle_recipe_errors(exc: Exception) -> None:
         click.echo(f"Implementation error: {exc}", err=True)
     elif isinstance(exc, DependencyVersionError):
         click.echo(f"Dependency version error: {exc}", err=True)
+    elif isinstance(exc, PipelineExecutionError):
+        click.echo(f"Pipeline execution failed at step {exc.step_id!r}:", err=True)
+        click.echo(f"  {exc}", err=True)
+        if exc.callable_path:
+            click.echo(f"  callable: {exc.callable_path}", err=True)
     elif isinstance(exc, FileExistsError):
         click.echo(f"File already exists: {exc}", err=True)
     elif isinstance(exc, FileNotFoundError):
@@ -283,3 +290,212 @@ def env_create_cmd(
                 click.echo(f"Warning: {w}", err=True)
     except Exception as exc:
         _handle_recipe_errors(exc)
+
+
+class _CLIProgress:
+    """Simple progress reporter for the ``run`` subcommand."""
+
+    def on_step_start(self, step_id: str, index: int, total: int) -> None:
+        click.echo(f"[{index}/{total}] {step_id} ...", nl=False)
+
+    def on_step_end(
+        self,
+        step_id: str,
+        index: int,
+        total: int,
+        *,
+        skipped: bool = False,
+        elapsed: float = 0.0,
+        error: BaseException | None = None,
+    ) -> None:
+        if error is not None:
+            click.echo(f" FAILED ({elapsed:.2f}s)")
+            return
+        tag = "cached" if skipped else "ok"
+        click.echo(f" {tag} ({elapsed:.2f}s)")
+
+
+@main.command("run")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--executor",
+    default="sequential",
+    type=click.Choice(["sequential"]),
+    show_default=True,
+    help="Executor backend (only 'sequential' is implemented in Stage 6).",
+)
+@click.option(
+    "--output-dir",
+    default=f"./{DEFAULT_OUTPUT_ROOT}",
+    show_default=True,
+    help="Directory for serialized step outputs and checkpoints.",
+)
+@click.option("--implementation", default=None, help="Override implementation key for all steps.")
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Supply a pipeline-level input value (repeatable).",
+)
+@click.option("--save-provenance", default=None, help="Path for the provenance sidecar file.")
+@click.option("--skip-sinks", is_flag=True, default=False, help="Skip sink steps.")
+@click.option("--force", is_flag=True, default=False, help="Bypass checkpoint checks.")
+@click.option(
+    "--no-checkpoints",
+    is_flag=True,
+    default=False,
+    help="Run without writing or reading any checkpoint files.",
+)
+@click.option(
+    "--checkpoint-mode",
+    default=None,
+    type=click.Choice(["eager", "explicit", "terminal", "none"]),
+    help=(
+        "Override recipe's checkpoint policy. 'eager' (default) saves every "
+        "step; 'explicit' only saves steps marked checkpoint: always; "
+        "'terminal' only saves leaf steps; 'none' suppresses default saves "
+        "but still honors per-step 'checkpoint: always' and --checkpoint "
+        "overrides (use --no-checkpoints to disable checkpoints entirely)."
+    ),
+)
+@click.option(
+    "--checkpoint",
+    "checkpoint_steps",
+    multiple=True,
+    metavar="STEP_ID",
+    help="Force-checkpoint a step regardless of mode (repeatable).",
+)
+@click.option(
+    "--checkpoint-format",
+    default=None,
+    type=click.Choice(["zarr", "netcdf", "pickle"]),
+    help=(
+        "Serialization format for checkpoint files. 'zarr' (default) writes "
+        "Zarr stores; 'netcdf' writes NetCDF4 files; 'pickle' is a last-resort "
+        "fallback. Overrides the recipe's execution.checkpoint_format setting."
+    ),
+)
+def run_cmd(
+    recipe: str,
+    executor: str,
+    output_dir: str,
+    implementation: str | None,
+    inputs: tuple[str, ...],
+    save_provenance: str | None,
+    skip_sinks: bool,
+    force: bool,
+    no_checkpoints: bool,
+    checkpoint_mode: str | None,
+    checkpoint_steps: tuple[str, ...],
+    checkpoint_format: str | None,
+) -> None:
+    """Execute RECIPE's pipeline directly in this process."""
+    # Force a non-interactive matplotlib backend before any visualization
+    # module can be imported.  This prevents Tk windows from appearing and
+    # avoids the "main thread is not in main loop" crash that occurs when
+    # matplotlib's Tk backend is initialised from a background thread.
+    # Users who explicitly set MPLBACKEND (e.g. to display plots locally)
+    # are not overridden.
+    import os as _os
+    _os.environ.setdefault("MPLBACKEND", "Agg")
+
+    if no_checkpoints and (checkpoint_mode or checkpoint_steps):
+        _fail(
+            "--no-checkpoints cannot be combined with --checkpoint-mode or "
+            "--checkpoint; remove --no-checkpoints or drop the other flags."
+        )
+
+    parsed_inputs: dict[str, str] = {}
+    for item in inputs:
+        if "=" not in item:
+            _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
+        name, _, value = item.partition("=")
+        parsed_inputs[name.strip()] = value.strip()
+
+    try:
+        result = api.execute(
+            recipe,
+            inputs=parsed_inputs or None,
+            executor=executor,
+            output_dir=output_dir,
+            implementation_override=implementation,
+            force=force,
+            no_checkpoints=no_checkpoints,
+            skip_sinks=skip_sinks,
+            checkpoint_mode=checkpoint_mode,
+            checkpoint_steps=list(checkpoint_steps) or None,
+            checkpoint_format=checkpoint_format,
+            save_provenance=save_provenance,
+            progress=_CLIProgress(),
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    click.echo("")
+    click.echo(
+        f"Executed {len(result.executed_steps)} step(s), "
+        f"skipped {len(result.skipped_steps)} (cache hits)."
+    )
+    if result.output_dir is not None:
+        click.echo(f"Outputs in: {result.output_dir}")
+
+
+@main.command("clean")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--output-dir",
+    default=f"./{DEFAULT_OUTPUT_ROOT}",
+    show_default=True,
+    help="Directory containing checkpoint files.",
+)
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Supply a pipeline-level input value (repeatable).",
+)
+@click.option("--all", "clean_all", is_flag=True, default=False, help="Remove every checkpoint.")
+@click.option("--stale", is_flag=True, default=False, help="Remove only stale checkpoints.")
+@click.option("--dry-run", is_flag=True, default=False, help="Show files without removing them.")
+def clean_cmd(
+    recipe: str,
+    output_dir: str,
+    inputs: tuple[str, ...],
+    clean_all: bool,
+    stale: bool,
+    dry_run: bool,
+) -> None:
+    """Remove checkpoint files for RECIPE under --output-dir."""
+    if clean_all and stale:
+        _fail("--all and --stale cannot be combined")
+    mode = "all" if clean_all else ("stale" if stale else "intermediate")
+
+    parsed_inputs: dict[str, str] = {}
+    for item in inputs:
+        if "=" not in item:
+            _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
+        name, _, value = item.partition("=")
+        parsed_inputs[name.strip()] = value.strip()
+
+    try:
+        removed = api.clean(
+            recipe,
+            output_dir,
+            inputs=parsed_inputs or None,
+            mode=mode,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    verb = "Would remove" if dry_run else "Removed"
+    if not removed:
+        click.echo("Nothing to remove.")
+        return
+    click.echo(f"{verb} {len(removed)} file(s):")
+    for path in removed:
+        click.echo(f"  {path}")

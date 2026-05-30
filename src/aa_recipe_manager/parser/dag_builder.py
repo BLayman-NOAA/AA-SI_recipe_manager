@@ -8,6 +8,7 @@ import warnings
 from collections import deque
 from pathlib import Path
 from typing import Any
+import re
 
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -28,6 +29,9 @@ from aa_recipe_manager.model.types import (
 )
 from aa_recipe_manager.registry.registry import Registry
 from aa_recipe_manager.resolver.params import extract_edge_refs, resolve_input_refs
+
+
+_INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
 
 def build_dag(
@@ -108,6 +112,7 @@ def build_dag(
             )
 
     valid_step_ids = {s.id for s in recipe.steps}
+    _validate_pipeline_input_refs(recipe, nodes, errors)
     _validate_edges(edges, nodes, valid_step_ids, errors, warn_msgs)
     _validate_required_inputs(nodes, errors)
 
@@ -409,6 +414,50 @@ def _validate_required_inputs(
                 errors.append(
                     f"Step '{node.step.id}': required input '{input_name}' is not wired."
                 )
+
+
+def _validate_pipeline_input_refs(
+    recipe: Recipe,
+    nodes: dict[str, DAGNode],
+    errors: list[str],
+) -> None:
+    """Reject ${inputs.x} references that do not match declared recipe inputs."""
+    declared_inputs = set(recipe.inputs)
+    for node in nodes.values():
+        for input_name, raw_value in node.step.inputs.items():
+            for missing_name in _iter_unknown_input_refs(raw_value, declared_inputs):
+                errors.append(
+                    f"Step '{node.step.id}': input '{input_name}' references "
+                    f"undeclared pipeline input '{missing_name}'."
+                )
+        for param_name, raw_value in node.step.params.items():
+            for missing_name in _iter_unknown_input_refs(raw_value, declared_inputs):
+                errors.append(
+                    f"Step '{node.step.id}': param '{param_name}' references "
+                    f"undeclared pipeline input '{missing_name}'."
+                )
+
+
+def _iter_unknown_input_refs(value: Any, declared_inputs: set[str]) -> list[str]:
+    """Return undeclared ${inputs.x} names found anywhere within a nested value."""
+    missing: list[str] = []
+    if isinstance(value, str):
+        for name in _INPUT_REF.findall(value):
+            if name not in declared_inputs and name not in missing:
+                missing.append(name)
+        return missing
+    if isinstance(value, list):
+        for item in value:
+            for name in _iter_unknown_input_refs(item, declared_inputs):
+                if name not in missing:
+                    missing.append(name)
+        return missing
+    if isinstance(value, dict):
+        for item in value.values():
+            for name in _iter_unknown_input_refs(item, declared_inputs):
+                if name not in missing:
+                    missing.append(name)
+    return missing
 
 
 def _topological_sort(
