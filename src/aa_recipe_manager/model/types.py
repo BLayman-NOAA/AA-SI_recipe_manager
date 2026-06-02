@@ -44,6 +44,12 @@ class ParamDeclaration(BaseModel):
     default: Any | None = None
     required: bool = True
     constraints: dict[str, Any] | None = None
+    fingerprint_contents: bool = False
+    """When True and type=='path', the directory/file contents are hashed as
+    part of the step's cache key. Opt-in only: defaults to False so that
+    output/download directories don't invalidate caches between runs.
+    Set to True on read-only input paths (e.g. calibration folders).
+    """
 
 
 class Dependency(BaseModel):
@@ -173,6 +179,12 @@ class InputDeclaration(BaseModel):
     description: str | None = None
     default: Any | None = None
     required: bool = True
+    fingerprint_contents: bool = False
+    """When True and type=='path', the directory/file contents are hashed as
+    part of every step that references this input. Opt-in only: defaults to
+    False so that download/output directories don't invalidate caches between
+    runs. Set to True on stable read-only inputs (e.g. calibration folders).
+    """
 
     @model_validator(mode="after")
     def set_required_from_default(self) -> InputDeclaration:

@@ -96,6 +96,7 @@ steps:
 
   - id: open_raw
     op: open_raw_files
+    checkpoint: always
     inputs:
       raw_file_paths: ${setup_raw_files.raw_file_paths}
     params:
@@ -112,6 +113,7 @@ steps:
 
   - id: compute_sv
     op: compute_sv
+    checkpoint: always
     inputs:
       echodata: ${open_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
@@ -127,7 +129,8 @@ steps:
     params:
       # NOTE: keep depth grid uniform across ping_time so echopype's
       # ``basic`` seafloor detector accepts the dataset.
-     depth_offset: 0.0
+    #  depth_offset: 0.0
+     use_platform_vertical_offsets: true
 
   - id: ep_add_splitbeam_angle
     op: ep_add_splitbeam_angle
@@ -147,24 +150,24 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
-  # - id: detect_seafloor
-  #   op: detect_seafloor
-  #   depends_on: [log_seafloor_stats]
-  #   inputs:
-  #     ds_Sv: ${compute_sv.ds_Sv}
-  #     echodata: ${open_raw.echodata}
-  #   params:
-  #     min_valid_depth_m: 10.0
-
   - id: detect_seafloor
-    op: ep_detect_seafloor
+    op: detect_seafloor
+    depends_on: [log_seafloor_stats]
     inputs:
-      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${open_raw.echodata}
     params:
-      method: "basic"
-      method_params:
-        var_name: "Sv"
-        channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
+      min_valid_depth_m: 10.0
+
+  # - id: detect_seafloor
+  #   op: ep_detect_seafloor
+  #   inputs:
+  #     ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+  #   params:
+  #     method: "basic"
+  #     method_params:
+  #       var_name: "Sv"
+  #       channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
 
 
   - id: create_seafloor_mask
@@ -207,6 +210,7 @@ steps:
 
   - id: remove_noise
     op: remove_background_noise
+    checkpoint: always
     inputs:
       ds_Sv: ${apply_mask.ds_Sv}
     params:
@@ -224,6 +228,7 @@ steps:
 
   - id: compute_mvbs
     op: compute_mvbs
+    checkpoint: always
     inputs:
       ds_Sv: ${mask_sparse.ds_Sv}
     params:

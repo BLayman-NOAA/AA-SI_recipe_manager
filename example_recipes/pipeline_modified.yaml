@@ -34,6 +34,16 @@ inputs:
     description:
     default: ./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
     required: false
+  range_bin:
+    type: str
+    description:
+    default: 10m
+    required: false
+  ping_time_bin:
+    type: str
+    description:
+    default: 10s
+    required: false
   raw_file_names:
     type: list
     description: "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\". Note that generate_standardized_cal_mapping always scans the full folder; this input only constrains the set of files that get opened and processed.\n"
@@ -46,7 +56,7 @@ steps:
   inputs: {}
   params:
     file_time_start: 2016-07-25T20:58
-    file_time_end: 2016-07-25T23:45
+    file_time_end: 2016-07-25T21:45
     filters:
       CRUISE_NAME: HB1603
   depends_on:
@@ -56,6 +66,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: download_raw
   op: download_ncei_data
   description:
@@ -74,12 +85,13 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: setup_raw_files
   op: setup_raw_files
   description:
   inputs: {}
   params:
-    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2345
+    raw_input_folder: raw_file_inputs/HB1603_2016-07-25_2058-2145
     netcdf_output_folder: ./NetCDF-files
     sv_output_folder: ./Sv-files
     output_logs_folder: ./Output-Logs
@@ -92,12 +104,13 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: gen_cal_mapping
   op: generate_standardized_cal_mapping
   description:
   inputs: {}
   params:
-    raw_input_folder: raw_file_inputs\HB1603_2016-07-25_2058-2345
+    raw_input_folder: raw_file_inputs/HB1603_2016-07-25_2058-2145
     cal_input_folder: ./calibration_files/HB201607_cal
     output_base: ./nefsc_uc_e2_cal_outputs
     cruise_id: HB1603
@@ -112,6 +125,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: open_raw
   op: open_raw_files
   description:
@@ -128,6 +142,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: extract_cal_params
   op: extract_standardized_cal_params
   description:
@@ -143,6 +158,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: compute_sv
   op: compute_sv
   description:
@@ -158,6 +174,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: ep_add_depth
   op: ep_add_depth
   description:
@@ -165,7 +182,7 @@ steps:
     ds_Sv: ${compute_sv.ds_Sv}
     echodata: ${open_raw.echodata}
   params:
-    depth_offset: 0.0
+    use_platform_vertical_offsets: true
   depends_on:
   implementation_override:
   custom_spec:
@@ -173,6 +190,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: ep_add_splitbeam_angle
   op: ep_add_splitbeam_angle
   description:
@@ -190,6 +208,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: log_seafloor_stats
   op: log_seafloor_detection_stats
   description:
@@ -205,23 +224,24 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: detect_seafloor
-  op: ep_detect_seafloor
+  op: detect_seafloor
   description:
   inputs:
-    ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+    ds_Sv: ${compute_sv.ds_Sv}
+    echodata: ${open_raw.echodata}
   params:
-    method: basic
-    method_params:
-      var_name: Sv
-      channel: GPT  38 kHz 0090720346bc 1-1 ES38B
+    min_valid_depth_m: 10.0
   depends_on:
+  - log_seafloor_stats
   implementation_override:
   custom_spec:
   map_over:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: create_seafloor_mask
   op: create_seafloor_mask
   description:
@@ -237,6 +257,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: create_surface_mask
   op: create_surface_mask
   description:
@@ -251,6 +272,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: create_frequency_mask
   op: create_frequency_mask
   description:
@@ -268,6 +290,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: combine_masks
   op: combine_masks
   description:
@@ -285,6 +308,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: apply_mask
   op: apply_sv_mask
   description:
@@ -299,6 +323,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: remove_noise
   op: remove_background_noise
   description:
@@ -314,6 +339,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: mask_sparse
   op: mask_sparse_bins
   description:
@@ -330,6 +356,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: compute_mvbs
   op: compute_mvbs
   description:
@@ -345,6 +372,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: add_line_overlay
   op: add_line_overlay
   description:
@@ -360,6 +388,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: plot_sv_clean
   op: plot_sv_echogram
   description:
@@ -379,6 +408,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: plot_mvbs
   op: plot_sv_echogram
   description:
@@ -404,14 +434,15 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: compute_cell_stats
   op: compute_per_cell_statistics
   description:
   inputs:
     ds_Sv: ${remove_noise.ds_Sv}
   params:
-    range_bin: 20m
-    ping_time_bin: 20s
+    range_bin: 10m
+    ping_time_bin: 10s
     statistics:
     - cv
   depends_on:
@@ -421,6 +452,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: reshape_ml
   op: reshape_for_ml
   description:
@@ -438,6 +470,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: add_aux_features
   op: add_auxiliary_features
   description:
@@ -449,6 +482,7 @@ steps:
     dataset_name: ml_dataset
     features:
     - cell_cv
+    - depth
   depends_on:
   implementation_override:
   custom_spec:
@@ -456,6 +490,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: normalize_ml
   op: normalize_ml_data
   description:
@@ -473,6 +508,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: plot_normalized_ml
   op: plot_ml_echogram
   description:
@@ -495,6 +531,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: run_hdbscan
   op: run_hdbscan
   description:
@@ -505,7 +542,7 @@ steps:
     normalization_name: normalized_flatten_mean_centered
     ml_result_name: hdbscan_results
     min_cluster_size_fraction: 0.02
-    min_samples: 4
+    min_samples: 2
     sample_size: 1000000
     cluster_selection_method: leaf
     use_hdbscan: true
@@ -517,6 +554,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: embed_results
   op: embed_clustering_results
   description:
@@ -533,12 +571,14 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 - id: plot_clustering_report
   op: plot_clustering_report
   description:
   inputs:
     ds_normalized: ${embed_results.ds_normalized}
     clustering_results: ${run_hdbscan.clustering_results}
+    clustering_model: ${run_hdbscan.clustering_model}
     ds_Sv: ${remove_noise.ds_Sv}
   params:
     dataset_name: ml_dataset
@@ -569,6 +609,7 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint:
 outputs:
 execution:
 include_blocks:

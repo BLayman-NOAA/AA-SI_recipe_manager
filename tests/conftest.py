@@ -77,7 +77,6 @@ def hb1603_recipe_path():
     return (
         Path(__file__).parent.parent
         / "example_recipes"
-        / "Workshop_example_recipe_refactor"
         / "hb1603_survey_pipeline.yaml"
     )
 
@@ -87,7 +86,6 @@ def hb1603_extra_calibration_recipe_path():
     return (
         Path(__file__).parent.parent
         / "example_recipes"
-        / "Workshop_example_recipe_refactor"
         / "extra_calibration_hb1603_survey_pipeline.yaml"
     )
 

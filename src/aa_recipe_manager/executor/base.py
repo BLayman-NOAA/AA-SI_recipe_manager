@@ -21,16 +21,24 @@ class ExecutionResult:
         provenance: Captured runtime provenance for the run.
         logs: Step-level log entries (one per executed or skipped step).
         skipped_steps: Step ids that were skipped because of a cache hit.
+        pruned_steps: Step ids skipped because nothing downstream needed them.
         executed_steps: Step ids that actually invoked their callable.
         output_dir: Directory used for checkpoint serialization, if any.
+        outputs_dir: Directory holding user-facing outputs (images, logs).
+        log_file: Path to the captured ``standard_out.txt`` log, if written.
+        console_log: Captured per-step stdout/stderr text for the run.
     """
 
     outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     provenance: Any | None = None
     logs: list[str] = field(default_factory=list)
     skipped_steps: list[str] = field(default_factory=list)
+    pruned_steps: list[str] = field(default_factory=list)
     executed_steps: list[str] = field(default_factory=list)
     output_dir: Path | None = None
+    outputs_dir: Path | None = None
+    log_file: Path | None = None
+    console_log: str = ""
 
 
 @runtime_checkable
@@ -85,5 +93,8 @@ class PipelineExecutor(Protocol):
         force: bool = False,
         no_checkpoints: bool = False,
         skip_sinks: bool = False,
+        regenerate_outputs: bool = False,
+        outputs_dir: str | Path | None = None,
+        log_destination: str = "file",
         progress: ProgressCallback | None = None,
     ) -> ExecutionResult: ...

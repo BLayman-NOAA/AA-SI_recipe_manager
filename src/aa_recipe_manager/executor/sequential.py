@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import io
 import time
 from collections.abc import Iterable
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +19,8 @@ from aa_recipe_manager.executor.base import (
 )
 from aa_recipe_manager.executor.checkpoint import (
     CheckpointManager,
-    compute_recipe_hash,
+    compute_step_hashes,
+    plan_execution,
     resolve_checkpoint_policy,
 )
 from aa_recipe_manager.executor.invocation import (
@@ -32,6 +35,45 @@ if TYPE_CHECKING:
     from aa_recipe_manager.model.types import CheckpointFormat, CheckpointMode, DAGNode, PipelineDAG
 
 
+LOGS_DIR = "logs"
+STANDARD_OUT_FILENAME = "standard_out.txt"
+_DEFAULT_OUTPUTS_DIRNAME = "outputs"
+_LOG_DESTINATIONS = ("file", "console", "both")
+
+
+class _Tee:
+    """Write to several text streams at once (None streams are ignored)."""
+
+    def __init__(self, *streams: Any) -> None:
+        self._streams = [s for s in streams if s is not None]
+
+    def write(self, data: str) -> int:
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self._streams:
+            stream.flush()
+
+
+def _resolve_outputs_dir(
+    outputs_dir: str | Path | None,
+    cache_dir: Path | None,
+) -> Path | None:
+    """Resolve the user-facing outputs directory.
+
+    Explicit ``outputs_dir`` wins. Otherwise it defaults to a sibling of the
+    checkpoint cache directory named ``outputs`` (e.g. ``recipe_cache`` ->
+    ``outputs``). Returns ``None`` when neither is available.
+    """
+    if outputs_dir is not None:
+        return Path(outputs_dir)
+    if cache_dir is not None:
+        return cache_dir.parent / _DEFAULT_OUTPUTS_DIRNAME
+    return None
+
+
 class SequentialExecutor:
     """Run a PipelineDAG's steps one at a time in topological order."""
 
@@ -44,12 +86,21 @@ class SequentialExecutor:
         force: bool = False,
         no_checkpoints: bool = False,
         skip_sinks: bool = False,
+        regenerate_outputs: bool = False,
+        outputs_dir: str | Path | None = None,
+        log_destination: str = "file",
         checkpoint_mode: CheckpointMode | str | None = None,
         checkpoint_steps: Iterable[str] | None = None,
         checkpoint_format: CheckpointFormat | str | None = None,
         progress: ProgressCallback | None = None,
     ) -> ExecutionResult:
         from aa_recipe_manager.provenance.recorder import ProvenanceRecorder
+
+        if log_destination not in _LOG_DESTINATIONS:
+            raise ValueError(
+                f"log_destination must be one of {_LOG_DESTINATIONS}, "
+                f"got {log_destination!r}"
+            )
 
         pipeline_inputs = dict(inputs or {})
         runtime = RuntimeContext()
@@ -68,10 +119,9 @@ class SequentialExecutor:
             )
             checkpoints = CheckpointManager(
                 resolved_output_dir,
-                compute_recipe_hash(dag),
+                compute_step_hashes(dag, pipeline_inputs),
                 preferred_format=effective_format,
             )
-            resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
         policy: set[str] = set()
         if checkpoints is not None:
@@ -82,8 +132,81 @@ class SequentialExecutor:
             )
 
         result = ExecutionResult(output_dir=resolved_output_dir)
+
+        # User-facing outputs (images, logs) live in a separate tree from the
+        # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
+        # execution context's ``artifacts_dir``) and per-step stdout/stderr to
+        # ``<outputs>/logs/standard_out.txt``.
+        resolved_outputs_dir = _resolve_outputs_dir(outputs_dir, resolved_output_dir)
+        result.outputs_dir = resolved_outputs_dir
+
+        log_buffer = io.StringIO()
+        log_file_handle = None
+        if resolved_outputs_dir is not None and log_destination in ("file", "both"):
+            logs_dir = resolved_outputs_dir / LOGS_DIR
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir / STANDARD_OUT_FILENAME
+            log_file_handle = open(log_path, "w", encoding="utf-8")
+            result.log_file = log_path
+        log_sink = _Tee(log_buffer, log_file_handle)
+
+        try:
+            self._run_steps(
+                dag=dag,
+                result=result,
+                runtime=runtime,
+                pipeline_inputs=pipeline_inputs,
+                checkpoints=checkpoints,
+                policy=policy,
+                resolved_output_dir=resolved_output_dir,
+                resolved_outputs_dir=resolved_outputs_dir,
+                force=force,
+                skip_sinks=skip_sinks,
+                regenerate_outputs=regenerate_outputs,
+                progress=progress,
+                log_sink=log_sink,
+            )
+        finally:
+            if log_file_handle is not None:
+                log_file_handle.close()
+
+        result.console_log = log_buffer.getvalue()
+        result.provenance = ProvenanceRecorder.capture(dag)
+        return result
+
+    def _run_steps(
+        self,
+        *,
+        dag: PipelineDAG,
+        result: ExecutionResult,
+        runtime: RuntimeContext,
+        pipeline_inputs: dict[str, Any],
+        checkpoints: CheckpointManager | None,
+        policy: set[str],
+        resolved_output_dir: Path | None,
+        resolved_outputs_dir: Path | None,
+        force: bool,
+        skip_sinks: bool,
+        regenerate_outputs: bool,
+        progress: ProgressCallback,
+        log_sink: _Tee,
+    ) -> None:
         step_ids = list(dag.topological_order)
         total = len(step_ids)
+        execution_plan = plan_execution(
+            dag,
+            checkpoints,
+            force=force,
+            regenerate_outputs=regenerate_outputs,
+        )
+        # Filter blockers by policy: only flag steps that aren't already
+        # checkpointed (those in policy get saved, so they aren't really blockers).
+        blocking = [s for s in execution_plan.blockers if s not in policy]
+        if blocking:
+            result.logs.append(
+                "resume frontier limited by uncheckpointed step(s): "
+                f"{', '.join(blocking)}"
+            )
 
         for index, step_id in enumerate(step_ids, start=1):
             node = dag.nodes[step_id]
@@ -92,21 +215,28 @@ class SequentialExecutor:
                 runtime.record(step_id, {})
                 continue
 
+            # Side-effect steps (sinks / no declared outputs) produce on-disk
+            # artifacts (plots, logs) rather than cacheable return values, so
+            # they cannot be loaded from a checkpoint. They are skipped only
+            # via a hash-matching marker (see below).
+            is_side_effect = node.spec.sink or not node.spec.outputs
+
             progress.on_step_start(step_id, index, total)
             start = time.perf_counter()
 
             try:
-                # Cache reads are intentionally independent of the checkpoint
-                # policy: any present, hash-matching checkpoint is loaded so
-                # switching modes between runs (e.g. eager -> none) never
-                # wastes work cached by a prior run.
-                if (
-                    checkpoints is not None
-                    and not force
-                    and not node.spec.sink
-                    and node.spec.outputs
-                    and checkpoints.has_checkpoint(step_id)
-                ):
+                if step_id in execution_plan.pruned:
+                    elapsed = time.perf_counter() - start
+                    result.pruned_steps.append(step_id)
+                    result.logs.append(
+                        f"pruned: {step_id} ({elapsed:.3f}s)"
+                    )
+                    progress.on_step_end(
+                        step_id, index, total, skipped=True, elapsed=elapsed
+                    )
+                    continue
+
+                if step_id in execution_plan.loadable:
                     outputs = checkpoints.load(step_id)
                     runtime.record(step_id, outputs)
                     result.outputs[step_id] = outputs
@@ -120,11 +250,33 @@ class SequentialExecutor:
                     )
                     continue
 
+                if step_id in execution_plan.marker_hits:
+                    runtime.record(step_id, {})
+                    result.outputs[step_id] = {}
+                    result.skipped_steps.append(step_id)
+                    elapsed = time.perf_counter() - start
+                    result.logs.append(
+                        f"sink cache hit: {step_id} ({elapsed:.3f}s)"
+                    )
+                    progress.on_step_end(
+                        step_id, index, total, skipped=True, elapsed=elapsed
+                    )
+                    continue
+
+                if step_id not in execution_plan.must_run:
+                    raise PipelineExecutionError(
+                        step_id,
+                        f"internal execution planner error for step {step_id!r}",
+                    )
+
+                log_sink.write(f"\n=== step {step_id} ({index}/{total}) ===\n")
+                log_sink.flush()
                 with execution_context(
                     mode="direct",
                     output_dir=resolved_output_dir,
                     step_id=step_id,
-                ):
+                    artifacts_dir=resolved_outputs_dir,
+                ), redirect_stdout(log_sink), redirect_stderr(log_sink):
                     outputs = self._execute_step(node, runtime, pipeline_inputs)
             except PipelineExecutionError as exc:
                 elapsed = time.perf_counter() - start
@@ -149,12 +301,15 @@ class SequentialExecutor:
             result.executed_steps.append(step_id)
             if checkpoints is not None and outputs and step_id in policy:
                 checkpoints.save(step_id, outputs)
+            elif checkpoints is not None and is_side_effect:
+                # Record a marker so an unchanged future run can skip
+                # regenerating this side-effect step's on-disk artifacts.
+                checkpoints.save_marker(step_id)
             elapsed = time.perf_counter() - start
             result.logs.append(f"ran: {step_id} ({elapsed:.3f}s)")
+            log_sink.write(f"--- {step_id}: done ({elapsed:.3f}s) ---\n")
+            log_sink.flush()
             progress.on_step_end(step_id, index, total, elapsed=elapsed)
-
-        result.provenance = ProvenanceRecorder.capture(dag)
-        return result
 
     def _execute_step(
         self,

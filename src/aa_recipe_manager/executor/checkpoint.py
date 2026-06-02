@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
-"""CheckpointManager: eager step-output checkpointing and resume support.
+"""CheckpointManager: step-output checkpointing and resume support.
 
 Each call to :meth:`save` writes one cached file per output and a per-step
-metadata sidecar that records the recipe hash, output filenames, and how
-each output was serialized. :meth:`load` reads them back. Recipe-hash
+metadata sidecar that records the step hash, output filenames, and how
+each output was serialized. :meth:`load` reads them back. Step-hash
 mismatch invalidates a cached step entirely.
 """
 
@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import pickle
+import re
 import shutil
 import stat
 import time
@@ -25,7 +26,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import CheckpointFormat, CheckpointMode, PipelineDAG
+    from aa_recipe_manager.model.types import (
+        CheckpointFormat,
+        CheckpointMode,
+        DAGNode,
+        PipelineDAG,
+        Step,
+    )
+
+# Matches ${inputs.name} anywhere within a string (mirrors resolver.params).
+_INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
 
 META_SUFFIX = "__cache_meta.json"
@@ -39,13 +49,305 @@ OTHER_DATA_DIR = "other"
 
 CleanMode = Literal["intermediate", "all", "stale"]
 
-_DEFAULT_CHECKPOINT_MODE: CheckpointMode = "eager"
+_DEFAULT_CHECKPOINT_MODE: CheckpointMode = "explicit"
 
 
-def compute_recipe_hash(dag: PipelineDAG) -> str:
-    """Stable SHA-256 hash of the recipe model (used for cache invalidation)."""
-    payload = dag.recipe.model_dump_json().encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+def _referenced_pipeline_inputs(node: DAGNode) -> set[str]:
+    """Names of pipeline inputs (``${inputs.x}``) referenced by a step.
+
+    Scans the step's input wiring, raw params, and resolved params so that a
+    change to a referenced pipeline-input *value* participates in the step's
+    cache hash without dragging in unrelated inputs.
+    """
+    names: set[str] = set()
+
+    def scan(value: Any) -> None:
+        if isinstance(value, str):
+            names.update(_INPUT_REF.findall(value))
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                scan(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                scan(item)
+
+    for value in node.step.inputs.values():
+        scan(value)
+    for value in node.step.params.values():
+        scan(value)
+    for value in node.resolved_params.values():
+        scan(value)
+    return names
+
+
+def _path_fingerprint(path_value: Any) -> dict[str, Any] | None:
+    """Return a deterministic, stat-only fingerprint for a path-like value.
+
+    Files are fingerprinted by size and nanosecond mtime. Directories are
+    fingerprinted by a sorted top-level listing containing each entry's name,
+    kind, size, and nanosecond mtime. This catches common local-input changes
+    (added/removed/replaced files) without reading large file contents.
+    """
+    if path_value is None:
+        return None
+    if not isinstance(path_value, (str, Path)):
+        path_value = str(path_value)
+    path = Path(path_value)
+    if not path.exists():
+        return {"path": str(path), "kind": "missing"}
+    stat_result = path.stat()
+    if path.is_file():
+        return {
+            "path": str(path),
+            "kind": "file",
+            "size": stat_result.st_size,
+            "mtime_ns": stat_result.st_mtime_ns,
+        }
+    if path.is_dir():
+        entries: list[dict[str, Any]] = []
+        for entry in sorted(path.iterdir(), key=lambda item: item.name):
+            entry_stat = entry.stat()
+            entries.append(
+                {
+                    "name": entry.name,
+                    "kind": "dir" if entry.is_dir() else "file",
+                    "size": entry_stat.st_size if entry.is_file() else None,
+                    "mtime_ns": entry_stat.st_mtime_ns,
+                }
+            )
+        return {
+            "path": str(path),
+            "kind": "dir",
+            "mtime_ns": stat_result.st_mtime_ns,
+            "entries": entries,
+        }
+    return {
+        "path": str(path),
+        "kind": "other",
+        "mtime_ns": stat_result.st_mtime_ns,
+    }
+
+
+def _step_fingerprint(
+    node: DAGNode,
+    pipeline_inputs: dict[str, Any],
+    input_declarations: dict[str, Any],
+) -> dict[str, Any]:
+    """Content fingerprint of a single step's definition.
+
+    Captures everything that can change a step's outputs *locally*: its op,
+    input/param wiring, resolved params, mapping/sweep declarations, the
+    resolved implementation, and the values of any pipeline inputs the step
+    references. Upstream data dependencies are folded in separately via the
+    Merkle parent hashes in :func:`compute_step_hashes`.
+    """
+    step = node.step
+    impl = node.implementation
+    referenced = _referenced_pipeline_inputs(node)
+    resolved_inputs = {name: pipeline_inputs.get(name) for name in sorted(referenced)}
+    pipeline_input_paths = {
+        name: _path_fingerprint(resolved_inputs[name])
+        for name in sorted(referenced)
+        if getattr(input_declarations.get(name), "fingerprint_contents", False)
+    }
+    param_paths = {
+        name: _path_fingerprint(node.resolved_params.get(name))
+        for name, declaration in sorted(node.spec.params.items())
+        if getattr(declaration, "fingerprint_contents", False)
+    }
+    return {
+        "op": step.op,
+        "inputs": step.inputs,
+        "params": step.params,
+        "resolved_params": node.resolved_params,
+        "map_over": step.map_over,
+        "collect": step.collect,
+        "sweep": step.sweep.model_dump() if step.sweep is not None else None,
+        "callable_path": impl.callable_path if impl is not None else None,
+        "implementation_key": impl.key if impl is not None else None,
+        "param_map": impl.param_map if impl is not None else None,
+        "output_map": impl.output_map if impl is not None else None,
+        "custom_spec": (
+            step.custom_spec.model_dump() if step.custom_spec is not None else None
+        ),
+        "pipeline_inputs": resolved_inputs,
+        "pipeline_input_paths": pipeline_input_paths,
+        "param_paths": param_paths,
+    }
+
+
+def _step_upstream(dag: PipelineDAG) -> dict[str, set[str]]:
+    """Map each step id to the set of step ids that feed it (data + ordering)."""
+    upstream: dict[str, set[str]] = {sid: set() for sid in dag.topological_order}
+    for edge in dag.edges:
+        upstream.setdefault(edge.target_step_id, set()).add(edge.source_step_id)
+    for step_id in dag.topological_order:
+        node = dag.nodes[step_id]
+        for dep in node.step.depends_on or []:
+            upstream.setdefault(step_id, set()).add(dep)
+    return upstream
+
+
+def compute_step_hashes(
+    dag: PipelineDAG,
+    pipeline_inputs: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Per-step Merkle hashes used for content-addressed checkpoint validation.
+
+    Each step's hash combines a fingerprint of the step's own definition (see
+    :func:`_step_fingerprint`) with the hashes of every upstream step that
+    feeds one of its inputs. Because steps are visited in topological order,
+    every parent hash is available before its children are computed.
+
+    The practical effect: editing a step (e.g. changing a param on a late ML
+    step) only changes that step's hash and the hashes of its descendants.
+    Unaffected upstream checkpoints keep the same hash and are reused on the
+    next run, instead of the whole recipe being treated as new.
+    """
+    pipeline_inputs = pipeline_inputs or {}
+    input_declarations = dag.recipe.inputs
+    upstream = _step_upstream(dag)
+    hashes: dict[str, str] = {}
+    for step_id in dag.topological_order:
+        node = dag.nodes[step_id]
+        fingerprint = _step_fingerprint(node, pipeline_inputs, input_declarations)
+        parents = sorted(p for p in upstream.get(step_id, set()) if p in hashes)
+        parent_hashes = [hashes[p] for p in parents]
+        payload = json.dumps(
+            {"fingerprint": fingerprint, "parents": parent_hashes},
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+        hashes[step_id] = hashlib.sha256(payload).hexdigest()
+    return hashes
+
+
+@dataclass
+class ExecutionPlan:
+    """Plan describing which steps run, load, or can be fully pruned.
+
+    ``blockers`` lists intermediate must-run steps that lack a checkpoint,
+    limiting how far upstream the resume frontier can reach. Non-empty when
+    a partial cache exists but some intermediate step cannot be skipped.
+    """
+
+    must_run: set[str]
+    loadable: set[str]
+    marker_hits: set[str]
+    pruned: set[str]
+    blockers: list[str]
+
+
+def plan_execution(
+    dag: PipelineDAG,
+    checkpoints: CheckpointManager | None,
+    *,
+    force: bool = False,
+    regenerate_outputs: bool = False,
+) -> ExecutionPlan:
+    """Plan minimal correct execution for a DAG given current checkpoints.
+
+    The planner walks the DAG backward from the required goal steps (terminal
+    steps, sinks, no-output steps, and any recipe-declared outputs). When a
+    required step has a valid checkpoint, that checkpoint becomes the frontier
+    and its ancestors are not pulled in. When a required side-effect step has a
+    valid marker, the step is skipped and its ancestors are likewise pruned.
+    """
+    if checkpoints is None:
+        return ExecutionPlan(
+            must_run=set(dag.topological_order),
+            loadable=set(),
+            marker_hits=set(),
+            pruned=set(),
+            blockers=[],
+        )
+
+    upstream = _step_upstream(dag)
+    terminal, _intermediate = classify_steps(dag)
+    recipe_output_steps = {
+        output.step_id for output in (dag.recipe.outputs or {}).values()
+    }
+    needed: set[str] = {
+        step_id
+        for step_id in dag.topological_order
+        if (
+            step_id in terminal
+            or dag.nodes[step_id].spec.sink
+            or not dag.nodes[step_id].spec.outputs
+            or step_id in recipe_output_steps
+        )
+    }
+    must_run: set[str] = set()
+    loadable: set[str] = set()
+    marker_hits: set[str] = set()
+    pruned: set[str] = set()
+
+    for step_id in reversed(dag.topological_order):
+        if step_id not in needed:
+            pruned.add(step_id)
+            continue
+
+        node = dag.nodes[step_id]
+        is_side_effect = node.spec.sink or not node.spec.outputs
+        parents = upstream.get(step_id, set())
+
+        if force:
+            must_run.add(step_id)
+            needed.update(parents)
+            continue
+
+        if not is_side_effect and checkpoints.has_checkpoint(step_id):
+            loadable.add(step_id)
+            continue
+
+        if (
+            is_side_effect
+            and not regenerate_outputs
+            and checkpoints.has_marker(step_id)
+        ):
+            marker_hits.add(step_id)
+            continue
+
+        must_run.add(step_id)
+        needed.update(parents)
+
+    # Compute which must-run intermediate steps are limiting the resume frontier.
+    # These are steps that have no checkpoint but sit between a pruned/loadable
+    # upstream and a goal step, meaning adding checkpoint:always to them would
+    # let future runs skip more work.
+    terminal, _intermediate = classify_steps(dag)
+    recipe_output_steps = {
+        output.step_id for output in (dag.recipe.outputs or {}).values()
+    }
+    goal_steps: set[str] = {
+        step_id
+        for step_id in dag.topological_order
+        if (
+            step_id in terminal
+            or dag.nodes[step_id].spec.sink
+            or not dag.nodes[step_id].spec.outputs
+            or step_id in recipe_output_steps
+        )
+    }
+    blockers: list[str] = [
+        step_id
+        for step_id in dag.topological_order
+        if (
+            step_id in must_run
+            and step_id not in goal_steps
+            and not dag.nodes[step_id].spec.sink
+            and dag.nodes[step_id].spec.outputs
+        )
+    ]
+
+    return ExecutionPlan(
+        must_run=must_run,
+        loadable=loadable,
+        marker_hits=marker_hits,
+        pruned=pruned,
+        blockers=blockers,
+    )
+
 
 
 def classify_steps(dag: PipelineDAG) -> tuple[set[str], set[str]]:
@@ -461,74 +763,62 @@ def _deserialize_output(path: Path, fmt: str) -> Any:
 @dataclass
 class _StepCacheMeta:
     step_id: str
-    recipe_hash: str
+    step_hash: str
     outputs: dict[str, dict[str, str]]  # out_name -> {"path": str, "format": str}
+    marker: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _StepCacheMeta:
+        # Accept both current format (step_hash) and legacy format (recipe_hash
+        # only). Legacy sidecars missing step_hash are treated as stale.
+        step_hash = data.get("step_hash") or data.get("recipe_hash", "")
         return cls(
             step_id=data["step_id"],
-            recipe_hash=data["recipe_hash"],
+            step_hash=step_hash,
             outputs=data.get("outputs", {}),
+            marker=bool(data.get("marker", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_id": self.step_id,
-            "recipe_hash": self.recipe_hash,
+            "step_hash": self.step_hash,
+            "marker": self.marker,
             "outputs": self.outputs,
         }
 
 
 class CheckpointManager:
-    """Read/write eager per-step checkpoints under an output directory."""
+    """Read/write per-step checkpoints under an output directory.
+
+    Cache validity is keyed on a per-step hash (see :func:`compute_step_hashes`)
+    so that editing one step only invalidates that step and its descendants —
+    upstream checkpoints stay reusable.
+    """
 
     def __init__(
         self,
         output_dir: str | Path,
-        recipe_hash: str,
+        hashes: dict[str, str],
         *,
         preferred_format: CheckpointFormat | str = "zarr",
     ) -> None:
         self.output_dir = Path(output_dir)
-        self.recipe_hash = recipe_hash
+        self._hashes = dict(hashes)
         self.preferred_format = preferred_format
 
     def _meta_path(self, step_id: str) -> Path:
         return self.output_dir / CACHE_METADATA_DIR / f"{step_id}{META_SUFFIX}"
 
-    def _legacy_meta_path(self, step_id: str) -> Path:
-        return self.output_dir / f"{step_id}{META_SUFFIX}"
-
-    def _meta_search_paths(self, step_id: str) -> list[Path]:
-        return [self._meta_path(step_id), self._legacy_meta_path(step_id)]
-
-    def _existing_meta_path(self, step_id: str) -> Path | None:
-        for path in self._meta_search_paths(step_id):
-            if path.exists():
-                return path
-        return None
-
     def _iter_meta_paths(self) -> list[Path]:
-        seen: set[Path] = set()
-        candidates = [
-            self.output_dir / CACHE_METADATA_DIR,
-            self.output_dir,
-        ]
-        results: list[Path] = []
-        for directory in candidates:
-            if not directory.exists():
-                continue
-            for path in sorted(directory.glob(f"*{META_SUFFIX}")):
-                if path in seen:
-                    continue
-                seen.add(path)
-                results.append(path)
-        return results
+        meta_dir = self.output_dir / CACHE_METADATA_DIR
+        if not meta_dir.exists():
+            return []
+        return sorted(meta_dir.glob(f"*{META_SUFFIX}"))
 
     def _read_meta(self, step_id: str) -> _StepCacheMeta | None:
-        path = self._existing_meta_path(step_id)
-        if path is None or not path.exists():
+        path = self._meta_path(step_id)
+        if not path.exists():
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -538,54 +828,73 @@ class CheckpointManager:
 
     def has_checkpoint(self, step_id: str) -> bool:
         meta = self._read_meta(step_id)
-        if meta is None:
+        if meta is None or meta.marker:
             return False
-        if meta.recipe_hash != self.recipe_hash:
+        expected = self._hashes.get(step_id)
+        if expected is None or meta.step_hash != expected:
             return False
         for entry in meta.outputs.values():
             if not Path(entry["path"]).exists():
                 return False
         return True
 
+    def has_marker(self, step_id: str) -> bool:
+        """Return True when a hash-matching *side-effect* marker exists.
+
+        Markers are written by :meth:`save_marker` for sink / no-output steps
+        that produce on-disk side effects (e.g. plots) rather than cacheable
+        return values. A matching marker means the step already ran for the
+        current per-step hash, so its side-effect outputs should already exist
+        on disk and the step can be skipped.
+        """
+        meta = self._read_meta(step_id)
+        if meta is None or not meta.marker:
+            return False
+        expected = self._hashes.get(step_id)
+        return expected is not None and meta.step_hash == expected
+
+    def save_marker(self, step_id: str) -> None:
+        """Record that a side-effect (sink / no-output) step ran for this hash.
+
+        Writes a metadata-only sidecar (no serialized outputs) so a later run
+        with an unchanged per-step hash can skip re-generating the step's
+        on-disk side effects.
+        """
+        step_hash = self._hashes.get(step_id, "")
+        meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs={}, marker=True)
+        meta_path = self._meta_path(step_id)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps(meta.to_dict(), indent=2), encoding="utf-8")
+
     def save(self, step_id: str, outputs: dict[str, Any]) -> None:
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         out_meta: dict[str, dict[str, str]] = {}
         for out_name, value in outputs.items():
             category_dir = self.output_dir / _checkpoint_output_category(
-                value,
-                str(self.preferred_format),
+                value, str(self.preferred_format)
             )
             category_dir.mkdir(parents=True, exist_ok=True)
             base = category_dir / _checkpoint_artifact_stem(step_id, out_name)
             path, fmt = _serialize_output(value, base, self.preferred_format)
             out_meta[out_name] = {"path": str(path), "format": fmt}
-        meta = _StepCacheMeta(
-            step_id=step_id,
-            recipe_hash=self.recipe_hash,
-            outputs=out_meta,
-        )
+        step_hash = self._hashes.get(step_id, "")
+        meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs=out_meta)
         meta_path = self._meta_path(step_id)
         meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(
-            json.dumps(meta.to_dict(), indent=2), encoding="utf-8"
-        )
+        meta_path.write_text(json.dumps(meta.to_dict(), indent=2), encoding="utf-8")
 
     def load(self, step_id: str) -> dict[str, Any]:
         meta = self._read_meta(step_id)
         if meta is None:
-            raise FileNotFoundError(
-                f"no checkpoint metadata for step {step_id!r}"
-            )
-        if meta.recipe_hash != self.recipe_hash:
+            raise FileNotFoundError(f"no checkpoint metadata for step {step_id!r}")
+        expected = self._hashes.get(step_id)
+        if expected is None or meta.step_hash != expected:
             raise ValueError(
                 f"checkpoint for step {step_id!r} was written from a "
-                "different recipe (recipe-hash mismatch)"
+                "different recipe (step-hash mismatch)"
             )
         loaded: dict[str, Any] = {}
         for out_name, entry in meta.outputs.items():
-            loaded[out_name] = _deserialize_output(
-                Path(entry["path"]), entry["format"]
-            )
+            loaded[out_name] = _deserialize_output(Path(entry["path"]), entry["format"])
         return loaded
 
     def clean(
@@ -603,9 +912,10 @@ class CheckpointManager:
                 are protected and kept.
             ``all``: drop every checkpoint and sidecar in the directory.
                 ``checkpoint: always`` marks are **not** protected.
-            ``stale``: drop only checkpoints whose recipe hash does not match
-                the current recipe. ``checkpoint: always`` marks are **not**
-                protected because mismatched hashes are unusable anyway.
+            ``stale``: drop only checkpoints whose hash does not match the
+                current recipe's per-step hash. ``checkpoint: always`` marks
+                are **not** protected because mismatched hashes are unusable
+                anyway.
         """
         if not self.output_dir.exists():
             return []
@@ -624,8 +934,11 @@ class CheckpointManager:
                     continue
                 if step_id in protected:
                     continue
-            if mode == "stale" and meta.recipe_hash == self.recipe_hash:
-                continue
+            if mode == "stale":
+                expected = self._hashes.get(step_id)
+                if expected is not None and meta.step_hash == expected:
+                    continue
+
             for entry in meta.outputs.values():
                 removed.append(Path(entry["path"]))
             removed.append(meta_path)

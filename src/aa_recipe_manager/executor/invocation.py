@@ -214,23 +214,12 @@ def build_kwargs(
             )
         kwargs[callable_arg] = value
 
-    resolved_keys = set(node.resolved_params.keys())
-    for param_name, raw_value in node.resolved_params.items():
-        callable_arg = param_map.get(param_name, param_name)
-        value = _resolve_value(raw_value, runtime, pipeline_inputs)
-        if value is _SENTINEL_MISSING:
-            param_decl = node.spec.params.get(param_name)
-            if param_decl is not None and not param_decl.required:
-                continue
-            raise KeyError(
-                f"step {node.step.id!r} param {param_name!r} references an "
-                f"unknown pipeline input"
-            )
-        kwargs[callable_arg] = value
-
-    for param_name, raw_value in node.step.params.items():
-        if param_name in resolved_keys:
-            continue
+    # resolved_params takes priority; step.params fills in any unreplaced keys.
+    merged_params = {
+        **{k: v for k, v in node.step.params.items() if k not in node.resolved_params},
+        **node.resolved_params,
+    }
+    for param_name, raw_value in merged_params.items():
         callable_arg = param_map.get(param_name, param_name)
         value = _resolve_value(raw_value, runtime, pipeline_inputs)
         if value is _SENTINEL_MISSING:

@@ -25,6 +25,7 @@ inputs:
   raw_input_folder:
     type: path
     default: "./raw_file_inputs/HB1603_local"
+    fingerprint_contents: true 
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"

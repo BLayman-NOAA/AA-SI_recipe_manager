@@ -73,6 +73,7 @@ steps:
 
   - id: normalize_ml
     op: normalize_ml_data
+    checkpoint: always
     inputs:
       ds_ml: ${add_aux_features.ds_ml_ready}
     params:
@@ -109,7 +110,7 @@ steps:
       sample_size: 1000000
       cluster_selection_method: "leaf"
       use_hdbscan: true
-      soft_membership_threshold: .6
+      # soft_membership_threshold: .6
 
   - id: embed_results
     op: embed_clustering_results

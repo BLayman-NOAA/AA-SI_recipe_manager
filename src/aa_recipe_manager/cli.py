@@ -340,7 +340,29 @@ class _CLIProgress:
 )
 @click.option("--save-provenance", default=None, help="Path for the provenance sidecar file.")
 @click.option("--skip-sinks", is_flag=True, default=False, help="Skip sink steps.")
+@click.option(
+    "--regenerate-outputs",
+    is_flag=True,
+    default=False,
+    help=(
+        "Force side-effect steps (plots, logs, and other sink/no-output "
+        "steps) to re-run even when unchanged. Use this when a checkpoint "
+        "cache was shared without its on-disk artifacts so they are "
+        "regenerated locally."
+    ),
+)
 @click.option("--force", is_flag=True, default=False, help="Bypass checkpoint checks.")
+@click.option(
+    "--log-output",
+    type=click.Choice(["file", "console", "both"]),
+    default="file",
+    show_default=True,
+    help=(
+        "Where each step's stdout/stderr is sent. 'file' (default) writes only "
+        "to outputs/logs/standard_out.txt; 'console' prints the captured logs "
+        "to the terminal after the run; 'both' writes the file and prints."
+    ),
+)
 @click.option(
     "--no-checkpoints",
     is_flag=True,
@@ -352,8 +374,8 @@ class _CLIProgress:
     default=None,
     type=click.Choice(["eager", "explicit", "terminal", "none"]),
     help=(
-        "Override recipe's checkpoint policy. 'eager' (default) saves every "
-        "step; 'explicit' only saves steps marked checkpoint: always; "
+        "Override recipe's checkpoint policy. 'explicit' (default) saves only "
+        "steps marked checkpoint: always; 'eager' saves every step; "
         "'terminal' only saves leaf steps; 'none' suppresses default saves "
         "but still honors per-step 'checkpoint: always' and --checkpoint "
         "overrides (use --no-checkpoints to disable checkpoints entirely)."
@@ -384,7 +406,9 @@ def run_cmd(
     inputs: tuple[str, ...],
     save_provenance: str | None,
     skip_sinks: bool,
+    regenerate_outputs: bool,
     force: bool,
+    log_output: str,
     no_checkpoints: bool,
     checkpoint_mode: str | None,
     checkpoint_steps: tuple[str, ...],
@@ -423,6 +447,8 @@ def run_cmd(
             force=force,
             no_checkpoints=no_checkpoints,
             skip_sinks=skip_sinks,
+            regenerate_outputs=regenerate_outputs,
+            log_destination=log_output,
             checkpoint_mode=checkpoint_mode,
             checkpoint_steps=list(checkpoint_steps) or None,
             checkpoint_format=checkpoint_format,
@@ -439,7 +465,15 @@ def run_cmd(
         f"skipped {len(result.skipped_steps)} (cache hits)."
     )
     if result.output_dir is not None:
-        click.echo(f"Outputs in: {result.output_dir}")
+        click.echo(f"Cache in: {result.output_dir}")
+    if result.outputs_dir is not None:
+        click.echo(f"Outputs in: {result.outputs_dir}")
+    if result.log_file is not None:
+        click.echo(f"Logs in: {result.log_file}")
+    if log_output in ("console", "both") and result.console_log:
+        click.echo("")
+        click.echo("--- step logs ---")
+        click.echo(result.console_log)
 
 
 @main.command("clean")

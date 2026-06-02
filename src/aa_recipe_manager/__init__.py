@@ -151,6 +151,9 @@ def execute(
     force=False,
     no_checkpoints=False,
     skip_sinks=False,
+    regenerate_outputs=False,
+    outputs_dir=None,
+    log_destination="file",
     save_provenance=None,
     progress=None,
 ):
@@ -170,6 +173,9 @@ def execute(
         force=force,
         no_checkpoints=no_checkpoints,
         skip_sinks=skip_sinks,
+        regenerate_outputs=regenerate_outputs,
+        outputs_dir=outputs_dir,
+        log_destination=log_destination,
         save_provenance=save_provenance,
         progress=progress,
     )

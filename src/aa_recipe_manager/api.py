@@ -413,6 +413,9 @@ def execute(
     force: bool = False,
     no_checkpoints: bool = False,
     skip_sinks: bool = False,
+    regenerate_outputs: bool = False,
+    outputs_dir: str | Path | None = None,
+    log_destination: str = "file",
     checkpoint_mode: CheckpointMode | str | None = None,
     checkpoint_steps: list[str] | None = None,
     checkpoint_format: str | None = None,
@@ -443,10 +446,26 @@ def execute(
         Skip both checkpoint reads and writes for this run.
     skip_sinks:
         Skip steps marked ``sink: true`` in their spec.
+    regenerate_outputs:
+        Force side-effect steps (sinks / steps with no declared outputs, e.g.
+        plotting and logging) to re-run even when their cached marker matches.
+        Use this when a checkpoint cache was shared without its on-disk
+        artifacts so the plots/logs are regenerated locally. Has no effect on
+        steps whose outputs are loaded from a data checkpoint.
+    outputs_dir:
+        Directory for user-facing outputs (images under ``outputs_dir/images``
+        and logs under ``outputs_dir/logs/standard_out.txt``). When ``None``
+        it defaults to a sibling of ``output_dir`` named ``outputs`` (e.g.
+        ``recipe_cache`` -> ``outputs``).
+    log_destination:
+        Where per-step stdout/stderr is sent. ``"file"`` (default) writes only
+        to ``standard_out.txt``; ``"console"`` returns the captured text for
+        display without writing a file; ``"both"`` writes the file and returns
+        the text. The captured text is available on ``result.console_log``.
     checkpoint_mode:
         Override the recipe's ``execution.checkpoint_mode``. One of
-        ``"eager"`` (default), ``"explicit"`` (only steps marked
-        ``checkpoint: always``), ``"terminal"`` (only leaf steps), or
+        ``"explicit"`` (default; only steps marked ``checkpoint: always``),
+        ``"eager"`` (save every step), ``"terminal"`` (only leaf steps), or
         ``"none"``. Cannot be combined with ``no_checkpoints``.
     checkpoint_steps:
         Ad-hoc list of step ids to checkpoint regardless of mode. Useful
@@ -500,6 +519,9 @@ def execute(
         force=force,
         no_checkpoints=no_checkpoints,
         skip_sinks=skip_sinks,
+        regenerate_outputs=regenerate_outputs,
+        outputs_dir=outputs_dir,
+        log_destination=log_destination,
         checkpoint_mode=checkpoint_mode,
         checkpoint_steps=checkpoint_steps,
         checkpoint_format=checkpoint_format,
@@ -547,12 +569,18 @@ def clean(
     ``dry_run`` is true the files that would be deleted are returned without
     being removed.
     """
-    from aa_recipe_manager.executor import CheckpointManager, compute_recipe_hash
+    from aa_recipe_manager.executor import (
+        CheckpointManager,
+        compute_step_hashes,
+    )
 
     if mode not in {"intermediate", "all", "stale"}:
         raise ValueError(
             f"clean mode must be 'intermediate', 'all', or 'stale'; got {mode!r}"
         )
     dag = _load_dag(recipe, input_values=inputs, check_versions=False)
-    manager = CheckpointManager(output_dir, compute_recipe_hash(dag))
+    manager = CheckpointManager(
+        output_dir,
+        compute_step_hashes(dag, inputs or {}),
+    )
     return manager.clean(dag, mode=mode, dry_run=dry_run)  # type: ignore[arg-type]

@@ -10,9 +10,11 @@ from aa_recipe_manager.executor.base import (
 )
 from aa_recipe_manager.executor.checkpoint import (
     CheckpointManager,
+    ExecutionPlan,
     classify_steps,
-    compute_recipe_hash,
+    compute_step_hashes,
     explicit_checkpoint_steps,
+    plan_execution,
     resolve_checkpoint_policy,
 )
 from aa_recipe_manager.executor.invocation import (
@@ -34,9 +36,11 @@ __all__ = [
     "PipelineExecutor",
     "ProgressCallback",
     "CheckpointManager",
+    "ExecutionPlan",
     "classify_steps",
-    "compute_recipe_hash",
+    "compute_step_hashes",
     "explicit_checkpoint_steps",
+    "plan_execution",
     "resolve_checkpoint_policy",
     "RuntimeContext",
     "ExecutionContext",

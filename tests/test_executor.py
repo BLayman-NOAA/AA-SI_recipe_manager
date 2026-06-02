@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -22,7 +23,6 @@ from aa_recipe_manager.executor import (
     SequentialExecutor,
     build_kwargs,
     classify_steps,
-    compute_recipe_hash,
     explicit_checkpoint_steps,
     extract_outputs,
     import_callable,
@@ -33,6 +33,7 @@ from aa_recipe_manager.executor.checkpoint import (
     OTHER_DATA_DIR,
     ZARR_DATA_DIR,
     _checkpoint_artifact_stem,
+    compute_step_hashes,
 )
 from aa_recipe_manager.model.types import (
     DAGEdge,
@@ -40,6 +41,8 @@ from aa_recipe_manager.model.types import (
     Dependency,
     ExecutionHints,
     Implementation,
+    InputDeclaration,
+    ParamDeclaration,
     PipelineDAG,
     PortDeclaration,
     Recipe,
@@ -131,6 +134,10 @@ def _install_helper_module() -> types.ModuleType:
         _record("sink_step", value=value)
         return None
 
+    def sink_with_label(value: int, label: str = "default") -> None:
+        _record("sink_step", value=value, label=label)
+        return None
+
     def boom(value: int) -> int:
         _record("boom", value=value)
         raise RuntimeError("kaboom")
@@ -143,6 +150,10 @@ def _install_helper_module() -> types.ModuleType:
         _record("make_container", value=value)
         return _Container(value)
 
+    def path_probe(raw_input_folder: str) -> str:
+        _record("path_probe", raw_input_folder=raw_input_folder)
+        return raw_input_folder
+
     module.add_one = add_one  # type: ignore[attr-defined]
     module.multiply = multiply  # type: ignore[attr-defined]
     module.make_pair = make_pair  # type: ignore[attr-defined]
@@ -150,8 +161,10 @@ def _install_helper_module() -> types.ModuleType:
     module.fan_in_sum = fan_in_sum  # type: ignore[attr-defined]
     module.renamed_arg = renamed_arg  # type: ignore[attr-defined]
     module.sink_step = sink_step  # type: ignore[attr-defined]
+    module.sink_with_label = sink_with_label  # type: ignore[attr-defined]
     module.boom = boom  # type: ignore[attr-defined]
     module.make_container = make_container  # type: ignore[attr-defined]
+    module.path_probe = path_probe  # type: ignore[attr-defined]
     module.Container = _Container  # type: ignore[attr-defined]
 
     sys.modules[_HELPER_MODULE_NAME] = module
@@ -235,6 +248,193 @@ def _linear_inc_dag() -> PipelineDAG:
         ),
     ]
     return _make_dag([start, first, second], edges)
+
+
+def _linear_multiply_dag(factor: int = 2) -> PipelineDAG:
+    """``start(add_one) -> first(multiply) -> scale(multiply)`` chain.
+
+    The two ``multiply`` steps carry a ``factor`` param so a test can edit a
+    single step's parameter (as a user editing e.g. ``min_samples`` would) and
+    observe per-step cache invalidation.
+    """
+    add_spec = Spec(
+        op="add_one",
+        description="add one",
+        inputs={"x": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    add_impl = Implementation(
+        op="add_one",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.add_one",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    mul_spec = Spec(
+        op="multiply",
+        description="multiply by factor",
+        inputs={"x": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    mul_impl = Implementation(
+        op="multiply",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.multiply",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    start = DAGNode(
+        step=Step(id="start", op="add_one", inputs={"x": "${inputs.seed}"}),
+        spec=add_spec,
+        implementation=add_impl,
+    )
+    first = DAGNode(
+        step=Step(
+            id="first",
+            op="multiply",
+            inputs={"x": "${start.out}"},
+            params={"factor": 2},
+        ),
+        spec=mul_spec,
+        implementation=mul_impl,
+        resolved_params={"factor": 2},
+    )
+    scale = DAGNode(
+        step=Step(
+            id="scale",
+            op="multiply",
+            inputs={"x": "${first.out}"},
+            params={"factor": factor},
+        ),
+        spec=mul_spec,
+        implementation=mul_impl,
+        resolved_params={"factor": factor},
+    )
+    edges = [
+        DAGEdge(
+            source_step_id="start",
+            source_output="out",
+            target_step_id="first",
+            target_input="x",
+        ),
+        DAGEdge(
+            source_step_id="first",
+            source_output="out",
+            target_step_id="scale",
+            target_input="x",
+        ),
+    ]
+    return _make_dag([start, first, scale], edges)
+
+
+def _sink_after_chain_dag() -> PipelineDAG:
+    """``start(add_one) -> first(add_one) -> report(sink)`` chain.
+
+    The terminal ``report`` step is a sink with a ``label`` param so tests can
+    verify marker-based skipping, ``regenerate_outputs`` forcing, and per-step
+    invalidation when only the sink's param changes.
+    """
+    add_spec = Spec(
+        op="add_one",
+        description="add one",
+        inputs={"x": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    add_impl = Implementation(
+        op="add_one",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.add_one",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    sink_spec = Spec(
+        op="report",
+        description="side-effect report",
+        sink=True,
+        inputs={"value": PortDeclaration(type="int")},
+        params={"label": ParamDeclaration(type="str", required=False)},
+    )
+    sink_impl = Implementation(
+        op="report",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.sink_with_label",
+        dependency=_dep(),
+    )
+    start = DAGNode(
+        step=Step(id="start", op="add_one", inputs={"x": "${inputs.seed}"}),
+        spec=add_spec,
+        implementation=add_impl,
+    )
+    first = DAGNode(
+        step=Step(id="first", op="add_one", inputs={"x": "${start.out}"}),
+        spec=add_spec,
+        implementation=add_impl,
+    )
+    report = DAGNode(
+        step=Step(
+            id="report",
+            op="report",
+            inputs={"value": "${first.out}"},
+            params={"label": "base"},
+        ),
+        spec=sink_spec,
+        implementation=sink_impl,
+        resolved_params={"label": "base"},
+    )
+    edges = [
+        DAGEdge(
+            source_step_id="start",
+            source_output="out",
+            target_step_id="first",
+            target_input="x",
+        ),
+        DAGEdge(
+            source_step_id="first",
+            source_output="out",
+            target_step_id="report",
+            target_input="value",
+        ),
+    ]
+    return _make_dag([start, first, report], edges)
+
+
+def _path_input_dag(path_value: str) -> PipelineDAG:
+    spec = Spec(
+        op="path_probe",
+        description="fingerprint a path input",
+        outputs={"out": PortDeclaration(type="str")},
+        params={"raw_input_folder": ParamDeclaration(type="path")},
+    )
+    impl = Implementation(
+        op="path_probe",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.path_probe",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    node = DAGNode(
+        step=Step(
+            id="probe",
+            op="path_probe",
+            params={"raw_input_folder": "${inputs.raw_dir}"},
+        ),
+        spec=spec,
+        implementation=impl,
+        resolved_params={"raw_input_folder": path_value},
+    )
+    recipe = Recipe(
+        name="path_probe_pipeline",
+        version="1.0.0",
+        inputs={"raw_dir": InputDeclaration(type="path", fingerprint_contents=True)},
+        steps=[node.step],
+        schema_version="1",
+    )
+    return PipelineDAG(
+        recipe=recipe,
+        nodes={"probe": node},
+        edges=[],
+        topological_order=["probe"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +688,7 @@ class TestSequentialExecutor:
         assert result.executed_steps == ["start", "first", "second"]
         assert result.skipped_steps == []
         assert result.provenance is not None
+        assert result.pruned_steps == []
 
     def test_step_failure_raises_pipeline_execution_error(self, helper_module):
         spec = Spec(
@@ -561,6 +762,66 @@ class TestSequentialExecutor:
         )
         assert helper_module.call_log == []
 
+    def test_unchanged_sink_skipped_on_second_run(self, helper_module, tmp_path):
+        dag = _sink_after_chain_dag()
+        out = tmp_path / "ckpt"
+        first = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert "report" in first.executed_steps
+        helper_module.call_log.clear()
+
+        second = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        # The sink's side-effect marker matches, so it is skipped this run.
+        assert "report" in second.skipped_steps
+        assert second.executed_steps == []
+        assert helper_module.call_log == []
+
+    def test_regenerate_outputs_forces_sink_rerun(self, helper_module, tmp_path):
+        dag = _sink_after_chain_dag()
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        helper_module.call_log.clear()
+
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            regenerate_outputs=True,
+            checkpoint_mode="eager",
+        )
+        # Upstream data steps still load from cache; only the sink re-runs.
+        assert result.executed_steps == ["report"]
+        assert "start" in result.pruned_steps
+        assert "first" in result.skipped_steps
+        assert [name for name, _ in helper_module.call_log] == ["sink_step"]
+
+    def test_editing_sink_param_reruns_only_sink(self, helper_module, tmp_path):
+        dag = _sink_after_chain_dag()
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        helper_module.call_log.clear()
+
+        modified = dag.model_copy(deep=True)
+        modified.nodes["report"].step.params["label"] = "changed"
+        modified.nodes["report"].resolved_params["label"] = "changed"
+
+        result = SequentialExecutor().execute(
+            modified,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="eager",
+        )
+        assert result.executed_steps == ["report"]
+        assert "start" in result.pruned_steps
+        assert "first" in result.skipped_steps
+
     def test_progress_callback_receives_step_indices(self, helper_module):
         dag = _linear_inc_dag()
         events: list[tuple[str, str, int, int, bool]] = []
@@ -594,13 +855,18 @@ class TestCheckpointing:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         executor = SequentialExecutor()
-        first = executor.execute(dag, inputs={"seed": 1}, output_dir=out)
+        first = executor.execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
         assert first.executed_steps == ["start", "first", "second"]
         assert first.skipped_steps == []
         helper_module.call_log.clear()
 
-        second = executor.execute(dag, inputs={"seed": 1}, output_dir=out)
-        assert second.skipped_steps == ["start", "first", "second"]
+        second = executor.execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert second.pruned_steps == ["start", "first"]
+        assert second.skipped_steps == ["second"]
         assert second.executed_steps == []
         assert helper_module.call_log == []
         assert second.outputs["second"]["out"] == 4
@@ -608,27 +874,184 @@ class TestCheckpointing:
     def test_force_re_executes_all_steps(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
         helper_module.call_log.clear()
         result = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, force=True
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            force=True,
+            checkpoint_mode="eager",
         )
         assert result.executed_steps == ["start", "first", "second"]
         assert len(helper_module.call_log) == 3
 
-    def test_recipe_hash_change_invalidates_cache(self, helper_module, tmp_path):
+    def test_recipe_description_change_preserves_cache(self, helper_module, tmp_path):
+        # Per-step hashing: an edit to recipe-level metadata that does not
+        # affect any step (e.g. the description) must NOT invalidate caches.
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
         helper_module.call_log.clear()
 
         modified = dag.model_copy(deep=True)
         modified.recipe.description = "now different"
         result = SequentialExecutor().execute(
-            modified, inputs={"seed": 1}, output_dir=out
+            modified,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="eager",
         )
-        assert result.executed_steps == ["start", "first", "second"]
-        assert result.skipped_steps == []
+        assert result.pruned_steps == ["start", "first"]
+        assert result.skipped_steps == ["second"]
+        assert result.executed_steps == []
+        assert helper_module.call_log == []
+
+    def test_editing_late_step_reuses_upstream_cache(self, helper_module, tmp_path):
+        # The core caching fix: editing a parameter on the LAST step must only
+        # re-run that step (and any descendants), reusing upstream checkpoints.
+        dag = _linear_multiply_dag(factor=2)
+        out = tmp_path / "ckpt"
+        first_run = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert first_run.executed_steps == ["start", "first", "scale"]
+        helper_module.call_log.clear()
+
+        # Edit only the last step's param, exactly like changing min_samples.
+        modified = dag.model_copy(deep=True)
+        modified.nodes["scale"].step.params["factor"] = 3
+        modified.nodes["scale"].resolved_params["factor"] = 3
+
+        result = SequentialExecutor().execute(
+            modified,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="eager",
+        )
+        assert result.pruned_steps == ["start"]
+        assert result.skipped_steps == ["first"]
+        assert result.executed_steps == ["scale"]
+        assert [name for name, _ in helper_module.call_log] == ["multiply"]
+        # start(1)->2, first 2*2=4, scale 4*3 = 12
+        assert result.outputs["scale"]["out"] == 12
+
+    def test_editing_upstream_step_invalidates_descendants(
+        self, helper_module, tmp_path
+    ):
+        # Editing an early step must invalidate that step and everything
+        # downstream of it.
+        dag = _linear_multiply_dag(factor=2)
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        helper_module.call_log.clear()
+
+        modified = dag.model_copy(deep=True)
+        modified.nodes["first"].step.params["factor"] = 5
+        modified.nodes["first"].resolved_params["factor"] = 5
+
+        result = SequentialExecutor().execute(
+            modified,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="eager",
+        )
+        assert result.skipped_steps == ["start"]
+        assert result.executed_steps == ["first", "scale"]
+
+    def test_prunes_uncached_upstream_before_checkpoint_frontier(
+        self, helper_module, tmp_path
+    ):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "always")
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="explicit",
+        )
+        helper_module.call_log.clear()
+
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="explicit",
+        )
+        assert result.pruned_steps == ["start"]
+        assert result.skipped_steps == ["first"]
+        assert result.executed_steps == ["second"]
+        assert [call[0] for call in helper_module.call_log] == ["add_one"]
+
+    def test_unchanged_late_step_still_runs_uncached_parent_when_needed(
+        self, helper_module, tmp_path
+    ):
+        dag = _linear_multiply_dag(factor=2)
+        _set_step_checkpoint(dag, "start", "always")
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="explicit",
+        )
+        helper_module.call_log.clear()
+
+        modified = dag.model_copy(deep=True)
+        modified.nodes["scale"].step.params["factor"] = 3
+        modified.nodes["scale"].resolved_params["factor"] = 3
+
+        result = SequentialExecutor().execute(
+            modified,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="explicit",
+        )
+        assert result.pruned_steps == []
+        assert result.skipped_steps == ["start"]
+        assert result.executed_steps == ["first", "scale"]
+        assert [call[0] for call in helper_module.call_log] == [
+            "multiply",
+            "multiply",
+        ]
+        assert any(
+            "resume frontier limited by uncheckpointed step(s): first" in log
+            for log in result.logs
+        )
+
+    def test_directory_input_hash_changes_when_file_set_changes(self, tmp_path):
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        dag = _path_input_dag(str(raw_dir))
+
+        original = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
+        (raw_dir / "a.raw").write_text("alpha", encoding="utf-8")
+        changed = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
+
+        assert original["probe"] != changed["probe"]
+
+    def test_directory_input_hash_changes_when_entry_mtime_changes(self, tmp_path):
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        raw_file = raw_dir / "a.raw"
+        raw_file.write_text("alpha", encoding="utf-8")
+        dag = _path_input_dag(str(raw_dir))
+
+        original = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
+        entry_stat = raw_file.stat()
+        next_mtime = entry_stat.st_mtime_ns + 1_000_000_000
+        os.utime(raw_file, ns=(next_mtime, next_mtime))
+        changed = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
+
+        assert original["probe"] != changed["probe"]
+
 
     def test_no_checkpoints_writes_no_files(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
@@ -648,7 +1071,7 @@ class TestCheckpointing:
         monkeypatch.setitem(sys.modules, "echopype.echodata.echodata", fake_echodata_module)
 
         out = tmp_path / "ckpt"
-        manager = CheckpointManager(out, "hash", preferred_format="netcdf")
+        manager = CheckpointManager(out, {"open_raw": "hash"}, preferred_format="netcdf")
         manager.save("open_raw", {"echodata": EchoData("vendor-specific")})
         meta = json.loads(_meta_path(out, "open_raw").read_text(encoding="utf-8"))
 
@@ -671,7 +1094,7 @@ class TestCheckpointing:
         monkeypatch.setitem(sys.modules, "echopype", fake_ep)
 
         out = tmp_path / "ckpt"
-        manager = CheckpointManager(out, "hash")  # default = zarr
+        manager = CheckpointManager(out, {"open_raw": "hash"})  # default = zarr
         manager.save("open_raw", {"echodata": EchoData("zarr-payload")})
         meta = json.loads(_meta_path(out, "open_raw").read_text(encoding="utf-8"))
 
@@ -686,7 +1109,7 @@ class TestCheckpointing:
 
     def test_netcdf_checkpoint_still_loads_xarray_dataset(self, tmp_path):
         out = tmp_path / "ckpt"
-        manager = CheckpointManager(out, "hash", preferred_format="netcdf")
+        manager = CheckpointManager(out, {"dataset_step": "hash"}, preferred_format="netcdf")
         ds = xr.Dataset({"value": ("x", [1, 2, 3])})
         manager.save("dataset_step", {"ds": ds})
 
@@ -700,7 +1123,7 @@ class TestCheckpointing:
     def test_zarr_checkpoint_round_trip_xarray_dataset(self, tmp_path):
         """xarray Dataset saved with zarr (default) reloads correctly."""
         out = tmp_path / "ckpt"
-        manager = CheckpointManager(out, "hash")  # default = zarr
+        manager = CheckpointManager(out, {"sv_step": "hash"})  # default = zarr
         ds = xr.Dataset({"value": ("x", [10, 20, 30])})
         manager.save("sv_step", {"ds_Sv": ds})
 
@@ -718,7 +1141,7 @@ class TestCheckpointing:
     def test_zarr_checkpoint_round_trip_xarray_dataarray(self, tmp_path):
         """xarray DataArray saved with zarr (default) reloads as DataArray."""
         out = tmp_path / "ckpt"
-        manager = CheckpointManager(out, "hash")  # default = zarr
+        manager = CheckpointManager(out, {"da_step": "hash"})  # default = zarr
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["x"], name="sig")
         manager.save("da_step", {"arr": da})
 
@@ -759,8 +1182,10 @@ class TestCleanAndClassification:
     ):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        manager = CheckpointManager(out, compute_recipe_hash(dag))
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        manager = CheckpointManager(out, compute_step_hashes(dag))
         removed = manager.clean(dag)
         removed_names = {p.name for p in removed}
         assert "start__cache_meta.json" in removed_names
@@ -772,8 +1197,10 @@ class TestCleanAndClassification:
     def test_clean_all_removes_everything(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        manager = CheckpointManager(out, compute_recipe_hash(dag))
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="all")
         assert not _meta_names(out)
 
@@ -782,13 +1209,15 @@ class TestCleanAndClassification:
     ):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        # Trick the manager into thinking we're on a different recipe hash.
-        manager = CheckpointManager(out, "different-hash")
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        # Trick the manager into thinking we're on a different step hash.
+        manager = CheckpointManager(out, {s: "different-hash" for s in compute_step_hashes(dag)})
         removed = manager.clean(dag, mode="stale")
         assert len(removed) > 0
         # And running stale clean again should be a no-op.
-        manager_same = CheckpointManager(out, compute_recipe_hash(dag))
+        manager_same = CheckpointManager(out, compute_step_hashes(dag))
         # Now files for current hash are gone, so stale clean finds nothing
         # whose hash matches the manager's own.
         assert manager_same.clean(dag, mode="stale") == []
@@ -796,8 +1225,10 @@ class TestCleanAndClassification:
     def test_clean_dry_run_does_not_remove(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        manager = CheckpointManager(out, compute_recipe_hash(dag))
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        manager = CheckpointManager(out, compute_step_hashes(dag))
         planned = manager.clean(dag, mode="all", dry_run=True)
         for path in planned:
             assert path.exists()
@@ -871,10 +1302,11 @@ def _set_recipe_checkpoint_mode(dag: PipelineDAG, mode: str | None) -> None:
 
 
 class TestCheckpointPolicy:
-    def test_eager_mode_checkpoints_every_step(self):
+    def test_default_mode_only_checkpoints_marked_steps(self):
         dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "always")
         policy = resolve_checkpoint_policy(dag)
-        assert policy == {"start", "first", "second"}
+        assert policy == {"first"}
 
     def test_explicit_mode_only_marked_steps(self):
         dag = _linear_inc_dag()
@@ -1014,8 +1446,8 @@ class TestExecutorCheckpointModes:
             checkpoint_mode="explicit",
         )
         helper_module.call_log.clear()
-        # Second run: only "first" has a checkpoint. "start" and "second" must
-        # re-execute; "first" is loaded from cache.
+        # Second run: "first" is the checkpoint frontier. "start" is pruned,
+        # "first" is loaded from cache, and only "second" executes.
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
@@ -1023,12 +1455,10 @@ class TestExecutorCheckpointModes:
             checkpoint_mode="explicit",
         )
         assert "first" in result.skipped_steps
-        assert "start" in result.executed_steps
+        assert "start" in result.pruned_steps
         assert "second" in result.executed_steps
         names = [c[0] for c in helper_module.call_log]
-        assert "add_one" in names
-        # Should have been called for start and second only (not first).
-        assert len(names) == 2
+        assert names == ["add_one"]
 
     def test_recipe_level_mode_picked_up_when_no_override(
         self, helper_module, tmp_path
@@ -1051,8 +1481,10 @@ class TestCleanRespectsExplicitMarks:
         _set_step_checkpoint(dag, "first", "always")
         out = tmp_path / "ckpt"
         # Eager run writes all three; "first" is also explicitly marked.
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        manager = CheckpointManager(out, compute_recipe_hash(dag))
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="intermediate")
         remaining = _meta_names(out)
         # "second" (terminal) and "first" (explicitly marked) both survive.
@@ -1067,7 +1499,9 @@ class TestCleanRespectsExplicitMarks:
         dag = _linear_inc_dag()
         _set_step_checkpoint(dag, "first", "always")
         out = tmp_path / "ckpt"
-        SequentialExecutor().execute(dag, inputs={"seed": 1}, output_dir=out)
-        manager = CheckpointManager(out, compute_recipe_hash(dag))
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="all")
         assert not _meta_names(out)
