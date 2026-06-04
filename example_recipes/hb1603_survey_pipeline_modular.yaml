@@ -35,13 +35,13 @@ inputs:
     default: "./nefsc_uc_e2_cal_outputs"
   netcdf_output_folder:
     type: path
-    default: "./NetCDF-files"
+    default: "./netcdf_files"
   sv_output_folder:
     type: path
-    default: "./Sv-files"
+    default: "./sv_files"
   output_logs_folder:
     type: path
-    default: "./Output-Logs"
+    default: "./calibration_logs"
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
@@ -103,7 +103,7 @@ steps:
       overlay_line_var: "sw_dive_profile_fit"
 
   # ML wired to processing outputs.
-  - include: machine_learning.yaml
+  - include: machine_learning_multi_pass.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
       sv_clean_unmasked: ${remove_noise.ds_Sv}

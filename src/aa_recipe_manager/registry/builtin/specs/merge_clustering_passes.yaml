@@ -1,0 +1,70 @@
+op: merge_clustering_passes
+description: >
+  Merge a first-pass clustering result with one or more second-pass results
+  into a single consolidated Dataset.
+
+  Child cluster labels are remapped to unique integers that do not collide
+  with pass-1 labels. Noise points from the second pass override the parent
+  label for those samples. When retain_parent_labels is true, each sample's
+  original pass-1 cluster label is stored alongside the merged labels as a
+  parent_labels variable, enabling parent-child lineage queries.
+
+  Designed as a fan-in primitive: clustering_results_pass2 is declared
+  many: true and accepts either a single Dataset or an explicit list of
+  Datasets today (e.g. clustering_results_pass2: ["${step_a.clustering_results}",
+  "${step_b.clustering_results}"]). Once the recipe executor supports native
+  fan-in via the collect: step attribute, a collected list from a mapped
+  run_hdbscan step will work identically with no changes to this op or spec.
+category: ml_clustering
+inputs:
+  clustering_results_pass1:
+    type: Dataset
+    description: >
+      First-pass clustering result from run_hdbscan, covering all samples.
+  clustering_results_pass2:
+    type: Dataset
+    many: true
+    description: >
+      One or more second-pass clustering result Datasets from run_hdbscan
+      calls that each covered a subset of the pass-1 samples. A single
+      Dataset or an explicit list of Datasets is accepted (many: true).
+      Future: supply via collect: from a mapped run_hdbscan step.
+outputs:
+  clustering_results:
+    type: Dataset
+    description: >
+      Merged clustering result Dataset with the same sample scope as
+      clustering_results_pass1. Child labels are offset above the highest
+      pass-1 label so they never collide. Includes a parent_labels variable
+      when retain_parent_labels is true. Compatible with embed_clustering_results
+      and plot_clustering_report without any changes to those ops.
+params:
+  ml_result_name:
+    type: str
+    description: Name assigned to the merged result for downstream tracking.
+    required: true
+  dataset_name:
+    type: str
+    required: true
+  normalization_name:
+    type: str
+    required: false
+    default: null
+  retain_parent_labels:
+    type: bool
+    description: >
+      When true, stores each sample's original pass-1 cluster label in a
+      parent_labels variable alongside the merged labels for lineage queries.
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.merge_clustering_passes
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+    output_map:
+      clustering_results: "['clustering_results']"

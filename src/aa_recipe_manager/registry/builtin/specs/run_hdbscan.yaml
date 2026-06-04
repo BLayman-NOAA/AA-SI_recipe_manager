@@ -29,6 +29,16 @@ outputs:
       find_background_cluster is true; null otherwise.
     required: false
     default: null
+  cluster_labels:
+    type: list
+    description: >
+      Sorted list of non-noise cluster labels found in this result (all
+      labels >= 0). Provided as scaffolding for a future map_over fan-out:
+      map_over: ${this_step.cluster_labels} will fan
+      filter_normalized_by_cluster across every discovered cluster without
+      any changes to the op or its spec.
+    required: false
+    default: null
 params:
   dataset_name:
     type: str
@@ -103,3 +113,4 @@ implementations:
       clustering_results: "['clustering_results']"
       clustering_model: "['clustering_model']"
       background_label: "['background_label']"
+      cluster_labels: "['cluster_labels']"

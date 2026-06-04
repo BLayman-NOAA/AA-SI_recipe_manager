@@ -3,6 +3,7 @@
 *.raw
 *.zarr
 recipe_cache/
+example_recipes/outputs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

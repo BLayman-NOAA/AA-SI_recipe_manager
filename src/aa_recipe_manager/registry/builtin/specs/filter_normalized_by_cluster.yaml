@@ -1,0 +1,56 @@
+op: filter_normalized_by_cluster
+description: >
+  Subset the normalised ML Dataset to samples belonging to a single cluster
+  label from a previous run_hdbscan result. Returns a filtered Dataset that
+  can be passed directly to run_hdbscan for a second-pass clustering.
+
+  Use cluster_label: -1 (default) to isolate noise points for re-clustering.
+  Use any non-negative integer to isolate a specific cluster for sub-cluster
+  refinement.
+
+  Designed as a single-item, map-friendly primitive: it processes one
+  cluster_label at a time so that a future map_over step attribute can fan it
+  out across all cluster labels (e.g. map_over: ${run_hdbscan.cluster_labels})
+  without any changes to this op or its spec.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: Normalised ML Dataset produced by normalize_ml_data.
+  clustering_results:
+    type: Dataset
+    description: Clustering result Dataset from run_hdbscan.
+outputs:
+  ds_normalized_filtered:
+    type: Dataset
+    description: >
+      Copy of ds_normalized whose normalised feature variable is subsetted to
+      the samples belonging to the requested cluster_label. The full
+      sample_index_to_grid_index mapping is preserved so the filtered dataset
+      can be passed directly to run_hdbscan.
+params:
+  cluster_label:
+    type: int
+    description: >
+      Label of the cluster to isolate. Use -1 (default) to select noise
+      points for re-clustering. Any non-negative integer selects that
+      specific cluster for sub-cluster refinement.
+    required: false
+    default: -1
+  dataset_name:
+    type: str
+    required: true
+  normalization_name:
+    type: str
+    required: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.filter_normalized_by_cluster
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+    output_map:
+      ds_normalized_filtered: "['ds_normalized_filtered']"
