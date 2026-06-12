@@ -2,6 +2,9 @@
 
 A Python package for defining, sharing, generating, and executing standardized scientific workflow recipes.
 
+The package installs the CLI as `aa-recipe`. The legacy `aa-recipe-manager`
+command remains available as a compatibility alias.
+
 A recipe is a YAML file that describes a complete data processing pipeline as a directed acyclic graph (DAG) of steps, along with all the inputs needed to reproduce it. The package sits between the scientist and the code: it does not replace any existing library, but provides a thin structured layer that references existing libraries, maps parameters, and produces runnable artifacts (notebooks, scripts, background jobs) from a single declarative source of truth.
 
 ## Features
@@ -64,19 +67,19 @@ pip install -e ".[prefect]"  # planned Prefect executor
 
 ```bash
 # Validate a recipe
-aa-recipe-manager dry-run my_recipe.yaml
+aa-recipe dry-run my_recipe.yaml
 
 # Generate a Jupyter notebook
-aa-recipe-manager generate my_recipe.yaml
+aa-recipe generate my_recipe.yaml
 
 # Generate a Python script
-aa-recipe-manager generate my_recipe.yaml --format script
+aa-recipe generate my_recipe.yaml --format script
 
 # Run a pipeline directly with checkpoint/resume
-aa-recipe-manager run my_recipe.yaml --input raw_folder=/data/survey --output-dir ./outputs
+aa-recipe run my_recipe.yaml --input raw_folder=/data/survey --output-dir ./outputs
 
 # Keep only selected checkpoint save points
-aa-recipe-manager run my_recipe.yaml --checkpoint-mode explicit --checkpoint calibrated_sv
+aa-recipe run my_recipe.yaml --checkpoint-mode explicit --checkpoint calibrated_sv
 ```
 
 Python API:

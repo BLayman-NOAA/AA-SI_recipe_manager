@@ -29,7 +29,11 @@ class ProvenanceRecorder:
     """Captures runtime environment from a PipelineDAG."""
 
     @staticmethod
-    def capture(dag: PipelineDAG, recipe_path: Path | str | None = None) -> Provenance:
+    def capture(
+        dag: PipelineDAG,
+        recipe_path: Path | str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> Provenance:
         """Produce a Provenance object from the current runtime environment.
 
         If recipe_path is provided the recipe hash is computed from the file
@@ -45,14 +49,20 @@ class ProvenanceRecorder:
             model_bytes = dag.recipe.model_dump_json().encode()
             recipe_hash = hashlib.sha256(model_bytes).hexdigest()
 
-        # Collect dependencies from all nodes.
-        dep_versions: dict[str, str] = {}
+        # Collect dependencies from all nodes, preserving source/url metadata.
+        dep_versions: dict[str, Any] = {}
         for step_id in dag.topological_order:
             node = dag.nodes[step_id]
             if node.implementation and node.implementation.dependency:
-                pkg = node.implementation.dependency.name
-                if pkg not in dep_versions:
-                    dep_versions[pkg] = _installed_version(pkg)
+                dep = node.implementation.dependency
+                if dep.name not in dep_versions:
+                    entry: dict[str, Any] = {
+                        "installed_version": _installed_version(dep.name),
+                        "source": dep.source,
+                    }
+                    if dep.url:
+                        entry["url"] = dep.url
+                    dep_versions[dep.name] = entry
 
         # Build per-step provenance.
         resolved_steps: dict[str, ResolvedStepInfo] = {}
@@ -76,7 +86,9 @@ class ProvenanceRecorder:
             recipe_version=dag.recipe.version,
             timestamp=datetime.now(timezone.utc),
             python_version=sys.version,
+            python_version_number=platform.python_version(),
             os_info=platform.platform(),
+            inputs=dict(inputs) if inputs else {},
             resolved_steps=resolved_steps,
             resolved_dependencies=dep_versions,
         )
@@ -91,6 +103,7 @@ class ProvenanceRecorder:
         """
         result: dict[str, Any] = {
             "python_version": sys.version,
+            "python_version_number": platform.python_version(),
             "os_info": platform.platform(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -112,12 +125,21 @@ def to_json(prov: Provenance) -> str:
 
 
 def to_yaml(prov: Provenance) -> str:
-    """Serialize a Provenance object to a YAML string."""
+    """Serialize a Provenance object to a YAML string.
+
+    Excludes ``resolved_steps`` — those are redundant when the recipe file is
+    available. The written fields are sufficient to reproduce the run:
+    recipe identity (name, version, hash), runtime environment, inputs
+    supplied at execution time, and pinned dependency versions.
+    """
     import io
 
     from ruamel.yaml import YAML
 
-    data = prov.model_dump(mode="json")
+    data = prov.model_dump(mode="json", exclude={"resolved_steps"})
+    # Drop inputs section entirely when empty to keep the file clean.
+    if not data.get("inputs"):
+        data.pop("inputs", None)
     yaml = YAML()
     yaml.default_flow_style = False
     stream = io.StringIO()

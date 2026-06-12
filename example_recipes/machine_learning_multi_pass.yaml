@@ -110,7 +110,7 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       ml_result_name: "hdbscan_results"
       min_cluster_size_fraction: 0.02
-      min_samples: 2
+      min_samples: 10
       sample_size: 1000000
       cluster_selection_method: "leaf"
       use_hdbscan: true
@@ -137,7 +137,7 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       ml_result_name: "hdbscan_pass2"
       min_cluster_size_fraction: 0.005
-      min_samples: 2
+      min_samples: 4
       sample_size: 1000000
       cluster_selection_method: "eom"
       use_hdbscan: true

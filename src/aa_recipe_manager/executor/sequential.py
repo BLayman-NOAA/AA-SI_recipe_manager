@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import gc
 import io
+import shutil
+import stat
 import time
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout
@@ -55,6 +58,33 @@ class _Tee:
     def flush(self) -> None:
         for stream in self._streams:
             stream.flush()
+
+
+_EXE_TEMP_DIRNAME = "exe_temp"
+_TEMP_DIR_CLEANUP_RETRIES = 5
+_TEMP_DIR_CLEANUP_BASE_DELAY = 0.25
+
+
+def _remove_readonly(func, path, _excinfo):
+    """Error handler for shutil.rmtree on Windows read-only files."""
+    import os  # noqa: PLC0415
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _is_transient_windows_lock(exc: OSError) -> bool:
+    """Return True for the common transient Windows file-lock error."""
+    return isinstance(exc, PermissionError) and getattr(exc, "winerror", None) == 32
+
+
+def _resolve_temp_dir(cache_dir: Path | None) -> Path | None:
+    """Resolve the run-scoped scratch directory (sibling of the checkpoint cache).
+
+    Returns ``None`` when no cache directory is configured.
+    """
+    if cache_dir is not None:
+        return cache_dir.parent / _EXE_TEMP_DIRNAME
+    return None
 
 
 def _resolve_outputs_dir(
@@ -137,8 +167,14 @@ class SequentialExecutor:
         # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
         # execution context's ``artifacts_dir``) and per-step stdout/stderr to
         # ``<outputs>/logs/standard_out.txt``.
-        resolved_outputs_dir = _resolve_outputs_dir(outputs_dir, resolved_output_dir)
+        # Use the raw output_dir arg (not the checkpoint-gated resolved_output_dir)
+        # so that outputs_dir resolves correctly even when no_checkpoints=True.
+        resolved_outputs_dir = _resolve_outputs_dir(
+            outputs_dir, Path(output_dir) if output_dir is not None else None
+        )
         result.outputs_dir = resolved_outputs_dir
+
+        resolved_temp_dir = _resolve_temp_dir(resolved_output_dir)
 
         log_buffer = io.StringIO()
         log_file_handle = None
@@ -160,6 +196,7 @@ class SequentialExecutor:
                 policy=policy,
                 resolved_output_dir=resolved_output_dir,
                 resolved_outputs_dir=resolved_outputs_dir,
+                resolved_temp_dir=resolved_temp_dir,
                 force=force,
                 skip_sinks=skip_sinks,
                 regenerate_outputs=regenerate_outputs,
@@ -169,10 +206,41 @@ class SequentialExecutor:
         finally:
             if log_file_handle is not None:
                 log_file_handle.close()
+            self._cleanup_temp_dir(resolved_temp_dir)
 
         result.console_log = log_buffer.getvalue()
-        result.provenance = ProvenanceRecorder.capture(dag)
+        result.provenance = ProvenanceRecorder.capture(dag, inputs=pipeline_inputs or None)
         return result
+
+    @staticmethod
+    def _cleanup_temp_dir(temp_dir: Path | None) -> None:
+        """Remove the run-scoped scratch directory if it exists.
+
+        Windows can briefly hold open NetCDF-backed temp files after the last
+        step returns, so retry a few times before surfacing the error.
+        """
+        if temp_dir is None or not temp_dir.exists():
+            return
+
+        last_error: OSError | None = None
+        for attempt in range(_TEMP_DIR_CLEANUP_RETRIES):
+            try:
+                shutil.rmtree(temp_dir, onerror=_remove_readonly)
+                return
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                if not temp_dir.exists():
+                    return
+                if not _is_transient_windows_lock(exc):
+                    raise
+                last_error = exc
+                if attempt == _TEMP_DIR_CLEANUP_RETRIES - 1:
+                    break
+                gc.collect()
+                time.sleep(_TEMP_DIR_CLEANUP_BASE_DELAY * (attempt + 1))
+
+        raise last_error  # type: ignore[misc]
 
     def _run_steps(
         self,
@@ -185,6 +253,7 @@ class SequentialExecutor:
         policy: set[str],
         resolved_output_dir: Path | None,
         resolved_outputs_dir: Path | None,
+        resolved_temp_dir: Path | None,
         force: bool,
         skip_sinks: bool,
         regenerate_outputs: bool,
@@ -276,6 +345,7 @@ class SequentialExecutor:
                     output_dir=resolved_output_dir,
                     step_id=step_id,
                     artifacts_dir=resolved_outputs_dir,
+                    temp_dir=resolved_temp_dir,
                 ), redirect_stdout(log_sink), redirect_stderr(log_sink):
                     outputs = self._execute_step(node, runtime, pipeline_inputs)
             except PipelineExecutionError as exc:
@@ -296,12 +366,16 @@ class SequentialExecutor:
                 )
                 raise wrapped from exc
 
+            if checkpoints is not None and outputs and step_id in policy:
+                checkpoints.save(step_id, outputs)
+                # Replace temp-backed in-memory outputs with their persisted form
+                # immediately so downstream steps and final cleanup do not keep
+                # Windows NetCDF handles alive under exe_temp.
+                outputs = checkpoints.load(step_id)
             runtime.record(step_id, outputs)
             result.outputs[step_id] = outputs
             result.executed_steps.append(step_id)
-            if checkpoints is not None and outputs and step_id in policy:
-                checkpoints.save(step_id, outputs)
-            elif checkpoints is not None and is_side_effect:
+            if checkpoints is not None and is_side_effect:
                 # Record a marker so an unchanged future run can skip
                 # regenerating this side-effect step's on-disk artifacts.
                 checkpoints.save_marker(step_id)

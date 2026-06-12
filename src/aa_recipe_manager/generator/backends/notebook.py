@@ -753,7 +753,10 @@ def _build_save_recipe_cell(
     return _code_cell(f"tracker.save_recipe({repr(output_name)})")
 
 
-def _build_provenance_cell(dag: PipelineDAG) -> nbformat.NotebookNode:
+def _build_provenance_cell(
+    dag: PipelineDAG,
+    provenance_output_dir: str = "outputs/provenance",
+) -> nbformat.NotebookNode:
     dep_names = []
     for step_id in dag.topological_order:
         node = dag.nodes[step_id]
@@ -763,13 +766,24 @@ def _build_provenance_cell(dag: PipelineDAG) -> nbformat.NotebookNode:
                 dep_names.append(name)
 
     lines = [
-        "# Capture the runtime environment at the time this notebook was run.",
+        "# Capture the runtime environment and save provenance to YAML.",
+        "import io as _prov_io",
+        "from pathlib import Path as _ProvPath",
+        "from ruamel.yaml import YAML as _ProvYAML",
         f"_provenance = ProvenanceRecorder.capture_environment({repr(dep_names)})",
-        'print("Python:", _provenance["python_version"])',
+        f"_provenance_dir = _ProvPath({repr(provenance_output_dir)})",
+        "_provenance_dir.mkdir(parents=True, exist_ok=True)",
+        "_prov_yaml = _ProvYAML()",
+        "_prov_yaml.default_flow_style = False",
+        "_prov_stream = _prov_io.StringIO()",
+        "_prov_yaml.dump(_provenance, _prov_stream)",
+        "(_provenance_dir / 'provenance.yaml').write_text(_prov_stream.getvalue(), encoding='utf-8')",
+        'print("Python:", _provenance["python_version_number"])',
         'print("Timestamp:", _provenance["timestamp"])',
         'if "installed_packages" in _provenance:',
         '    for pkg, ver in _provenance["installed_packages"].items():',
         '        print(f"  {pkg}: {ver}")',
+        'print(f"Provenance saved to: {_provenance_dir / \'provenance.yaml\'}")',
     ]
     return _code_cell("\n".join(lines))
 
@@ -872,6 +886,7 @@ def _build_notebook_cells(
     include_provenance: bool = opts.get("include_provenance", True)
     include_tracker: bool = opts.get("include_tracker", True)
     cache_aware: bool = opts.get("cache_aware", False)
+    provenance_output_dir: str = opts.get("provenance_output_dir", "outputs/provenance")
 
     var_name_map = _build_variable_name_map_from_dag(dag)
     callable_aliases = _build_callable_aliases(dag)
@@ -920,7 +935,7 @@ def _build_notebook_cells(
     if include_tracker:
         cells.append(_build_save_recipe_cell(save_recipe_output))
     if include_provenance:
-        cells.append(_build_provenance_cell(dag))
+        cells.append(_build_provenance_cell(dag, provenance_output_dir))
     return cells
 
 

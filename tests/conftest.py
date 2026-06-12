@@ -95,10 +95,7 @@ def _hb1603_example_inputs(recipe_path):
     return {
         "raw_input_folder": str(recipe_dir / "raw_file_inputs"),
         "cal_input_folder": str(recipe_dir / "calibration_files" / "HB201607_cal"),
-        "output_base": str(recipe_dir / "nefsc_uc_e2_cal_outputs"),
         "netcdf_output_folder": str(recipe_dir / "NetCDF-files"),
-        "sv_output_folder": str(recipe_dir / "Sv-files"),
-        "output_logs_folder": str(recipe_dir / "Output-Logs"),
         "line_file_path": str(
             recipe_dir
             / "line_files"

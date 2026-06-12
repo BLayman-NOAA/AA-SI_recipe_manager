@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -844,6 +845,84 @@ class TestSequentialExecutor:
         assert all(e[3] == 3 for e in starts)
         assert all(not e[4] for e in ends)
 
+    def test_checkpointed_step_is_reloaded_before_downstream_use(
+        self, helper_module, monkeypatch, tmp_path
+    ):
+        dag = _linear_inc_dag()
+        saved: dict[str, dict[str, Any]] = {}
+
+        def fake_save(_self, step_id: str, outputs: dict[str, Any]) -> None:
+            saved[step_id] = dict(outputs)
+
+        def fake_load(_self, step_id: str) -> dict[str, Any]:
+            outputs = dict(saved[step_id])
+            if step_id == "first":
+                outputs["out"] = 40
+            return outputs
+
+        monkeypatch.setattr(CheckpointManager, "save", fake_save)
+        monkeypatch.setattr(CheckpointManager, "load", fake_load)
+
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 0},
+            output_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+
+        assert result.outputs["first"]["out"] == 40
+        assert result.outputs["second"]["out"] == 41
+        assert [entry[1] for entry in helper_module.call_log] == [
+            {"x": 0},
+            {"x": 1},
+            {"x": 40},
+        ]
+
+    def test_cleanup_temp_dir_retries_transient_windows_lock(
+        self, monkeypatch, tmp_path
+    ):
+        temp_dir = tmp_path / "exe_temp"
+        locked_file = temp_dir / "data" / "sample.nc"
+        locked_file.parent.mkdir(parents=True)
+        locked_file.write_text("payload", encoding="utf-8")
+
+        real_rmtree = shutil.rmtree
+        attempts: list[Path] = []
+        delays: list[float] = []
+        gc_calls: list[int] = []
+
+        def fake_rmtree(path, onerror=None):
+            attempts.append(Path(path))
+            if len(attempts) < 3:
+                exc = PermissionError(
+                    32,
+                    "The process cannot access the file because it is being used by another process",
+                    str(locked_file),
+                )
+                exc.winerror = 32
+                raise exc
+            real_rmtree(path, onerror=onerror)
+
+        monkeypatch.setattr(
+            "aa_recipe_manager.executor.sequential.shutil.rmtree", fake_rmtree
+        )
+        monkeypatch.setattr(
+            "aa_recipe_manager.executor.sequential.time.sleep",
+            lambda delay: delays.append(delay),
+        )
+        monkeypatch.setattr(
+            "aa_recipe_manager.executor.sequential.gc.collect",
+            lambda: gc_calls.append(1),
+        )
+
+        SequentialExecutor._cleanup_temp_dir(temp_dir)
+
+        assert len(attempts) == 3
+        assert attempts == [temp_dir, temp_dir, temp_dir]
+        assert delays == [0.25, 0.5]
+        assert len(gc_calls) == 2
+        assert not temp_dir.exists()
+
 
 # ---------------------------------------------------------------------------
 # Checkpointing
@@ -1252,9 +1331,36 @@ def test_provenance_sidecar_written(helper_module, tmp_path):
     _write_provenance_sidecar(provenance, sidecar)
     assert sidecar.exists()
     content = sidecar.read_text(encoding="utf-8")
-    assert "start" in content
-    assert "first" in content
-    assert "second" in content
+    assert "recipe_hash" in content
+    assert "resolved_dependencies" in content
+    assert "resolved_steps" not in content
+
+
+def test_api_execute_writes_provenance_to_outputs_dir(helper_module, tmp_path):
+    """provenance.yaml is written to outputs/provenance/ alongside logs."""
+    from unittest.mock import patch
+
+    from aa_recipe_manager import api
+
+    dag = _linear_inc_dag()
+    with patch("aa_recipe_manager.api._load_dag", return_value=dag):
+        result = api.execute(
+            dag.recipe,
+            inputs={"seed": 1},
+            output_dir=str(tmp_path / "ckpt"),
+        )
+    assert result.outputs_dir is not None
+    prov_path = result.outputs_dir / "provenance" / "provenance.yaml"
+    assert prov_path.exists(), f"provenance.yaml not found at {prov_path}"
+    content = prov_path.read_text(encoding="utf-8")
+    assert "recipe_hash" in content
+    assert "python_version_number" in content
+    assert "resolved_dependencies" in content
+    # inputs supplied at runtime are recorded
+    assert "seed" in content
+    # resolved_steps is excluded from the YAML sidecar
+    assert "resolved_steps" not in content
+
 
 
 def test_api_execute_rejects_no_checkpoints_with_checkpoint_steps():

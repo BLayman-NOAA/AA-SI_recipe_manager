@@ -64,7 +64,7 @@ prefect = [
 # Bundle of every dependency declared by the built-in spec registry, plus the
 # Jupyter packages needed to run a generated notebook. Lets users install one
 # environment that can execute any recipe built from built-in specs without
-# running `aa-recipe-manager env create`. Keep this list in sync with the
+# running `aa-recipe env create`. Keep this list in sync with the
 # `dependency:` blocks under src/aa_recipe_manager/registry/builtin/specs/.
 all-builtin-specs = [
     "echopype>=0.6.0",
@@ -77,6 +77,7 @@ all-builtin-specs = [
 ]
 
 [project.scripts]
+aa-recipe = "aa_recipe_manager.cli:main"
 aa-recipe-manager = "aa_recipe_manager.cli:main"
 aa_recipe_manager = "aa_recipe_manager.cli:main"
 

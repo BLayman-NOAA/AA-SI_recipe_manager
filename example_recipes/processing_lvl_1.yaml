@@ -1,0 +1,85 @@
+# Processing Level 1 - Raw Ingest and Calibration Extraction
+#
+# Takes a folder of raw files and standardized calibration files, builds the
+# calibration mapping, reads the raw files, combines them, and extracts the
+# calibration/environment parameters needed for Sv computation.
+
+recipe:
+  name: "processing_lvl_1"
+  description: "Initial setup through calibration parameter extraction."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files."
+  cal_input_folder:
+    type: path
+    description: "Folder containing standardized calibration files."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK60"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder". Note that
+      generate_standardized_cal_mapping always scans the full folder; this
+      input only constrains the set of files that get opened and processed.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+
+  - id: read_raw
+    op: read_raw_files
+    inputs:
+      raw_file_paths: ${initial_setup.raw_file_paths}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: true
+      intermediate_format: "netcdf"
+
+  - id: combine_raw
+    op: combine_raw_files
+    checkpoint: always
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}

@@ -17,6 +17,7 @@ class ExecutionContext:
     output_dir: Path | None = None
     step_id: str | None = None
     artifacts_dir: Path | None = None
+    temp_dir: Path | None = None
 
 
 _EXECUTION_CONTEXT: ContextVar[ExecutionContext] = ContextVar(
@@ -37,16 +38,19 @@ def execution_context(
     output_dir: str | Path | None = None,
     step_id: str | None = None,
     artifacts_dir: str | Path | None = None,
+    temp_dir: str | Path | None = None,
 ) -> Iterator[ExecutionContext]:
     """Temporarily set the recipe execution context for the current task."""
     resolved_output_dir = None if output_dir is None else Path(output_dir)
     resolved_artifacts_dir = None if artifacts_dir is None else Path(artifacts_dir)
+    resolved_temp_dir = None if temp_dir is None else Path(temp_dir)
     token: Token[ExecutionContext] = _EXECUTION_CONTEXT.set(
         ExecutionContext(
             mode=mode,
             output_dir=resolved_output_dir,
             step_id=step_id,
             artifacts_dir=resolved_artifacts_dir,
+            temp_dir=resolved_temp_dir,
         )
     )
     try:

@@ -45,6 +45,7 @@ JSON_DATA_DIR = "json_data"
 CACHE_METADATA_DIR = "cache_metadata"
 IMAGE_DATA_DIR = "images"
 OTHER_DATA_DIR = "other"
+PROVENANCE_DIR = "provenance"
 
 
 CleanMode = Literal["intermediate", "all", "stale"]

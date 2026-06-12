@@ -108,6 +108,23 @@ class TestProvenanceCapture:
         prov = ProvenanceRecorder.capture(dag)
         assert prov.python_version
 
+    def test_python_version_number_is_short_semver(self, tmp_path):
+        dag, _ = _build_four_step_dag(tmp_path)
+        prov = ProvenanceRecorder.capture(dag)
+        parts = prov.python_version_number.split(".")
+        assert len(parts) == 3
+        assert all(p.isdigit() for p in parts)
+
+    def test_inputs_recorded_when_provided(self, tmp_path):
+        dag, _ = _build_four_step_dag(tmp_path)
+        prov = ProvenanceRecorder.capture(dag, inputs={"raw_folder": "/data/survey"})
+        assert prov.inputs == {"raw_folder": "/data/survey"}
+
+    def test_inputs_empty_when_not_provided(self, tmp_path):
+        dag, _ = _build_four_step_dag(tmp_path)
+        prov = ProvenanceRecorder.capture(dag)
+        assert prov.inputs == {}
+
     def test_os_info_present(self, tmp_path):
         dag, _ = _build_four_step_dag(tmp_path)
         prov = ProvenanceRecorder.capture(dag)
@@ -307,7 +324,15 @@ class TestCaptureEnvironment:
         result = ProvenanceRecorder.capture_environment()
         assert isinstance(result, dict)
         assert "python_version" in result
+        assert "python_version_number" in result
         assert "timestamp" in result
+
+    def test_capture_environment_python_version_number_is_short(self):
+        result = ProvenanceRecorder.capture_environment()
+        # python_version_number should be a short semver like "3.10.4"
+        parts = result["python_version_number"].split(".")
+        assert len(parts) == 3
+        assert all(p.isdigit() for p in parts)
 
     def test_capture_environment_with_packages(self):
         result = ProvenanceRecorder.capture_environment(["packaging"])

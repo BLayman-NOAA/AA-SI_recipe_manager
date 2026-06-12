@@ -10,7 +10,7 @@
 # raw_file_names to a list of filenames within raw_input_folder. Leave it
 # as an empty list to process every .raw file in the folder.
 #
-# Usage: aa-recipe-manager generate byo_folder_example.yaml
+# Usage: aa-recipe generate byo_folder_example.yaml
 
 recipe:
   name: "byo_folder_example"
@@ -29,18 +29,6 @@ inputs:
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
-  output_base:
-    type: path
-    default: "./nefsc_uc_e2_cal_outputs"
-  netcdf_output_folder:
-    type: path
-    default: "./NetCDF-files"
-  sv_output_folder:
-    type: path
-    default: "./Sv-files"
-  output_logs_folder:
-    type: path
-    default: "./Output-Logs"
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"

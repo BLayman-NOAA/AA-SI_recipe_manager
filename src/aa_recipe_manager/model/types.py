@@ -327,6 +327,8 @@ class Provenance(BaseModel):
     recipe_version: str
     timestamp: datetime  # timezone-aware UTC datetime
     python_version: str
+    python_version_number: str  # short semver e.g. "3.10.4"
     os_info: str
+    inputs: dict[str, Any] = {}  # pipeline-level inputs supplied at runtime
     resolved_steps: dict[str, ResolvedStepInfo] = {}
-    resolved_dependencies: dict[str, str] = {}  # package -> installed version
+    resolved_dependencies: dict[str, Any] = {}  # package -> {installed_version, source, url}

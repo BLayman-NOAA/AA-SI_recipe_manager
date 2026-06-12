@@ -7,7 +7,7 @@
 # (noise removal, MVBS, ML). Use the full recipe if you need a side-by-side
 # calibrated vs. uncalibrated comparison.
 #
-# Usage: aa-recipe-manager generate simplified_hb1603_survey_pipeline.yaml
+# Usage: aa-recipe generate simplified_hb1603_survey_pipeline.yaml
 
 recipe:
   name: "hb1603_survey_pipeline_simplified"
@@ -26,18 +26,6 @@ inputs:
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
-  output_base:
-    type: path
-    default: "./nefsc_uc_e2_cal_outputs"
-  netcdf_output_folder:
-    type: path
-    default: "./NetCDF-files"
-  sv_output_folder:
-    type: path
-    default: "./Sv-files"
-  output_logs_folder:
-    type: path
-    default: "./Output-Logs"
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
@@ -75,13 +63,10 @@ steps:
   # Both steps point at the per-query subfolder created by download_raw
   # (${download_raw.download_dir}) so re-running with a different query
   # writes into a sibling folder instead of mixing files.
-  - id: setup_raw_files
-    op: setup_raw_files
+  - id: initial_setup
+    op: initial_setup
     params:
       raw_input_folder: ${download_raw.download_dir}
-      netcdf_output_folder: ${inputs.netcdf_output_folder}
-      sv_output_folder: ${inputs.sv_output_folder}
-      output_logs_folder: ${inputs.output_logs_folder}
       raw_file_names: []
       clear_previous_json_logs: true
 
@@ -90,7 +75,7 @@ steps:
     params:
       raw_input_folder: ${download_raw.download_dir}
       cal_input_folder: ${inputs.cal_input_folder}
-      output_base: ${inputs.output_base}
+      output_base: ${initial_setup.calibration_output_dir}
       cruise_id: "HB1603"
       record_author: "<Your Name>"
       short_filenames: true
@@ -100,21 +85,26 @@ steps:
   # --------------------------------------------------------------------------
   # Load raw data and extract calibration parameters
   # --------------------------------------------------------------------------
-  - id: open_raw
-    op: open_raw_files
+  - id: read_raw
+    op: read_raw_files
     inputs:
-      raw_file_paths: ${setup_raw_files.raw_file_paths}
+      raw_file_paths: ${initial_setup.raw_file_paths}
     params:
-      netcdf_output_folder: ${inputs.netcdf_output_folder}
       sonar_model: "EK60"
       include_bot: true
+
+  - id: combine_raw
+    op: combine_raw_files
+    checkpoint: always
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
 
   - id: extract_cal_params
     op: extract_standardized_cal_params
     inputs:
       calibration_dict: ${gen_cal_mapping.calibration_dict}
       mapping_dict: ${gen_cal_mapping.mapping_dict}
-      echodata: ${open_raw.echodata}
+      echodata: ${combine_raw.echodata}
 
   # --------------------------------------------------------------------------
   # Compute Sv (single calibrated Sv used everywhere downstream)
@@ -122,7 +112,7 @@ steps:
   - id: compute_sv
     op: compute_sv
     inputs:
-      echodata: ${open_raw.echodata}
+      echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
 
@@ -132,7 +122,7 @@ steps:
   - id: log_seafloor_stats
     op: log_seafloor_detection_stats
     inputs:
-      echodata: ${open_raw.echodata}
+      echodata: ${combine_raw.echodata}
       ds_Sv: ${compute_sv.ds_Sv}
     params:
       min_valid_depth_m: 10.0
@@ -142,7 +132,7 @@ steps:
     depends_on: [log_seafloor_stats]
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
-      echodata: ${open_raw.echodata}
+      echodata: ${combine_raw.echodata}
     params:
       min_valid_depth_m: 10.0
 

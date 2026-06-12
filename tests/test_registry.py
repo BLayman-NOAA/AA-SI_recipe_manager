@@ -162,9 +162,10 @@ class TestRegistryImplementations:
 EXPECTED_BUILTIN_OPS = {
     "query_ncei_data",
     "download_ncei_data",
-    "setup_raw_files",
+    "initial_setup",
     "generate_standardized_cal_mapping",
-    "open_raw_files",
+    "read_raw_files",
+    "combine_raw_files",
     "extract_standardized_cal_params",
     "compute_sv",
     "ep_add_depth",
@@ -191,6 +192,8 @@ EXPECTED_BUILTIN_OPS = {
     "plot_clustering_report",
     "log_seafloor_detection_stats",
     "compute_per_cell_statistics",
+    "filter_normalized_by_cluster",
+    "merge_clustering_passes",
 }
 
 

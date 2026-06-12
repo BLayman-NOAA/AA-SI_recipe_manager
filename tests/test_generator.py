@@ -66,8 +66,6 @@ FOUR_STEP_RECIPE = """\
         params:
           raw_input_folder: ${inputs.raw_input_folder}
           netcdf_output_folder: ${inputs.netcdf_output_folder}
-          sv_output_folder: "./sv_files"
-          output_logs_folder: "./logs"
       - id: open_raw
         op: open_raw_files
         inputs:
@@ -513,8 +511,6 @@ class TestNotebookGeneration:
                                 params:
                                     raw_input_folder: ${download_raw.download_dir}
                                     netcdf_output_folder: "./NetCDF-files"
-                                    sv_output_folder: "./Sv-files"
-                                    output_logs_folder: "./Output-Logs"
                                     raw_file_names: ${inputs.raw_file_names}
                 """
                 recipe = load_recipe(_write_recipe(tmp_path, recipe_text))
@@ -543,6 +539,30 @@ class TestNotebookGeneration:
         code_sources = [c.source for c in nb.cells if c.cell_type == "code"]
         combined = "\n".join(code_sources)
         assert "ProvenanceRecorder" in combined
+        # Cell must save YAML, not just print.
+        assert "provenance.yaml" in combined
+        assert "write_text" in combined
+
+    def test_provenance_cell_saves_to_outputs_dir(self, tmp_path):
+        dag = _build_four_step_dag(tmp_path)
+        out = _generate_notebook(dag, tmp_path)
+        combined = _combined_code_sources(out)
+        assert "outputs/provenance" in combined
+
+    def test_provenance_cell_custom_output_dir(self, tmp_path):
+        from aa_recipe_manager.generator.backends.notebook import NotebookBackend
+        from aa_recipe_manager.resolver.dependencies import resolve_dependencies
+
+        dag = _build_four_step_dag(tmp_path)
+        out = tmp_path / "custom_prov.ipynb"
+        NotebookBackend().generate(
+            dag,
+            resolve_dependencies(dag),
+            out,
+            options={"provenance_output_dir": "my_run/provenance"},
+        )
+        combined = _combined_code_sources(out)
+        assert "my_run/provenance" in combined
 
     def test_public_api_can_omit_tracker(self, tmp_path):
         raw_dir = tmp_path / "raw_files"

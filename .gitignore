@@ -4,6 +4,7 @@
 *.zarr
 recipe_cache/
 example_recipes/outputs
+exe_temp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

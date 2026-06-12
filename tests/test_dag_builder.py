@@ -52,9 +52,6 @@ FOUR_STEP_RECIPE = """\
       raw_input_folder:
         type: path
         default: "__RAW_INPUT_FOLDER__"
-      netcdf_output_folder:
-        type: path
-        default: "__NETCDF_OUTPUT_FOLDER__"
     steps:
       - id: query_ncei
         op: query_ncei_data
@@ -68,20 +65,20 @@ FOUR_STEP_RECIPE = """\
         params:
           output_dir: ${inputs.raw_input_folder}
       - id: setup_files
-        op: setup_raw_files
+        op: initial_setup
         depends_on: [download_raw]
         params:
           raw_input_folder: ${inputs.raw_input_folder}
-          netcdf_output_folder: ${inputs.netcdf_output_folder}
-          sv_output_folder: "./sv_files"
-          output_logs_folder: "./logs"
-      - id: open_raw
-        op: open_raw_files
+      - id: read_raw
+        op: read_raw_files
         inputs:
           raw_file_paths: ${setup_files.raw_file_paths}
         params:
-          netcdf_output_folder: ${inputs.netcdf_output_folder}
           sonar_model: "EK60"
+      - id: combine_raw
+        op: combine_raw_files
+        inputs:
+          raw_stores: ${read_raw.raw_stores}
     """
 
 
@@ -90,8 +87,6 @@ def _write_four_step_recipe(tmp_path: Path) -> Path:
     raw_input_folder.mkdir()
     recipe_text = FOUR_STEP_RECIPE.replace(
         "__RAW_INPUT_FOLDER__", raw_input_folder.as_posix()
-    ).replace(
-        "__NETCDF_OUTPUT_FOLDER__", (tmp_path / "netcdf").as_posix()
     )
     return _write_recipe(tmp_path, recipe_text)
 
@@ -106,7 +101,7 @@ class TestFourStepPipeline:
         recipe = load_recipe(p)
         reg = load_builtin_registry()
         dag = build_dag(recipe, reg)
-        assert len(dag.nodes) == 4
+        assert len(dag.nodes) == 5
 
     def test_dag_has_data_and_ordering_edges(self, tmp_path):
         p = _write_four_step_recipe(tmp_path)
@@ -122,7 +117,7 @@ class TestFourStepPipeline:
         recipe = load_recipe(p)
         reg = load_builtin_registry()
         dag = build_dag(recipe, reg)
-        assert set(dag.topological_order) == {"query_ncei", "download_raw", "setup_files", "open_raw"}
+        assert set(dag.topological_order) == {"query_ncei", "download_raw", "setup_files", "read_raw", "combine_raw"}
 
     def test_query_ncei_first_in_order(self, tmp_path):
         p = _write_four_step_recipe(tmp_path)
@@ -136,7 +131,7 @@ class TestFourStepPipeline:
         recipe = load_recipe(p)
         reg = load_builtin_registry()
         dag = build_dag(recipe, reg)
-        assert dag.topological_order[-1] == "open_raw"
+        assert dag.topological_order[-1] == "combine_raw"
 
     def test_input_defaults_substituted_in_resolved_params(self, tmp_path):
         p = _write_four_step_recipe(tmp_path)
@@ -151,7 +146,7 @@ class TestFourStepPipeline:
         recipe = load_recipe(p)
         reg = load_builtin_registry()
         dag = build_dag(recipe, reg)
-        assert dag.nodes["open_raw"].spec is not None
+        assert dag.nodes["combine_raw"].spec is not None
 
     def test_step_reference_in_param_creates_dependency_edge(self, tmp_path):
         content = """\
@@ -176,10 +171,9 @@ class TestFourStepPipeline:
                 params:
                   output_dir: "./raw_file_inputs"
               - id: setup_files
-                op: setup_raw_files
+                op: initial_setup
                 params:
                   raw_input_folder: ${download_raw.download_dir}
-                  netcdf_output_folder: "./NetCDF-files"
                   sv_output_folder: "./Sv-files"
                   output_logs_folder: "./Output-Logs"
                   raw_file_names: ${inputs.raw_file_names}
@@ -294,9 +288,8 @@ class TestDanglingRefs:
                 inputs:
                   echodata: ${raw.echodata}
               - id: raw
-                op: open_raw_files
+                op: combine_raw_files
                 params:
-                  netcdf_output_folder: "./out"
                   sonar_model: "EK60"
               - id: mask
                 op: create_surface_mask
@@ -741,11 +734,10 @@ HB1603_STYLE_RECIPE = """\
         params:
           output_dir: "{downloads_dir}"
       - id: setup_files
-        op: setup_raw_files
+        op: initial_setup
         depends_on: [download_raw]
         params:
           raw_input_folder: ${{inputs.raw_input_folder}}
-          netcdf_output_folder: "{netcdf_dir}"
           sv_output_folder: "{sv_dir}"
           output_logs_folder: "{logs_dir}"
       - id: cal_map
@@ -756,22 +748,25 @@ HB1603_STYLE_RECIPE = """\
           output_base: "{cal_output_dir}"
           cruise_id: "HB1603"
           record_author: "Tester"
-      - id: open_raw
-        op: open_raw_files
+      - id: read_raw
+        op: read_raw_files
         inputs:
           raw_file_paths: ${{setup_files.raw_file_paths}}
         params:
-          netcdf_output_folder: "{netcdf_dir}"
           sonar_model: "EK60"
+      - id: combine_raw
+        op: combine_raw_files
+        inputs:
+          raw_stores: ${{read_raw.raw_stores}}
       - id: compute_sv
         op: compute_sv
         inputs:
-          echodata: ${{open_raw.echodata}}
+          echodata: ${{combine_raw.echodata}}
       - id: detect_bottom
         op: detect_seafloor
         inputs:
           ds_Sv: ${{compute_sv.ds_Sv}}
-          echodata: ${{open_raw.echodata}}
+          echodata: ${{combine_raw.echodata}}
       - id: mask_bottom
         op: create_seafloor_mask
         inputs:
@@ -928,7 +923,6 @@ class TestBuiltinIntegration:
     raw_input_folder = tmp_path / "raw"
     cal_input_folder = tmp_path / "cal"
     downloads_dir = tmp_path / "downloads"
-    netcdf_dir = tmp_path / "netcdf"
     sv_dir = tmp_path / "sv"
     logs_dir = tmp_path / "logs"
     cal_output_dir = tmp_path / "cal-out"
@@ -943,7 +937,6 @@ class TestBuiltinIntegration:
       cal_input_folder=cal_input_folder.as_posix(),
       line_file_path=line_file_path.as_posix(),
       downloads_dir=downloads_dir.as_posix(),
-      netcdf_dir=netcdf_dir.as_posix(),
       sv_dir=sv_dir.as_posix(),
       logs_dir=logs_dir.as_posix(),
       cal_output_dir=cal_output_dir.as_posix(),
@@ -957,7 +950,7 @@ class TestBuiltinIntegration:
     dag = build_dag(recipe, reg)
     elapsed = time.perf_counter() - start
 
-    assert len(dag.nodes) == 15
+    assert len(dag.nodes) == 16
     assert len(dag.edges) >= 16
     assert dag.topological_order.index("compute_sv") < dag.topological_order.index(
       "combine_masks"

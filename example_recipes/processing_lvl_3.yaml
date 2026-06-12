@@ -1,0 +1,54 @@
+# Processing Level 3 - Sparse Masking, MVBS, and Per-Cell Statistics
+#
+# Applies sparse-bin masking to the clean Sv dataset, computes MVBS, and also
+# computes per-cell statistics from the pre-sparse-mask Sv dataset for ML use.
+
+recipe:
+  name: "processing_lvl_3"
+  description: "Sparse masking, MVBS generation, and per-cell statistics."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  sv_clean_unmasked:
+    type: dataset
+    description: "Clean Sv dataset after noise removal and before sparse-bin masking."
+  range_bin:
+    type: str
+    default: "20m"
+    description: "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+  ping_time_bin:
+    type: str
+    default: "20s"
+    description: "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+
+steps:
+
+  - id: mask_sparse
+    op: mask_sparse_bins
+    inputs:
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      nan_threshold: 0.6
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    checkpoint: always
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  - id: compute_cell_stats
+    op: compute_per_cell_statistics
+    inputs:
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      statistics:
+        - cv

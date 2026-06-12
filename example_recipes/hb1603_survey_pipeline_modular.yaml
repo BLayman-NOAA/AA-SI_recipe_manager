@@ -14,7 +14,7 @@
 #   - The cruise id, record author, sonar model, and overlay line name
 #     passed into the processing sub-recipe.
 #
-# Usage: aa-recipe-manager generate hb1603_survey_pipeline_modular.yaml
+# Usage: aa-recipe generate hb1603_survey_pipeline_modular.yaml
 
 recipe:
   name: "hb1603_survey_pipeline_modular"
@@ -30,18 +30,6 @@ inputs:
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
-  output_base:
-    type: path
-    default: "./nefsc_uc_e2_cal_outputs"
-  netcdf_output_folder:
-    type: path
-    default: "./netcdf_files"
-  sv_output_folder:
-    type: path
-    default: "./sv_files"
-  output_logs_folder:
-    type: path
-    default: "./calibration_logs"
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
@@ -50,7 +38,7 @@ inputs:
     default: "10m"
   ping_time_bin:
     type: str
-    default: "10s"
+    default: "20s"
 
 steps:
 
@@ -103,11 +91,11 @@ steps:
       overlay_line_var: "sw_dive_profile_fit"
 
   # ML wired to processing outputs.
-  - include: machine_learning_multi_pass.yaml
+  - include: machine_learning.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
       sv_clean_unmasked: ${remove_noise.ds_Sv}
-      echodata: ${open_raw.echodata}
+      echodata: ${combine_raw.echodata}
       overlay_line_var: "sw_dive_profile"
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}

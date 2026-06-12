@@ -1,0 +1,69 @@
+op: read_raw_files
+description: >
+  Open raw echosounder files with echopype and write each file as an intermediate
+  per-file store. Returns a list of store-path strings for file-backed formats,
+  or a list of in-memory EchoData objects when intermediate_format is "none".
+  This is the future map_over target for parallel per-file processing.
+  NOTE: use intermediate_format "netcdf" (default) or "none". The "zarr" option
+  is not recommended — see the intermediate_format parameter description below.
+category: io
+inputs:
+  raw_file_paths:
+    type: list
+    description: Paths to .raw files to open
+outputs:
+  raw_stores:
+    type: list
+    description: >
+      Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory
+      EchoData objects when intermediate_format is "none".
+params:
+  sonar_model:
+    type: str
+    description: "Sonar model string recognized by echopype (e.g. 'EK60', 'EK80')"
+    required: true
+  include_bot:
+    type: bool
+    description: Include bottom-detection (.bot) data if available
+    required: false
+    default: true
+  intermediate_format:
+    type: str
+    description: >
+      Intermediate store format written to exe_temp/data between the read_raw
+      and combine_raw steps. Supported values: "netcdf" (default), "zarr",
+      "none".
+
+      "netcdf" (default, recommended): each raw file is written as a temporary
+      .nc file, reopened, and combined. After combining, all EchoData groups are
+      rechunked to a single uniform chunk so the downstream zarr v2 checkpoint
+      write (combine_raw with checkpoint: always) always succeeds.
+
+      "none": all EchoData objects are kept in memory with no temp files.
+      Use when the full dataset fits comfortably in RAM.
+
+      "zarr" (NOT recommended): zarr v3 intermediate stores use
+      serializer-backed dtypes that are incompatible with the zarr v2
+      checkpoint writer used for EchoData checkpoints. Using this option will
+      reproduce the error: "Zarr format 2 arrays do not support serializer".
+      Kept as an option for experimentation only.
+    required: false
+    default: "netcdf"
+  use_swap:
+    type: str
+    description: >
+      Passed to echopype open_raw as use_swap. "auto" (default) triggers
+      per-file swap when the expanded data would exceed ~40% of total RAM.
+    required: false
+    default: "auto"
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.read_raw_files_to_stores
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      raw_stores: __return__

@@ -1,13 +1,11 @@
-# Machine Learning Sub-Recipe
+# Processing Level 4 - Machine Learning
 #
-# Dataset-agnostic ML pipeline: reshape MVBS for ML, normalize, plot,
-# run HDBSCAN clustering, embed results back, and produce a clustering
-# report. Upstream datasets are supplied by the parent recipe via
-# input_overrides.
+# Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
+# runs HDBSCAN clustering, and produces the clustering report outputs.
 
 recipe:
-  name: "machine_learning"
-  description: "ML reshape, normalization, and HDBSCAN clustering."
+  name: "processing_lvl_4"
+  description: "ML reshape, normalization, clustering, and reporting."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -26,28 +24,13 @@ inputs:
   sv_clean_unmasked:
     type: dataset
     description: >
-      Pre-sparse-mask Sv used for per-cell statistics and as the backdrop /
-      ping-index reference for ML and cluster echogram plots.
-  range_bin:
-    type: str
-    default: "20m"
-    description: "Range bin size shared with sparse masking and MVBS generation."
-  ping_time_bin:
-    type: str
-    default: "20s"
-    description: "Ping-time bin size shared with sparse masking and MVBS generation."
+      Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
+      and cluster echogram plots.
+  cell_stats_sv:
+    type: dataset
+    description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
 
 steps:
-
-  - id: compute_cell_stats
-    op: compute_per_cell_statistics
-    inputs:
-      ds_Sv: ${inputs.sv_clean_unmasked}
-    params:
-      range_bin: ${inputs.range_bin}
-      ping_time_bin: ${inputs.ping_time_bin}
-      statistics:
-        - cv
 
   - id: reshape_ml
     op: reshape_for_ml
@@ -64,12 +47,11 @@ steps:
     inputs:
       ds_ml: ${reshape_ml.ds_ml_ready}
       echodata: ${inputs.echodata}
-      ds_sv: ${compute_cell_stats.ds_Sv}
+      ds_sv: ${inputs.cell_stats_sv}
     params:
       dataset_name: "ml_dataset"
       features:
         - cell_cv
-        # - depth
 
   - id: normalize_ml
     op: normalize_ml_data
@@ -106,11 +88,10 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       ml_result_name: "hdbscan_results"
       min_cluster_size_fraction: 0.02
-      min_samples: 30
+      min_samples: 10
       sample_size: 1000000
-      cluster_selection_method: "eom"
+      cluster_selection_method: "leaf"
       use_hdbscan: true
-      # soft_membership_threshold: .6
 
   - id: embed_results
     op: embed_clustering_results

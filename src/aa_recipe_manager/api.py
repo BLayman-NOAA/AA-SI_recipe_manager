@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aa_recipe_manager.executor.checkpoint import OTHER_DATA_DIR
+from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
 from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -403,6 +403,172 @@ def _self_install_spec(
         return ("pypi", "aa-recipe-manager")
 
 
+def create_env_from_provenance(
+    provenance_path: str | Path,
+    env_path: str | Path,
+    *,
+    python: str | Path | None = None,
+    local_overrides: dict[str, str] | None = None,
+) -> EnvCreateResult:
+    """Create a virtual environment from a saved provenance YAML file.
+
+    Reads the ``resolved_dependencies`` section of a provenance file produced
+    by a previous recipe run and installs each package at its recorded (pinned)
+    version. This reproduces the exact library environment of that run without
+    requiring the original recipe file.
+
+    Parameters
+    ----------
+    provenance_path:
+        Path to a ``provenance.yaml`` file previously written by
+        ``aa-recipe-manager run`` or a generated notebook.
+    env_path:
+        Filesystem path for the new virtual environment.
+    python:
+        Python executable used to create the environment. Defaults to the
+        currently running interpreter. A warning is emitted when the
+        interpreter's version does not match ``python_version_number`` recorded
+        in the provenance file.
+    local_overrides:
+        Map of package name to local filesystem path. Named packages are
+        installed as editable installs from the given path instead of PyPI.
+    """
+    import subprocess
+    import warnings
+
+    provenance_path = Path(provenance_path)
+    env_path = Path(env_path)
+    local_overrides = local_overrides or {}
+
+    # Parse the provenance YAML.
+    try:
+        from ruamel.yaml import YAML as _YAML
+
+        _yaml = _YAML()
+        raw: dict[str, Any] = _yaml.load(provenance_path)
+    except Exception as exc:
+        raise ValueError(
+            f"Could not parse provenance file {provenance_path}: {exc}"
+        ) from exc
+
+    recorded_version: str | None = raw.get("python_version_number")
+    resolved_deps: dict[str, str] = raw.get("resolved_dependencies") or {}
+
+    # Warn if the Python version doesn't match.
+    if recorded_version is not None:
+        import platform as _platform
+
+        current_version = _platform.python_version()
+        if python is None and current_version != recorded_version:
+            warnings.warn(
+                f"Current Python {current_version} does not match the recorded "
+                f"version {recorded_version}. Pass python= to specify the "
+                "correct interpreter.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    result = EnvCreateResult(env_path=env_path)
+    python_exe = str(python) if python is not None else sys.executable
+    subprocess.run(
+        [python_exe, "-m", "venv", str(env_path)],
+        check=True,
+    )
+
+    if sys.platform == "win32":
+        python_in_env = env_path / "Scripts" / "python.exe"
+    else:
+        python_in_env = env_path / "bin" / "python"
+
+    regular_pkgs: list[str] = []
+    local_pkgs: list[str] = []
+
+    for pkg_name, pkg_info in resolved_deps.items():
+        if pkg_name in local_overrides:
+            local_pkgs.append(local_overrides[pkg_name])
+            continue
+
+        # Support both the new rich format {installed_version, source, url}
+        # and the old flat string format for backward compatibility.
+        if isinstance(pkg_info, dict):
+            source = pkg_info.get("source", "pypi")
+            url = pkg_info.get("url")
+            installed_version = pkg_info.get("installed_version", "")
+        else:
+            # Legacy flat string: just a version string.
+            source = "pypi"
+            url = None
+            installed_version = str(pkg_info) if pkg_info else ""
+
+        if source == "git":
+            install_url = url or pkg_name
+            regular_pkgs.append(f"git+{install_url}")
+        elif source == "local":
+            # Local packages without an override path are skipped; the user
+            # must supply --local-pkg.
+            result.skipped_local.append(pkg_name)
+            warnings.warn(
+                f"Package {pkg_name!r} is a local dependency and cannot be "
+                "installed from PyPI or a git URL. Re-run with "
+                f"--local-pkg {pkg_name}=/path/to/{pkg_name}.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            spec = (
+                f"{pkg_name}=={installed_version}"
+                if installed_version and installed_version != "unknown"
+                else pkg_name
+            )
+            regular_pkgs.append(spec)
+
+    # Also install aa-recipe-manager itself and notebook runtime essentials.
+    self_spec = _self_install_spec(local_overrides)
+    if self_spec is not None:
+        kind, value = self_spec
+        if kind == "editable":
+            local_pkgs.append(value)
+        else:
+            regular_pkgs.append(value)
+    regular_pkgs.extend(["ipykernel", "ipywidgets"])
+
+    if local_pkgs:
+        editable_args: list[str] = []
+        for pkg_path in local_pkgs:
+            editable_args += ["-e", pkg_path]
+        subprocess.run(
+            [str(python_in_env), "-m", "pip", "install"] + editable_args,
+            check=True,
+        )
+        result.installed.extend(f"-e {p}" for p in local_pkgs)
+
+    # Install PyPI packages individually so that a package not found on PyPI
+    # (e.g. a local/private package without a --local-pkg override) does not
+    # abort the entire install and leave PyPI packages like echopype uninstalled.
+    for spec in regular_pkgs:
+        pkg_result = subprocess.run(
+            [str(python_in_env), "-m", "pip", "install", spec],
+            capture_output=True,
+        )
+        if pkg_result.returncode == 0:
+            result.installed.append(spec)
+        else:
+            # Strip the version pin and treat as a local package that needs a
+            # --local-pkg override. This is the typical case for packages like
+            # aa-si-utils that are not published to PyPI.
+            pkg_name = spec.split("==")[0]
+            result.skipped_local.append(pkg_name)
+            warnings.warn(
+                f"Could not install {spec!r} from PyPI \u2014 it may be a local "
+                "package. Re-run with --local-pkg "
+                f"{pkg_name}=/path/to/{pkg_name} to install it.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    return result
+
+
 def execute(
     recipe: str | Path | Recipe,
     *,
@@ -531,8 +697,8 @@ def execute(
     sidecar_path: Path | None = None
     if save_provenance is not None:
         sidecar_path = Path(save_provenance)
-    elif output_dir is not None and not no_checkpoints:
-        sidecar_path = Path(output_dir) / OTHER_DATA_DIR / "provenance.yaml"
+    elif result.outputs_dir is not None:
+        sidecar_path = result.outputs_dir / PROVENANCE_DIR / "provenance.yaml"
     if sidecar_path is not None and result.provenance is not None:
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         _write_provenance_sidecar(result.provenance, sidecar_path)
@@ -541,18 +707,10 @@ def execute(
 
 
 def _write_provenance_sidecar(provenance: Any, path: Path) -> None:
-    """Serialize a Provenance object to YAML (or JSON if PyYAML is missing)."""
-    payload = provenance.model_dump(mode="json")
-    try:
-        import yaml  # type: ignore
+    """Serialize a Provenance object to YAML."""
+    from aa_recipe_manager.provenance.recorder import to_yaml
 
-        path.write_text(
-            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
-        )
-    except Exception:
-        import json as _json
-
-        path.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(to_yaml(provenance), encoding="utf-8")
 
 
 def clean(

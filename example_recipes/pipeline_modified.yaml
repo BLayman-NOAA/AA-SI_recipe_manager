@@ -4,51 +4,43 @@ inputs:
     description:
     default: ./raw_file_inputs
     required: false
+    fingerprint_contents: false
   cal_input_folder:
     type: path
     description:
     default: ./calibration_files/HB201607_cal
     required: false
-  output_base:
-    type: path
-    description:
-    default: ./nefsc_uc_e2_cal_outputs
-    required: false
-  netcdf_output_folder:
-    type: path
-    description:
-    default: ./NetCDF-files
-    required: false
-  sv_output_folder:
-    type: path
-    description:
-    default: ./Sv-files
-    required: false
-  output_logs_folder:
-    type: path
-    description:
-    default: ./Output-Logs
-    required: false
+    fingerprint_contents: false
   line_file_path:
     type: path
     description:
     default: ./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
     required: false
+    fingerprint_contents: false
   range_bin:
     type: str
     description:
     default: 10m
     required: false
+    fingerprint_contents: false
   ping_time_bin:
     type: str
     description:
-    default: 10s
+    default: 20s
     required: false
+    fingerprint_contents: false
+  calibration_outputs:
+    type: str
+    description: Subdirectory name under the pipeline outputs folder for calibration artifacts.
+    default: calibration
+    required: false
+    fingerprint_contents: false
   raw_file_names:
     type: list
     description: "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\". Note that generate_standardized_cal_mapping always scans the full folder; this input only constrains the set of files that get opened and processed.\n"
     default: []
     required: false
+    fingerprint_contents: false
 steps:
 - id: query_ncei
   op: query_ncei_data
@@ -86,15 +78,13 @@ steps:
   sweep:
   execution:
   checkpoint:
-- id: setup_raw_files
-  op: setup_raw_files
+- id: initial_setup
+  op: initial_setup
   description:
   inputs: {}
   params:
     raw_input_folder: raw_file_inputs/HB1603_2016-07-25_2058-2145
-    netcdf_output_folder: ./NetCDF-files
-    sv_output_folder: ./Sv-files
-    output_logs_folder: ./Output-Logs
+    calibration_outputs: calibration
     raw_file_names: []
     clear_previous_json_logs: true
   depends_on:
@@ -112,7 +102,7 @@ steps:
   params:
     raw_input_folder: raw_file_inputs/HB1603_2016-07-25_2058-2145
     cal_input_folder: ./calibration_files/HB201607_cal
-    output_base: ./nefsc_uc_e2_cal_outputs
+    output_base: calibration
     cruise_id: HB1603
     record_author: <Your Name>
     short_filenames: true
@@ -126,15 +116,15 @@ steps:
   sweep:
   execution:
   checkpoint:
-- id: open_raw
-  op: open_raw_files
+- id: read_raw
+  op: read_raw_files
   description:
   inputs:
-    raw_file_paths: ${setup_raw_files.raw_file_paths}
+    raw_file_paths: ${initial_setup.raw_file_paths}
   params:
-    netcdf_output_folder: ./NetCDF-files
     sonar_model: EK60
     include_bot: true
+    intermediate_format: netcdf
   depends_on:
   implementation_override:
   custom_spec:
@@ -143,13 +133,27 @@ steps:
   sweep:
   execution:
   checkpoint:
+- id: combine_raw
+  op: combine_raw_files
+  description:
+  inputs:
+    raw_stores: ${read_raw.raw_stores}
+  params: {}
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+  checkpoint: always
 - id: extract_cal_params
   op: extract_standardized_cal_params
   description:
   inputs:
     calibration_dict: ${gen_cal_mapping.calibration_dict}
     mapping_dict: ${gen_cal_mapping.mapping_dict}
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
   params: {}
   depends_on:
   implementation_override:
@@ -163,7 +167,7 @@ steps:
   op: compute_sv
   description:
   inputs:
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
     cal_params: ${extract_cal_params.cal_params}
     env_params: ${extract_cal_params.env_params}
   params: {}
@@ -174,13 +178,13 @@ steps:
   collect:
   sweep:
   execution:
-  checkpoint:
+  checkpoint: always
 - id: ep_add_depth
   op: ep_add_depth
   description:
   inputs:
     ds_Sv: ${compute_sv.ds_Sv}
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
   params:
     use_platform_vertical_offsets: true
   depends_on:
@@ -196,7 +200,7 @@ steps:
   description:
   inputs:
     ds_Sv: ${ep_add_depth.ds_Sv}
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
   params:
     waveform_mode: CW
     encode_mode: power
@@ -213,7 +217,7 @@ steps:
   op: log_seafloor_detection_stats
   description:
   inputs:
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
     ds_Sv: ${compute_sv.ds_Sv}
   params:
     min_valid_depth_m: 10.0
@@ -230,7 +234,7 @@ steps:
   description:
   inputs:
     ds_Sv: ${compute_sv.ds_Sv}
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
   params:
     min_valid_depth_m: 10.0
   depends_on:
@@ -339,6 +343,26 @@ steps:
   collect:
   sweep:
   execution:
+  checkpoint: always
+- id: plot_sv_clean
+  op: plot_sv_echogram
+  description:
+  inputs:
+    ds_Sv: ${remove_noise.ds_Sv}
+  params:
+    min_depth: 0
+    max_depth: 1800
+    ping_min: 0
+    ping_max: 515
+    x_axis_units: seconds
+    y_axis_units: meters
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
   checkpoint:
 - id: mask_sparse
   op: mask_sparse_bins
@@ -347,7 +371,7 @@ steps:
     ds_Sv: ${remove_noise.ds_Sv}
   params:
     range_bin: 10m
-    ping_time_bin: 10s
+    ping_time_bin: 20s
     nan_threshold: 0.6
   depends_on:
   implementation_override:
@@ -364,7 +388,25 @@ steps:
     ds_Sv: ${mask_sparse.ds_Sv}
   params:
     range_bin: 10m
-    ping_time_bin: 10s
+    ping_time_bin: 20s
+  depends_on:
+  implementation_override:
+  custom_spec:
+  map_over:
+  collect:
+  sweep:
+  execution:
+  checkpoint: always
+- id: compute_cell_stats
+  op: compute_per_cell_statistics
+  description:
+  inputs:
+    ds_Sv: ${remove_noise.ds_Sv}
+  params:
+    range_bin: 10m
+    ping_time_bin: 20s
+    statistics:
+    - cv
   depends_on:
   implementation_override:
   custom_spec:
@@ -381,26 +423,6 @@ steps:
   params:
     line_file_path: ./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
     line_name: sw_dive_profile
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
-  checkpoint:
-- id: plot_sv_clean
-  op: plot_sv_echogram
-  description:
-  inputs:
-    ds_Sv: ${mask_sparse.ds_Sv}
-  params:
-    min_depth: 0
-    max_depth: 1800
-    ping_min: 0
-    ping_max: 515
-    x_axis_units: seconds
-    y_axis_units: meters
   depends_on:
   implementation_override:
   custom_spec:
@@ -435,24 +457,6 @@ steps:
   sweep:
   execution:
   checkpoint:
-- id: compute_cell_stats
-  op: compute_per_cell_statistics
-  description:
-  inputs:
-    ds_Sv: ${remove_noise.ds_Sv}
-  params:
-    range_bin: 10m
-    ping_time_bin: 10s
-    statistics:
-    - cv
-  depends_on:
-  implementation_override:
-  custom_spec:
-  map_over:
-  collect:
-  sweep:
-  execution:
-  checkpoint:
 - id: reshape_ml
   op: reshape_for_ml
   description:
@@ -476,13 +480,12 @@ steps:
   description:
   inputs:
     ds_ml: ${reshape_ml.ds_ml_ready}
-    echodata: ${open_raw.echodata}
+    echodata: ${combine_raw.echodata}
     ds_sv: ${compute_cell_stats.ds_Sv}
   params:
     dataset_name: ml_dataset
     features:
     - cell_cv
-    - depth
   depends_on:
   implementation_override:
   custom_spec:
@@ -508,7 +511,7 @@ steps:
   collect:
   sweep:
   execution:
-  checkpoint:
+  checkpoint: always
 - id: plot_normalized_ml
   op: plot_ml_echogram
   description:
@@ -542,11 +545,10 @@ steps:
     normalization_name: normalized_flatten_mean_centered
     ml_result_name: hdbscan_results
     min_cluster_size_fraction: 0.02
-    min_samples: 2
+    min_samples: 30
     sample_size: 1000000
-    cluster_selection_method: leaf
+    cluster_selection_method: eom
     use_hdbscan: true
-    soft_membership_threshold: 0.6
   depends_on:
   implementation_override:
   custom_spec:
@@ -613,12 +615,19 @@ steps:
 outputs:
 execution:
 include_blocks:
-- source: processing_lvls_1_to_3.yaml
+- source: processing_lvl_0.yaml
   step_ids:
-  - setup_raw_files
+  - query_ncei
+  - download_raw
+- source: processing_lvl_1.yaml
+  step_ids:
+  - initial_setup
   - gen_cal_mapping
-  - open_raw
+  - read_raw
+  - combine_raw
   - extract_cal_params
+- source: processing_lvl_2.yaml
+  step_ids:
   - compute_sv
   - ep_add_depth
   - ep_add_splitbeam_angle
@@ -630,15 +639,13 @@ include_blocks:
   - combine_masks
   - apply_mask
   - remove_noise
+- source: processing_lvl_3.yaml
+  step_ids:
   - mask_sparse
   - compute_mvbs
-- source: visualization.yaml
-  step_ids:
-  - plot_sv_clean
-  - plot_mvbs
-- source: machine_learning.yaml
-  step_ids:
   - compute_cell_stats
+- source: processing_lvl_4.yaml
+  step_ids:
   - reshape_ml
   - add_aux_features
   - normalize_ml
@@ -647,8 +654,8 @@ include_blocks:
   - embed_results
   - plot_clustering_report
 recipe:
-  name: hb1603_survey_pipeline_modular
+  name: processing_levels_pipeline
   version: '1.0'
-  description: Modular HB1603 pipeline composed from generic sub-recipes.
+  description: HB1603 pipeline organized into explicit processing levels.
   author: <Your Name>
   schema_version: '1'

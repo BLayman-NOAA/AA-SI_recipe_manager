@@ -1,0 +1,115 @@
+# Processing Level 2 - Sv Computation and Noise Removal
+#
+# Starts from the combined echodata plus extracted calibration parameters,
+# computes Sv, builds and applies the masking stack, and performs background
+# noise removal.
+
+recipe:
+  name: "processing_lvl_2"
+  description: "Compute Sv, build masks, and remove noise."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Combined EchoData object from the raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters extracted from the standardized mapping."
+  env_params:
+    type: dict
+    description: "Environmental parameters extracted from the standardized mapping."
+
+steps:
+
+  - id: compute_sv
+    op: compute_sv
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      use_platform_vertical_offsets: true
+
+  - id: ep_add_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  - id: log_seafloor_stats
+    op: log_seafloor_detection_stats
+    inputs:
+      echodata: ${inputs.echodata}
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: detect_seafloor
+    op: detect_seafloor
+    depends_on: [log_seafloor_stats]
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: 100
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: 10.0
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      frequencies_to_mask: [70, 120, 200]
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      noise_range_sample_num: 10
+      noise_ping_num: 5

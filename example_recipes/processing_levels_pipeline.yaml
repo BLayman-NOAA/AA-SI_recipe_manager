@@ -1,0 +1,107 @@
+# HB1603 Acoustic Survey - Processing Levels Pipeline Recipe
+#
+# Refactored variant of the HB1603 modular recipe that organizes the acoustic
+# processing flow into explicit processing levels 0 through 4. The dataset-
+# specific line overlay and visualization steps are defined directly here in
+# the parent recipe.
+#
+# Usage: aa-recipe generate processing_levels_pipeline.yaml
+
+recipe:
+  name: "processing_levels_pipeline"
+  description: "HB1603 pipeline organized into explicit processing levels."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  range_bin:
+    type: str
+    default: "20m"
+  ping_time_bin:
+    type: str
+    default: "20s"
+
+steps:
+
+  - include: processing_lvl_0.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      cruise_name: "HB1603"
+
+  - include: processing_lvl_1.yaml
+    input_overrides:
+      raw_input_folder: ${download_raw.download_dir}
+      cal_input_folder: ${inputs.cal_input_folder}
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  - include: processing_lvl_2.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - include: processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  - include: processing_lvl_4.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}

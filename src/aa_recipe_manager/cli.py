@@ -1,8 +1,11 @@
 """CLI entry point for aa-recipe-manager."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
+from typing import Any
 
 import click
 
@@ -223,10 +226,51 @@ def env_group() -> None:
     """Manage virtual environments for recipe dependencies."""
 
 
+def _parse_local_pkgs(local_pkgs: tuple[str, ...]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for item in local_pkgs:
+        if "=" not in item:
+            _fail(f"--local-pkg value must be in NAME=PATH format, got: {item!r}")
+        name, _, path = item.partition("=")
+        parsed[name.strip()] = path.strip()
+    return parsed
+
+
+def _emit_env_result(result: Any) -> None:
+    click.echo(f"Environment created: {result.env_path}")
+    if result.installed:
+        click.echo("Installed:")
+        for pkg in result.installed:
+            click.echo(f"  {pkg}")
+    if result.skipped_local:
+        click.echo(
+            "Local packages not found on PyPI (install manually with --local-pkg):",
+            err=True,
+        )
+        for name in result.skipped_local:
+            click.echo(f"  --local-pkg {name}=/path/to/{name}", err=True)
+    if result.warnings:
+        for w in result.warnings:
+            click.echo(f"Warning: {w}", err=True)
+
+
+def _is_provenance_file(path: str) -> bool:
+    """Return True if the YAML file looks like a provenance file."""
+    from pathlib import Path as _Path
+
+    try:
+        from ruamel.yaml import YAML as _YAML
+
+        raw = _YAML().load(_Path(path))
+        return isinstance(raw, dict) and "resolved_dependencies" in raw
+    except Exception:
+        return False
+
+
 @env_group.command("create")
-@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.argument("source", type=click.Path(exists=True, dir_okay=False))
 @click.option("--path", "env_path", default=None, help="Path for the virtual environment.")
-@click.option("--python", "python_exe", default=None, help="Python executable to base the environment on.")
+@click.option("--python", "python_exe", default=None, help="Python executable to use.")
 @click.option(
     "--local-pkg",
     "local_pkgs",
@@ -239,57 +283,62 @@ def env_group() -> None:
     "inputs",
     multiple=True,
     metavar="NAME=VALUE",
-    help="Supply a pipeline-level input value for path resolution (repeatable).",
+    help="Supply a pipeline-level input value for path resolution (recipe files only).",
 )
 def env_create_cmd(
-    recipe: str,
+    source: str,
     env_path: str | None,
     python_exe: str | None,
     local_pkgs: tuple[str, ...],
     inputs: tuple[str, ...],
 ) -> None:
-    """Create a virtual environment with dependencies for RECIPE."""
+    """Create a virtual environment from a RECIPE or PROVENANCE file.
+
+    SOURCE can be a recipe YAML file or a provenance.yaml produced by a
+    previous run. The file type is detected automatically.
+
+    When SOURCE is a provenance file, packages are installed at the exact
+    pinned versions recorded in that file. The --input option is not used
+    in that case.
+    """
     from pathlib import Path as _Path
 
-    parsed_inputs: dict[str, str] = {}
-    for item in inputs:
-        if "=" not in item:
-            _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
-        name, _, value = item.partition("=")
-        parsed_inputs[name.strip()] = value.strip()
-
-    parsed_local: dict[str, str] = {}
-    for item in local_pkgs:
-        if "=" not in item:
-            _fail(f"--local-pkg value must be in NAME=PATH format, got: {item!r}")
-        name, _, path = item.partition("=")
-        parsed_local[name.strip()] = path.strip()
+    parsed_local = _parse_local_pkgs(local_pkgs)
 
     if env_path is None:
-        env_path = f"./{_Path(recipe).stem}_env"
+        env_path = f"./{_Path(source).stem}_env"
 
     try:
-        result = api.create_env(
-            recipe,
-            env_path,
-            python=python_exe,
-            inputs=parsed_inputs or None,
-            local_overrides=parsed_local or None,
-        )
-        click.echo(f"Environment created: {result.env_path}")
-        if result.installed:
-            click.echo("Installed:")
-            for pkg in result.installed:
-                click.echo(f"  {pkg}")
-        if result.skipped_local:
-            click.echo("Local packages without an install path (install manually):")
-            for name in result.skipped_local:
-                click.echo(f"  pip install -e /path/to/{name}")
-        if result.warnings:
-            for w in result.warnings:
-                click.echo(f"Warning: {w}", err=True)
+        if _is_provenance_file(source):
+            if inputs:
+                click.echo(
+                    "Note: --input is ignored when SOURCE is a provenance file.",
+                    err=True,
+                )
+            result = api.create_env_from_provenance(
+                source,
+                env_path,
+                python=python_exe,
+                local_overrides=parsed_local or None,
+            )
+        else:
+            parsed_inputs: dict[str, str] = {}
+            for item in inputs:
+                if "=" not in item:
+                    _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
+                name, _, value = item.partition("=")
+                parsed_inputs[name.strip()] = value.strip()
+            result = api.create_env(
+                source,
+                env_path,
+                python=python_exe,
+                inputs=parsed_inputs or None,
+                local_overrides=parsed_local or None,
+            )
+        _emit_env_result(result)
     except Exception as exc:
         _handle_recipe_errors(exc)
+
 
 
 class _CLIProgress:

@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project scaffold customized from AA-SI Python template
 - Package renamed to `aa-recipe-manager` (import as `aa_recipe_manager`)
 - Core dependencies: pydantic, ruamel.yaml, click, nbformat
-- CLI entry point (`aa-recipe-manager`)
+- CLI entry point (`aa-recipe`, with `aa-recipe-manager` compatibility alias)
 - Full directory structure matching the layered architecture (model, parser, registry, resolver, provenance, tracker, generator, executor, orchestrator)
 - Development tooling: ruff, mypy, pytest, pre-commit
 - Optional dependency groups for dask and prefect executors
+
+### Changed
+- Preferred CLI command is now `aa-recipe`
+- Legacy `aa-recipe-manager` command remains available as a compatibility alias
 
 ## [0.1.0] - YYYY-MM-DD
 

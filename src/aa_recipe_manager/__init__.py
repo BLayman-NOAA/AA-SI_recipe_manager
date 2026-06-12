@@ -128,6 +128,28 @@ def create_env(recipe, env_path, *, python=None, inputs=None, local_overrides=No
     )
 
 
+def create_env_from_provenance(provenance_path, env_path, *, python=None, local_overrides=None):
+    """Create a virtual environment from a saved provenance YAML file.
+
+    Parameters
+    ----------
+    provenance_path:
+        Path to a ``provenance.yaml`` file written by a previous run.
+    env_path:
+        Filesystem path for the new virtual environment.
+    python:
+        Python executable to use. A warning is emitted when the version does
+        not match the one recorded in the provenance file.
+    local_overrides:
+        Map of package name to local filesystem path for editable installs.
+    """
+    from aa_recipe_manager.api import create_env_from_provenance as _create_env_from_provenance
+
+    return _create_env_from_provenance(
+        provenance_path, env_path, python=python, local_overrides=local_overrides
+    )
+
+
 __all__ = [
     "__version__",
     "export_schema",
@@ -136,6 +158,7 @@ __all__ = [
     "dry_run",
     "export_dependencies",
     "create_env",
+    "create_env_from_provenance",
     "execute",
     "clean",
 ]

@@ -1,0 +1,46 @@
+# Processing Level 0 - Data Retrieval
+#
+# Dataset retrieval stage. Queries NCEI and downloads the matching raw files
+# into the requested output directory.
+
+recipe:
+  name: "processing_lvl_0"
+  description: "Query NCEI and download raw acoustic files."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Destination folder for downloaded raw files."
+  file_time_start:
+    type: str
+    description: "Inclusive start time for the NCEI query."
+  file_time_end:
+    type: str
+    description: "Inclusive end time for the NCEI query."
+  cruise_name:
+    type: str
+    description: "Cruise name filter passed to the NCEI query."
+
+steps:
+
+  - id: query_ncei
+    op: query_ncei_data
+    params:
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      filters:
+        CRUISE_NAME: ${inputs.cruise_name}
+
+  - id: download_raw
+    op: download_ncei_data
+    inputs:
+      results: ${query_ncei.ncei_results}
+      query_label: ${query_ncei.query_label}
+    params:
+      output_dir: ${inputs.raw_input_folder}
+      companion_extensions:
+        - ".bot"
+        - ".idx"
