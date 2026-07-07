@@ -29,6 +29,7 @@ from aa_recipe_manager.model.types import (
 )
 from aa_recipe_manager.registry.registry import Registry
 from aa_recipe_manager.resolver.params import extract_edge_refs, resolve_input_refs
+from aa_recipe_manager.storage import is_remote_url
 
 
 _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
@@ -296,6 +297,14 @@ def _validate_path_param(
         return
 
     if isinstance(value, str) and "${" in value:
+        return
+
+    # fsspec URLs (gs://, s3://, memory://, ...) are not local paths: skip the
+    # existence / mkdir checks entirely. Validation runs before execution and
+    # may have no credentials, and Path(value) would mangle the URL and create
+    # a bogus local 'gs:/bucket' directory. The storage layer verifies the URL
+    # when the step actually reads or writes it.
+    if is_remote_url(value):
         return
 
     must_exist = True

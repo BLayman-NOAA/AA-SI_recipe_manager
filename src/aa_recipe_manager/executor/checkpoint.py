@@ -20,10 +20,12 @@ import stat
 import time
 import warnings
 from contextlib import contextmanager
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from aa_recipe_manager.storage import StorageLocation, is_remote_url
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import (
@@ -81,6 +83,56 @@ def _referenced_pipeline_inputs(node: DAGNode) -> set[str]:
     return names
 
 
+def _remote_path_fingerprint(path_value: str) -> dict[str, Any]:
+    """Stat-only fingerprint for an fsspec URL (gs://, s3://, ...).
+
+    Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes.
+    Costs one HEAD/LIST per fingerprinted input per run. Credential or network
+    failures degrade to ``remote-unverified`` (a warning) rather than crashing
+    the hash computation, so a run without cloud auth still proceeds.
+    """
+    try:
+        fs, fs_path = __import__("fsspec.core", fromlist=["url_to_fs"]).url_to_fs(
+            path_value
+        )
+        if not fs.exists(fs_path):
+            return {"path": path_value, "kind": "missing"}
+        info = fs.info(fs_path)
+        if info.get("type") == "directory":
+            entries: list[dict[str, Any]] = []
+            for entry in sorted(fs.ls(fs_path, detail=True), key=lambda e: e["name"]):
+                entries.append(
+                    {
+                        "name": entry["name"].rstrip("/").rsplit("/", 1)[-1],
+                        "kind": "dir" if entry.get("type") == "directory" else "file",
+                        "size": entry.get("size"),
+                    }
+                )
+            return {"path": path_value, "kind": "dir", "entries": entries}
+        return {
+            "path": path_value,
+            "kind": "file",
+            "size": info.get("size"),
+            "mtime_ns": _info_mtime(info),
+        }
+    except Exception as exc:  # missing creds, transient network, driver absent
+        warnings.warn(
+            f"could not fingerprint remote path {path_value!r} ({exc}); "
+            "treating as unverified for cache keying",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return {"path": path_value, "kind": "remote-unverified"}
+
+
+def _info_mtime(info: dict[str, Any]) -> Any:
+    """Best-effort modification marker from an fsspec info dict."""
+    for key in ("mtime", "LastModified", "last_modified", "updated"):
+        if info.get(key) is not None:
+            return str(info[key])
+    return None
+
+
 def _path_fingerprint(path_value: Any) -> dict[str, Any] | None:
     """Return a deterministic, stat-only fingerprint for a path-like value.
 
@@ -88,11 +140,15 @@ def _path_fingerprint(path_value: Any) -> dict[str, Any] | None:
     fingerprinted by a sorted top-level listing containing each entry's name,
     kind, size, and nanosecond mtime. This catches common local-input changes
     (added/removed/replaced files) without reading large file contents.
+
+    fsspec URLs are fingerprinted remotely via :func:`_remote_path_fingerprint`.
     """
     if path_value is None:
         return None
     if not isinstance(path_value, (str, Path)):
         path_value = str(path_value)
+    if is_remote_url(path_value):
+        return _remote_path_fingerprint(str(path_value))
     path = Path(path_value)
     if not path.exists():
         return {"path": str(path), "kind": "missing"}
@@ -604,12 +660,32 @@ def _checkpoint_artifact_stem(step_id: str, out_name: str) -> str:
     return f"{step_id}_{out_name}"
 
 
+def _write_pickle(target: StorageLocation, value: Any) -> None:
+    if target.is_local:
+        _remove_existing_output(target.as_local_path())
+    with target.open("wb") as fh:
+        pickle.dump(value, fh)
+
+
+def _write_zarr(target: StorageLocation, write_local: Any, write_remote: Any) -> None:
+    """Write a zarr store locally (with Windows retry) or remotely (single shot)."""
+    if target.is_local:
+        _write_zarr_with_retry(write_local, target.as_local_path())
+        return
+    target.rm()
+    with _zarr_write_warnings_suppressed():
+        write_remote()
+
+
 def _serialize_output(
     value: Any,
-    base_path: Path,
+    base: StorageLocation,
     preferred_format: str = "zarr",
-) -> tuple[Path, str]:
-    """Write ``value`` to disk, returning the file path and a format tag.
+) -> tuple[StorageLocation, str]:
+    """Write ``value`` to storage, returning the target location and a format tag.
+
+    ``base`` is the extension-less artifact location (category dir + stem);
+    the chosen format appends its extension.
 
     Dispatch order:
     1. EchoData  → echodata_zarr (default) / echodata_netcdf / pickle
@@ -620,104 +696,135 @@ def _serialize_output(
     """
     import xarray as xr
 
+    def _target(suffix: str) -> StorageLocation:
+        return base.parent / f"{base.name}{suffix}"
+
+    # xarray/zarr reject an *empty* storage_options dict ("provided but unused");
+    # pass None in that case. echopype's to_zarr takes a dict (default {}).
+    storage_options: dict[str, Any] = dict(base.storage_options)
+    xr_storage_options = storage_options or None
+
     if _is_echodata(value):
         if preferred_format == "netcdf":
-            nc_path = base_path.with_suffix(".nc")
+            target = _target(".nc")
+            nc_path = target.as_local_path()
             _remove_existing_output(nc_path)
             _coerce_echodata_bool_attrs(value)
             value.to_netcdf(save_path=nc_path, compress=False, overwrite=True)
-            return nc_path, "echodata_netcdf"
+            return target, "echodata_netcdf"
         if preferred_format == "pickle":
-            pkl_path = base_path.with_suffix(".pkl")
-            _remove_existing_output(pkl_path)
-            with pkl_path.open("wb") as fh:
-                pickle.dump(value, fh)
-            return pkl_path, "pickle"
+            target = _target(".pkl")
+            _write_pickle(target, value)
+            return target, "pickle"
         # default: zarr
-        zarr_path = base_path.with_suffix(".zarr")
+        target = _target(".zarr")
 
-        def _write_echodata() -> None:
+        def _write_echodata_local() -> None:
             with _zarr_write_warnings_suppressed():
                 value.to_zarr(
-                    save_path=zarr_path,
+                    save_path=target.as_local_path(),
                     overwrite=True,
                     compress=False,
                     zarr_format=2,
                 )
 
-        _write_zarr_with_retry(_write_echodata, zarr_path)
-        return zarr_path, "echodata_zarr"
+        def _write_echodata_remote() -> None:
+            value.to_zarr(
+                save_path=target.url,
+                overwrite=True,
+                compress=False,
+                zarr_format=2,
+                output_storage_options=storage_options,
+            )
+
+        _write_zarr(target, _write_echodata_local, _write_echodata_remote)
+        return target, "echodata_zarr"
 
     if isinstance(value, xr.DataArray):
         ds = value.to_dataset(name="_da")
         if preferred_format == "netcdf":
-            nc_path = base_path.with_suffix(".nc")
+            target = _target(".nc")
+            nc_path = target.as_local_path()
             _remove_existing_output(nc_path)
             ds.to_netcdf(str(nc_path))
-            return nc_path, "netcdf_da"
+            return target, "netcdf_da"
         if preferred_format == "pickle":
-            pkl_path = base_path.with_suffix(".pkl")
-            _remove_existing_output(pkl_path)
-            with pkl_path.open("wb") as fh:
-                pickle.dump(value, fh)
-            return pkl_path, "pickle"
+            target = _target(".pkl")
+            _write_pickle(target, value)
+            return target, "pickle"
         # default: zarr
-        zarr_path = base_path.with_suffix(".zarr")
+        target = _target(".zarr")
 
-        def _write_da() -> None:
+        def _write_da_local() -> None:
             with _zarr_write_warnings_suppressed():
                 ds.to_zarr(
-                    str(zarr_path),
+                    str(target.as_local_path()),
                     mode="w",
                     compute=True,
                     align_chunks=True,
                     zarr_format=2,
                 )
 
-        _write_zarr_with_retry(_write_da, zarr_path)
-        return zarr_path, "zarr_da"
+        def _write_da_remote() -> None:
+            ds.to_zarr(
+                target.url,
+                mode="w",
+                compute=True,
+                align_chunks=True,
+                zarr_format=2,
+                storage_options=xr_storage_options,
+            )
+
+        _write_zarr(target, _write_da_local, _write_da_remote)
+        return target, "zarr_da"
 
     if isinstance(value, xr.Dataset):
         if preferred_format == "netcdf":
-            nc_path = base_path.with_suffix(".nc")
+            target = _target(".nc")
+            nc_path = target.as_local_path()
             _remove_existing_output(nc_path)
             value.to_netcdf(str(nc_path))
-            return nc_path, "netcdf"
+            return target, "netcdf"
         if preferred_format == "pickle":
-            pkl_path = base_path.with_suffix(".pkl")
-            _remove_existing_output(pkl_path)
-            with pkl_path.open("wb") as fh:
-                pickle.dump(value, fh)
-            return pkl_path, "pickle"
+            target = _target(".pkl")
+            _write_pickle(target, value)
+            return target, "pickle"
         # default: zarr
-        zarr_path = base_path.with_suffix(".zarr")
+        target = _target(".zarr")
 
-        def _write_ds() -> None:
+        def _write_ds_local() -> None:
             with _zarr_write_warnings_suppressed():
                 value.to_zarr(
-                    str(zarr_path),
+                    str(target.as_local_path()),
                     mode="w",
                     compute=True,
                     align_chunks=True,
                     zarr_format=2,
                 )
 
-        _write_zarr_with_retry(_write_ds, zarr_path)
-        return zarr_path, "zarr"
+        def _write_ds_remote() -> None:
+            value.to_zarr(
+                target.url,
+                mode="w",
+                compute=True,
+                align_chunks=True,
+                zarr_format=2,
+                storage_options=xr_storage_options,
+            )
+
+        _write_zarr(target, _write_ds_local, _write_ds_remote)
+        return target, "zarr"
 
     if _is_json_safe(value):
-        json_path = base_path.with_suffix(".json")
-        _remove_existing_output(json_path)
-        json_path.write_text(
-            json.dumps(value, indent=2, default=str), encoding="utf-8"
-        )
-        return json_path, "json"
+        target = _target(".json")
+        if target.is_local:
+            _remove_existing_output(target.as_local_path())
+        target.write_text(json.dumps(value, indent=2, default=str))
+        return target, "json"
 
-    pkl_path = base_path.with_suffix(".pkl")
-    _remove_existing_output(pkl_path)
-    with pkl_path.open("wb") as fh:
-        pickle.dump(value, fh)
-    return pkl_path, "pickle"
+    target = _target(".pkl")
+    _write_pickle(target, value)
+    return target, "pickle"
 
 
 def _is_json_safe(value: Any) -> bool:
@@ -732,35 +839,57 @@ def _is_json_safe(value: Any) -> bool:
     return False
 
 
-def _deserialize_output(path: Path, fmt: str) -> Any:
+def _deserialize_output(loc: StorageLocation, fmt: str) -> Any:
+    # None (not an empty dict) when there are no options: xarray/zarr and
+    # echopype reject an empty storage_options dict as "provided but unused".
+    remote_options = None if loc.is_local else (dict(loc.storage_options) or None)
+
     if fmt == "echodata_netcdf":
         from echopype.echodata.echodata import EchoData
 
-        return EchoData.from_file(str(path))
+        return EchoData.from_file(str(loc.as_local_path()))
     if fmt == "echodata_zarr":
         import echopype as ep
 
-        return ep.open_converted(str(path), chunks={})
+        if loc.is_local:
+            return ep.open_converted(str(loc.as_local_path()), chunks={})
+        return ep.open_converted(loc.url, chunks={}, storage_options=remote_options)
     if fmt == "netcdf":
         import xarray as xr
 
-        return xr.open_dataset(str(path))
+        return xr.open_dataset(str(loc.as_local_path()))
     if fmt == "netcdf_da":
         import xarray as xr
 
-        return xr.open_dataset(str(path))["_da"]
+        return xr.open_dataset(str(loc.as_local_path()))["_da"]
     if fmt == "zarr":
         import xarray as xr
 
-        return xr.open_dataset(str(path), engine="zarr", chunks={})
+        if loc.is_local:
+            return xr.open_dataset(str(loc.as_local_path()), engine="zarr", chunks={})
+        return xr.open_dataset(
+            loc.url,
+            engine="zarr",
+            chunks={},
+            backend_kwargs={"storage_options": remote_options},
+        )
     if fmt == "zarr_da":
         import xarray as xr
 
-        return xr.open_dataset(str(path), engine="zarr", chunks={})["_da"]
+        if loc.is_local:
+            return xr.open_dataset(
+                str(loc.as_local_path()), engine="zarr", chunks={}
+            )["_da"]
+        return xr.open_dataset(
+            loc.url,
+            engine="zarr",
+            chunks={},
+            backend_kwargs={"storage_options": remote_options},
+        )["_da"]
     if fmt == "json":
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(loc.read_text())
     if fmt == "pickle":
-        with path.open("rb") as fh:
+        with loc.open("rb") as fh:
             return pickle.load(fh)
     raise ValueError(f"unknown checkpoint format: {fmt!r}")
 
@@ -799,39 +928,59 @@ class _StepCacheMeta:
 
 
 class CheckpointManager:
-    """Read/write per-step checkpoints under an output directory.
+    """Read/write per-step checkpoints under an output directory or fsspec URL.
 
     Cache validity is keyed on a per-step hash (see :func:`compute_step_hashes`)
     so that editing one step only invalidates that step and its descendants —
     upstream checkpoints stay reusable.
+
+    ``output_dir`` may be a local path or an fsspec URL (e.g. ``gs://bucket/
+    recipe_cache``). Artifact paths in the meta sidecars are stored relative to
+    ``output_dir`` (POSIX separators) so a cache prefix is relocatable; legacy
+    absolute-path entries are still honored on read.
     """
 
     def __init__(
         self,
-        output_dir: str | Path,
+        output_dir: str | Path | StorageLocation,
         hashes: dict[str, str],
         *,
         preferred_format: CheckpointFormat | str = "zarr",
+        storage_options: Mapping[str, Any] | None = None,
     ) -> None:
-        self.output_dir = Path(output_dir)
+        self.location = StorageLocation.parse(output_dir, storage_options)
+        if not self.location.is_local and str(preferred_format) == "netcdf":
+            raise ValueError(
+                "checkpoint_format='netcdf' requires a local output_dir "
+                "(HDF5 needs seekable writes); use 'zarr' or a local cache "
+                f"instead of {self.location.url!r}"
+            )
+        self.output_dir = self.location.as_context_value()
         self._hashes = dict(hashes)
         self.preferred_format = preferred_format
 
-    def _meta_path(self, step_id: str) -> Path:
-        return self.output_dir / CACHE_METADATA_DIR / f"{step_id}{META_SUFFIX}"
+    def _meta_path(self, step_id: str) -> StorageLocation:
+        return self.location / CACHE_METADATA_DIR / f"{step_id}{META_SUFFIX}"
 
-    def _iter_meta_paths(self) -> list[Path]:
-        meta_dir = self.output_dir / CACHE_METADATA_DIR
+    def _iter_meta_paths(self) -> list[StorageLocation]:
+        meta_dir = self.location / CACHE_METADATA_DIR
         if not meta_dir.exists():
             return []
-        return sorted(meta_dir.glob(f"*{META_SUFFIX}"))
+        return sorted(meta_dir.glob(f"*{META_SUFFIX}"), key=lambda loc: loc.name)
+
+    def _entry_location(self, entry_path: str) -> StorageLocation:
+        """Resolve a meta ``path`` entry: relative joins onto the cache root;
+        absolute paths and URLs (legacy / external) are used as-is."""
+        if is_remote_url(entry_path) or Path(entry_path).is_absolute():
+            return StorageLocation.parse(entry_path, self.location.storage_options)
+        return self.location / entry_path
 
     def _read_meta(self, step_id: str) -> _StepCacheMeta | None:
-        path = self._meta_path(step_id)
-        if not path.exists():
+        loc = self._meta_path(step_id)
+        if not loc.exists():
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(loc.read_text())
         except (OSError, json.JSONDecodeError):
             return None
         return _StepCacheMeta.from_dict(data)
@@ -844,7 +993,7 @@ class CheckpointManager:
         if expected is None or meta.step_hash != expected:
             return False
         for entry in meta.outputs.values():
-            if not Path(entry["path"]).exists():
+            if not self._entry_location(entry["path"]).exists():
                 return False
         return True
 
@@ -863,6 +1012,11 @@ class CheckpointManager:
         expected = self._hashes.get(step_id)
         return expected is not None and meta.step_hash == expected
 
+    def _write_meta(self, meta: _StepCacheMeta) -> None:
+        meta_loc = self._meta_path(meta.step_id)
+        (self.location / CACHE_METADATA_DIR).mkdir()
+        meta_loc.write_text(json.dumps(meta.to_dict(), indent=2))
+
     def save_marker(self, step_id: str) -> None:
         """Record that a side-effect (sink / no-output) step ran for this hash.
 
@@ -872,25 +1026,22 @@ class CheckpointManager:
         """
         step_hash = self._hashes.get(step_id, "")
         meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs={}, marker=True)
-        meta_path = self._meta_path(step_id)
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(json.dumps(meta.to_dict(), indent=2), encoding="utf-8")
+        self._write_meta(meta)
 
     def save(self, step_id: str, outputs: dict[str, Any]) -> None:
         out_meta: dict[str, dict[str, str]] = {}
         for out_name, value in outputs.items():
-            category_dir = self.output_dir / _checkpoint_output_category(
+            category = _checkpoint_output_category(
                 value, str(self.preferred_format)
             )
-            category_dir.mkdir(parents=True, exist_ok=True)
-            base = category_dir / _checkpoint_artifact_stem(step_id, out_name)
-            path, fmt = _serialize_output(value, base, self.preferred_format)
-            out_meta[out_name] = {"path": str(path), "format": fmt}
+            category_loc = self.location / category
+            category_loc.mkdir()
+            base = category_loc / _checkpoint_artifact_stem(step_id, out_name)
+            target, fmt = _serialize_output(value, base, self.preferred_format)
+            out_meta[out_name] = {"path": f"{category}/{target.name}", "format": fmt}
         step_hash = self._hashes.get(step_id, "")
         meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs=out_meta)
-        meta_path = self._meta_path(step_id)
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(json.dumps(meta.to_dict(), indent=2), encoding="utf-8")
+        self._write_meta(meta)
 
     def load(self, step_id: str) -> dict[str, Any]:
         meta = self._read_meta(step_id)
@@ -904,7 +1055,9 @@ class CheckpointManager:
             )
         loaded: dict[str, Any] = {}
         for out_name, entry in meta.outputs.items():
-            loaded[out_name] = _deserialize_output(Path(entry["path"]), entry["format"])
+            loaded[out_name] = _deserialize_output(
+                self._entry_location(entry["path"]), entry["format"]
+            )
         return loaded
 
     def clean(
@@ -913,7 +1066,7 @@ class CheckpointManager:
         mode: CleanMode = "intermediate",
         *,
         dry_run: bool = False,
-    ) -> list[Path]:
+    ) -> list[StorageLocation]:
         """Remove checkpoint files according to ``mode``; returns removed paths.
 
         Modes:
@@ -927,15 +1080,15 @@ class CheckpointManager:
                 are **not** protected because mismatched hashes are unusable
                 anyway.
         """
-        if not self.output_dir.exists():
+        if not self.location.exists():
             return []
         _terminal, intermediate = classify_steps(dag)
         protected = explicit_checkpoint_steps(dag)
-        removed: list[Path] = []
-        for meta_path in self._iter_meta_paths():
-            step_id = meta_path.name[: -len(META_SUFFIX)]
+        removed: list[StorageLocation] = []
+        for meta_loc in self._iter_meta_paths():
+            step_id = meta_loc.name[: -len(META_SUFFIX)]
             try:
-                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                data = json.loads(meta_loc.read_text())
             except (OSError, json.JSONDecodeError):
                 continue
             meta = _StepCacheMeta.from_dict(data)
@@ -950,17 +1103,11 @@ class CheckpointManager:
                     continue
 
             for entry in meta.outputs.values():
-                removed.append(Path(entry["path"]))
-            removed.append(meta_path)
+                removed.append(self._entry_location(entry["path"]))
+            removed.append(meta_loc)
 
         if dry_run:
             return removed
-        for path in removed:
-            try:
-                if path.is_dir():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-            except FileNotFoundError:
-                continue
+        for loc in removed:
+            loc.rm()
         return removed

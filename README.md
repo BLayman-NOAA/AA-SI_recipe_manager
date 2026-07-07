@@ -92,6 +92,50 @@ api.generate("my_recipe.yaml", format="notebook")
 api.execute("my_recipe.yaml", output_dir="./outputs")
 ```
 
+### Google Cloud Storage (gs://) storage
+
+The three run storage locations can each live on a GCS bucket instead of local
+disk — useful on Cloud Workstations whose disk cannot hold a full survey. Each
+is independent and defaults to local; a location goes remote only when you pass
+a `gs://` URL.
+
+```bash
+pip install "aa-recipe-manager[gcs]"          # adds gcsfs
+gcloud auth application-default login          # credentials (ADC)
+
+# Checkpoint cache + outputs on the bucket; scratch stays local (default).
+aa-recipe run my_recipe.yaml \
+    --output-dir gs://my-bucket/surveys/HB1603/recipe_cache \
+    --outputs-dir gs://my-bucket/surveys/HB1603/outputs
+
+# Big survey that won't fit on disk: put exe_temp on the bucket too.
+aa-recipe run my_recipe.yaml \
+    --output-dir gs://my-bucket/surveys/HB1603/recipe_cache \
+    --temp-dir   gs://my-bucket/surveys/HB1603/exe_temp
+```
+
+```python
+api.execute(
+    "my_recipe.yaml",
+    output_dir="gs://my-bucket/surveys/HB1603/recipe_cache",
+    temp_dir="gs://my-bucket/surveys/HB1603/exe_temp",
+    outputs_dir="gs://my-bucket/surveys/HB1603/outputs",
+)
+```
+
+Notes:
+- `--temp-dir`/`--outputs-dir` default to siblings of `--output-dir` under the
+  same scheme, so a remote cache implies remote scratch/outputs unless you
+  override them. Remote scratch trades local disk for extra bucket traffic
+  (intermediates are written, read once by the combine step, then deleted);
+  pass a local `--temp-dir` to keep scratch on disk when it fits.
+- Credentials come from Application Default Credentials — never put them in a
+  recipe. Run the workstation in the bucket's region for speed and no egress.
+- A remote checkpoint cache must use `--checkpoint-format zarr` (the default);
+  NetCDF requires seekable local writes.
+- Generated notebooks/scripts assume local paths; remote storage applies to
+  `aa-recipe run` / `api.execute`.
+
 ## Development
 
 ```bash

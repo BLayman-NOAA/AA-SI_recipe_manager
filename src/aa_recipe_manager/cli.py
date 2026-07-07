@@ -377,7 +377,30 @@ class _CLIProgress:
     "--output-dir",
     default=f"./{DEFAULT_OUTPUT_ROOT}",
     show_default=True,
-    help="Directory for serialized step outputs and checkpoints.",
+    help=(
+        "Directory for serialized step outputs and checkpoints. May be a local "
+        "path or a gs:// URL (requires the 'gcs' extra; credentials via "
+        "Application Default Credentials)."
+    ),
+)
+@click.option(
+    "--outputs-dir",
+    default=None,
+    help=(
+        "Directory for user-facing outputs (images, logs, provenance). "
+        "Defaults to a sibling of --output-dir named 'outputs'. May be a local "
+        "path or a gs:// URL."
+    ),
+)
+@click.option(
+    "--temp-dir",
+    default=None,
+    help=(
+        "Run-scoped scratch directory (exe_temp) for per-step intermediate "
+        "stores. Defaults to a sibling of --output-dir named 'exe_temp' under "
+        "the same scheme. May be a local path or a gs:// URL; remote scratch "
+        "requires zarr intermediates (NetCDF cannot be written to a bucket)."
+    ),
 )
 @click.option("--implementation", default=None, help="Override implementation key for all steps.")
 @click.option(
@@ -451,6 +474,8 @@ def run_cmd(
     recipe: str,
     executor: str,
     output_dir: str,
+    outputs_dir: str | None,
+    temp_dir: str | None,
     implementation: str | None,
     inputs: tuple[str, ...],
     save_provenance: str | None,
@@ -492,6 +517,8 @@ def run_cmd(
             inputs=parsed_inputs or None,
             executor=executor,
             output_dir=output_dir,
+            outputs_dir=outputs_dir,
+            temp_dir=temp_dir,
             implementation_override=implementation,
             force=force,
             no_checkpoints=no_checkpoints,

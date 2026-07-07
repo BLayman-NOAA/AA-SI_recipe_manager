@@ -8,7 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional Google Cloud Storage backing for the three run storage locations —
+  the checkpoint cache (`--output-dir`), the `exe_temp` scratch dir
+  (`--temp-dir`), and the user-facing outputs dir (`--outputs-dir`) — each may
+  now be a local path or a `gs://` URL. Set independently; all default to local.
+  Install the `gcs` extra (`pip install aa-recipe-manager[gcs]`); credentials
+  come from Application Default Credentials.
+- `StorageLocation` seam (`aa_recipe_manager.storage`): one code path where a
+  local path stays plain `pathlib` and an fsspec URL routes through the matching
+  filesystem. Consumers that only understand local paths fail loudly on a remote
+  location instead of silently writing to a mangled `gs:/bucket` directory.
+- New `execute()` keyword arguments `temp_dir` and `storage_options`; new CLI
+  flags `--temp-dir` and `--outputs-dir` on `aa-recipe run`.
+- Remote-aware checkpoint fingerprinting and path-param validation: `gs://`
+  inputs skip local existence/mkdir checks and are fingerprinted via fsspec,
+  degrading to a warning (not a crash) when credentials/drivers are absent.
 - Project scaffold customized from AA-SI Python template
+
+### Changed
+- Checkpoint sidecar artifact paths are now stored relative to the cache root
+  (POSIX separators), so a cache directory/prefix is relocatable (e.g. sync a
+  bucket cache down and point `--output-dir` at the local copy). Legacy caches
+  with absolute artifact paths still load.
+- The `execute()` re-export now forwards `checkpoint_mode`, `checkpoint_steps`,
+  and `checkpoint_format` (previously silently dropped).
+- Remote outputs dir: per-step logs are captured in-memory and uploaded once at
+  the end of the run (object stores cannot append); `checkpoint_format="netcdf"`
+  is rejected for a remote cache (HDF5 needs seekable writes — use `zarr`).
 - Package renamed to `aa-recipe-manager` (import as `aa_recipe_manager`)
 - Core dependencies: pydantic, ruamel.yaml, click, nbformat
 - CLI entry point (`aa-recipe`, with `aa-recipe-manager` compatibility alias)

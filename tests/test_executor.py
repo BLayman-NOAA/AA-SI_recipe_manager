@@ -1178,7 +1178,9 @@ class TestCheckpointing:
         meta = json.loads(_meta_path(out, "open_raw").read_text(encoding="utf-8"))
 
         assert meta["outputs"]["echodata"]["format"] == "echodata_zarr"
-        assert Path(meta["outputs"]["echodata"]["path"]).parent == out / ZARR_DATA_DIR
+        # Meta paths are stored relative to the cache root (POSIX separators).
+        assert Path(meta["outputs"]["echodata"]["path"]).parent == Path(ZARR_DATA_DIR)
+        assert (out / meta["outputs"]["echodata"]["path"]).exists()
         assert EchoData.last_zarr_kwargs["zarr_format"] == 2
         assert manager.has_checkpoint("open_raw")
 
@@ -1194,7 +1196,8 @@ class TestCheckpointing:
 
         meta = json.loads(_meta_path(out, "dataset_step").read_text(encoding="utf-8"))
         assert meta["outputs"]["ds"]["format"] == "netcdf"
-        assert Path(meta["outputs"]["ds"]["path"]).parent == out / OTHER_DATA_DIR
+        assert Path(meta["outputs"]["ds"]["path"]).parent == Path(OTHER_DATA_DIR)
+        assert (out / meta["outputs"]["ds"]["path"]).exists()
 
         loaded = manager.load("dataset_step")
         assert list(loaded["ds"]["value"].values) == [1, 2, 3]
@@ -1208,8 +1211,8 @@ class TestCheckpointing:
 
         meta = json.loads(_meta_path(out, "sv_step").read_text(encoding="utf-8"))
         assert meta["outputs"]["ds_Sv"]["format"] == "zarr"
-        store = Path(meta["outputs"]["ds_Sv"]["path"])
-        assert store.parent == out / ZARR_DATA_DIR
+        assert Path(meta["outputs"]["ds_Sv"]["path"]).parent == Path(ZARR_DATA_DIR)
+        store = out / meta["outputs"]["ds_Sv"]["path"]
         zgroup = json.loads((store / ".zgroup").read_text(encoding="utf-8"))
         assert zgroup["zarr_format"] == 2
         assert manager.has_checkpoint("sv_step")
@@ -1226,8 +1229,8 @@ class TestCheckpointing:
 
         meta = json.loads(_meta_path(out, "da_step").read_text(encoding="utf-8"))
         assert meta["outputs"]["arr"]["format"] == "zarr_da"
-        store = Path(meta["outputs"]["arr"]["path"])
-        assert store.parent == out / ZARR_DATA_DIR
+        assert Path(meta["outputs"]["arr"]["path"]).parent == Path(ZARR_DATA_DIR)
+        store = out / meta["outputs"]["arr"]["path"]
         zgroup = json.loads((store / ".zgroup").read_text(encoding="utf-8"))
         assert zgroup["zarr_format"] == 2
 

@@ -39,6 +39,7 @@ dependencies = [
     "click>=8.0",
     "nbformat>=5.7",
     "packaging>=21.0",
+    "fsspec>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +50,12 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
     "jsonschema>=4.0",
+]
+# Google Cloud Storage backend for checkpoint cache / exe_temp / outputs on
+# gs:// URLs. gcsfs registers the fsspec "gs" protocol; credentials come from
+# Application Default Credentials (gcloud auth application-default login).
+gcs = [
+    "gcsfs>=2024.1",
 ]
 docs = [
     "mkdocs>=1.5.0",

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import PipelineDAG
+    from aa_recipe_manager.storage import StorageLocation
 
 
 @dataclass
@@ -35,9 +36,11 @@ class ExecutionResult:
     skipped_steps: list[str] = field(default_factory=list)
     pruned_steps: list[str] = field(default_factory=list)
     executed_steps: list[str] = field(default_factory=list)
-    output_dir: Path | None = None
-    outputs_dir: Path | None = None
-    log_file: Path | None = None
+    # Local runs keep these as plain ``Path``; remote (gs://) runs carry a
+    # ``StorageLocation`` (str-safe, fsspec-parseable via ``str(...)``).
+    output_dir: "Path | StorageLocation | None" = None
+    outputs_dir: "Path | StorageLocation | None" = None
+    log_file: "Path | StorageLocation | None" = None
     console_log: str = ""
 
 
@@ -95,6 +98,8 @@ class PipelineExecutor(Protocol):
         skip_sinks: bool = False,
         regenerate_outputs: bool = False,
         outputs_dir: str | Path | None = None,
+        temp_dir: str | Path | None = None,
         log_destination: str = "file",
+        storage_options: dict[str, Any] | None = None,
         progress: ProgressCallback | None = None,
     ) -> ExecutionResult: ...

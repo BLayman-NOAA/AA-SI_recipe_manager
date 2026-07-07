@@ -10,14 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from aa_recipe_manager.storage import StorageLocation
+
 
 @dataclass(frozen=True)
 class ExecutionContext:
     mode: str | None = None
-    output_dir: Path | None = None
+    output_dir: Path | StorageLocation | None = None
     step_id: str | None = None
-    artifacts_dir: Path | None = None
-    temp_dir: Path | None = None
+    artifacts_dir: Path | StorageLocation | None = None
+    temp_dir: Path | StorageLocation | None = None
 
 
 _EXECUTION_CONTEXT: ContextVar[ExecutionContext] = ContextVar(
@@ -35,15 +37,27 @@ def get_execution_context() -> ExecutionContext:
 def execution_context(
     *,
     mode: str | None = None,
-    output_dir: str | Path | None = None,
+    output_dir: str | Path | StorageLocation | None = None,
     step_id: str | None = None,
-    artifacts_dir: str | Path | None = None,
-    temp_dir: str | Path | None = None,
+    artifacts_dir: str | Path | StorageLocation | None = None,
+    temp_dir: str | Path | StorageLocation | None = None,
 ) -> Iterator[ExecutionContext]:
-    """Temporarily set the recipe execution context for the current task."""
-    resolved_output_dir = None if output_dir is None else Path(output_dir)
-    resolved_artifacts_dir = None if artifacts_dir is None else Path(artifacts_dir)
-    resolved_temp_dir = None if temp_dir is None else Path(temp_dir)
+    """Temporarily set the recipe execution context for the current task.
+
+    Directory values are normalized through :class:`StorageLocation`: local
+    paths become plain ``Path`` objects (so consumers using ``pathlib`` are
+    unaffected), while fsspec URLs (``gs://`` etc.) are preserved as
+    ``StorageLocation`` objects rather than being mangled by ``Path()``.
+    """
+
+    def _resolve(value: str | Path | StorageLocation | None):
+        if value is None:
+            return None
+        return StorageLocation.parse(value).as_context_value()
+
+    resolved_output_dir = _resolve(output_dir)
+    resolved_artifacts_dir = _resolve(artifacts_dir)
+    resolved_temp_dir = _resolve(temp_dir)
     token: Token[ExecutionContext] = _EXECUTION_CONTEXT.set(
         ExecutionContext(
             mode=mode,

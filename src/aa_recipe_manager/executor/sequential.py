@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import gc
 import io
+import os
 import shutil
 import stat
 import time
@@ -33,6 +34,7 @@ from aa_recipe_manager.executor.invocation import (
     import_callable,
 )
 from aa_recipe_manager.executor.runtime_context import execution_context
+from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import CheckpointFormat, CheckpointMode, DAGNode, PipelineDAG
@@ -77,30 +79,41 @@ def _is_transient_windows_lock(exc: OSError) -> bool:
     return isinstance(exc, PermissionError) and getattr(exc, "winerror", None) == 32
 
 
-def _resolve_temp_dir(cache_dir: Path | None) -> Path | None:
-    """Resolve the run-scoped scratch directory (sibling of the checkpoint cache).
+def _resolve_temp_dir(
+    temp_dir: str | Path | StorageLocation | None,
+    cache_loc: StorageLocation | None,
+    storage_options: dict[str, Any] | None = None,
+) -> StorageLocation | None:
+    """Resolve the run-scoped scratch directory (``exe_temp``).
 
-    Returns ``None`` when no cache directory is configured.
+    An explicit ``temp_dir`` wins (local path or fsspec URL). Otherwise it
+    follows the cache's scheme: a local cache yields a local ``exe_temp``, a
+    remote cache yields a remote ``exe_temp`` under the same prefix. Returns
+    ``None`` when neither is available.
     """
-    if cache_dir is not None:
-        return cache_dir.parent / _EXE_TEMP_DIRNAME
+    if temp_dir is not None:
+        return StorageLocation.parse(temp_dir, storage_options)
+    if cache_loc is not None:
+        return cache_loc.parent / _EXE_TEMP_DIRNAME
     return None
 
 
 def _resolve_outputs_dir(
-    outputs_dir: str | Path | None,
-    cache_dir: Path | None,
-) -> Path | None:
+    outputs_dir: str | Path | StorageLocation | None,
+    cache_loc: StorageLocation | None,
+    storage_options: dict[str, Any] | None = None,
+) -> StorageLocation | None:
     """Resolve the user-facing outputs directory.
 
     Explicit ``outputs_dir`` wins. Otherwise it defaults to a sibling of the
     checkpoint cache directory named ``outputs`` (e.g. ``recipe_cache`` ->
-    ``outputs``). Returns ``None`` when neither is available.
+    ``outputs``), following the cache's scheme. Returns ``None`` when neither
+    is available.
     """
     if outputs_dir is not None:
-        return Path(outputs_dir)
-    if cache_dir is not None:
-        return cache_dir.parent / _DEFAULT_OUTPUTS_DIRNAME
+        return StorageLocation.parse(outputs_dir, storage_options)
+    if cache_loc is not None:
+        return cache_loc.parent / _DEFAULT_OUTPUTS_DIRNAME
     return None
 
 
@@ -118,10 +131,12 @@ class SequentialExecutor:
         skip_sinks: bool = False,
         regenerate_outputs: bool = False,
         outputs_dir: str | Path | None = None,
+        temp_dir: str | Path | None = None,
         log_destination: str = "file",
         checkpoint_mode: CheckpointMode | str | None = None,
         checkpoint_steps: Iterable[str] | None = None,
         checkpoint_format: CheckpointFormat | str | None = None,
+        storage_options: dict[str, Any] | None = None,
         progress: ProgressCallback | None = None,
     ) -> ExecutionResult:
         from aa_recipe_manager.provenance.recorder import ProvenanceRecorder
@@ -136,10 +151,18 @@ class SequentialExecutor:
         runtime = RuntimeContext()
         progress = progress or NullProgressCallback()
 
+        # Parse the cache location once; a local path stays local-behaving,
+        # an fsspec URL (gs://, ...) routes through StorageLocation.
+        cache_loc: StorageLocation | None = (
+            StorageLocation.parse(output_dir, storage_options)
+            if output_dir is not None
+            else None
+        )
+
         checkpoints: CheckpointManager | None = None
-        resolved_output_dir: Path | None = None
-        if output_dir is not None and not no_checkpoints:
-            resolved_output_dir = Path(output_dir)
+        resolved_output_dir: StorageLocation | None = None
+        if cache_loc is not None and not no_checkpoints:
+            resolved_output_dir = cache_loc
             # Resolve effective format: call-site arg > recipe hint > default "zarr"
             hints = dag.recipe.execution
             effective_format: str = (
@@ -148,9 +171,10 @@ class SequentialExecutor:
                 or "zarr"
             )
             checkpoints = CheckpointManager(
-                resolved_output_dir,
+                cache_loc,
                 compute_step_hashes(dag, pipeline_inputs),
                 preferred_format=effective_format,
+                storage_options=storage_options,
             )
 
         policy: set[str] = set()
@@ -161,29 +185,55 @@ class SequentialExecutor:
                 extra_step_ids=set(checkpoint_steps or ()),
             )
 
-        result = ExecutionResult(output_dir=resolved_output_dir)
+        result = ExecutionResult(
+            output_dir=None
+            if resolved_output_dir is None
+            else resolved_output_dir.as_context_value()
+        )
 
         # User-facing outputs (images, logs) live in a separate tree from the
         # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
         # execution context's ``artifacts_dir``) and per-step stdout/stderr to
         # ``<outputs>/logs/standard_out.txt``.
-        # Use the raw output_dir arg (not the checkpoint-gated resolved_output_dir)
+        # Use the raw cache location (not the checkpoint-gated resolved_output_dir)
         # so that outputs_dir resolves correctly even when no_checkpoints=True.
-        resolved_outputs_dir = _resolve_outputs_dir(
-            outputs_dir, Path(output_dir) if output_dir is not None else None
+        resolved_outputs_loc = _resolve_outputs_dir(
+            outputs_dir, cache_loc, storage_options
         )
-        result.outputs_dir = resolved_outputs_dir
+        result.outputs_dir = (
+            None
+            if resolved_outputs_loc is None
+            else resolved_outputs_loc.as_context_value()
+        )
 
-        resolved_temp_dir = _resolve_temp_dir(resolved_output_dir)
+        # An explicit temp_dir is always honored; the sibling-of-cache default
+        # follows the checkpoint-gated location (so no_checkpoints keeps the
+        # legacy behavior of aa_si_utils falling back to a system temp dir).
+        resolved_temp_loc = _resolve_temp_dir(
+            temp_dir, resolved_output_dir, storage_options
+        )
 
         log_buffer = io.StringIO()
         log_file_handle = None
-        if resolved_outputs_dir is not None and log_destination in ("file", "both"):
-            logs_dir = resolved_outputs_dir / LOGS_DIR
-            logs_dir.mkdir(parents=True, exist_ok=True)
-            log_path = logs_dir / STANDARD_OUT_FILENAME
-            log_file_handle = open(log_path, "w", encoding="utf-8")
-            result.log_file = log_path
+        # A local outputs dir streams to standard_out.txt during the run. Object
+        # stores cannot append, so a remote outputs dir instead uploads the full
+        # buffer once in the finally block (see below); the buffer always
+        # captures the text regardless of destination.
+        remote_log_loc: StorageLocation | None = None
+        want_log_file = (
+            resolved_outputs_loc is not None and log_destination in ("file", "both")
+        )
+        if want_log_file and resolved_outputs_loc.is_local:
+            logs_loc = resolved_outputs_loc / LOGS_DIR
+            logs_loc.mkdir()
+            log_loc = logs_loc / STANDARD_OUT_FILENAME
+            log_file_handle = open(log_loc.as_local_path(), "w", encoding="utf-8")
+            result.log_file = log_loc.as_context_value()
+        elif want_log_file:
+            remote_log_loc = (
+                resolved_outputs_loc / LOGS_DIR / STANDARD_OUT_FILENAME
+            )
+            result.log_file = remote_log_loc
         log_sink = _Tee(log_buffer, log_file_handle)
 
         try:
@@ -195,8 +245,8 @@ class SequentialExecutor:
                 checkpoints=checkpoints,
                 policy=policy,
                 resolved_output_dir=resolved_output_dir,
-                resolved_outputs_dir=resolved_outputs_dir,
-                resolved_temp_dir=resolved_temp_dir,
+                resolved_outputs_dir=resolved_outputs_loc,
+                resolved_temp_dir=resolved_temp_loc,
                 force=force,
                 skip_sinks=skip_sinks,
                 regenerate_outputs=regenerate_outputs,
@@ -206,20 +256,38 @@ class SequentialExecutor:
         finally:
             if log_file_handle is not None:
                 log_file_handle.close()
-            self._cleanup_temp_dir(resolved_temp_dir)
+            # Upload the full captured log to a remote outputs dir once (object
+            # stores cannot append). Runs on failure too, so failed-run logs
+            # still land in the bucket. A hard process kill loses the remote log.
+            if remote_log_loc is not None:
+                try:
+                    remote_log_loc.parent.mkdir()
+                    remote_log_loc.write_text(log_buffer.getvalue())
+                except Exception:  # never mask the original error
+                    pass
+            self._cleanup_temp_dir(resolved_temp_loc)
 
         result.console_log = log_buffer.getvalue()
         result.provenance = ProvenanceRecorder.capture(dag, inputs=pipeline_inputs or None)
         return result
 
     @staticmethod
-    def _cleanup_temp_dir(temp_dir: Path | None) -> None:
+    def _cleanup_temp_dir(temp_loc: StorageLocation | Path | None) -> None:
         """Remove the run-scoped scratch directory if it exists.
 
         Windows can briefly hold open NetCDF-backed temp files after the last
-        step returns, so retry a few times before surfacing the error.
+        step returns, so the local path retries a few times before surfacing
+        the error. Remote scratch has no such locking and is removed in one
+        ``fs.rm`` call.
         """
-        if temp_dir is None or not temp_dir.exists():
+        if temp_loc is None:
+            return
+        if isinstance(temp_loc, StorageLocation) and not temp_loc.is_local:
+            temp_loc.rm(recursive=True)
+            return
+
+        temp_dir = Path(os.fspath(temp_loc))
+        if not temp_dir.exists():
             return
 
         last_error: OSError | None = None
@@ -251,9 +319,9 @@ class SequentialExecutor:
         pipeline_inputs: dict[str, Any],
         checkpoints: CheckpointManager | None,
         policy: set[str],
-        resolved_output_dir: Path | None,
-        resolved_outputs_dir: Path | None,
-        resolved_temp_dir: Path | None,
+        resolved_output_dir: StorageLocation | None,
+        resolved_outputs_dir: StorageLocation | None,
+        resolved_temp_dir: StorageLocation | None,
         force: bool,
         skip_sinks: bool,
         regenerate_outputs: bool,

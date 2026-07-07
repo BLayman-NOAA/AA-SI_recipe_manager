@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
+from aa_recipe_manager.storage import StorageLocation
 from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -581,10 +582,12 @@ def execute(
     skip_sinks: bool = False,
     regenerate_outputs: bool = False,
     outputs_dir: str | Path | None = None,
+    temp_dir: str | Path | None = None,
     log_destination: str = "file",
     checkpoint_mode: CheckpointMode | str | None = None,
     checkpoint_steps: list[str] | None = None,
     checkpoint_format: str | None = None,
+    storage_options: dict[str, Any] | None = None,
     save_provenance: str | Path | None = None,
     progress: Any = None,
 ) -> Any:
@@ -622,7 +625,14 @@ def execute(
         Directory for user-facing outputs (images under ``outputs_dir/images``
         and logs under ``outputs_dir/logs/standard_out.txt``). When ``None``
         it defaults to a sibling of ``output_dir`` named ``outputs`` (e.g.
-        ``recipe_cache`` -> ``outputs``).
+        ``recipe_cache`` -> ``outputs``). May be a local path or an fsspec URL
+        (``gs://...``).
+    temp_dir:
+        Run-scoped scratch directory (``exe_temp``) for per-step intermediate
+        stores. When ``None`` it follows the cache: a sibling of ``output_dir``
+        named ``exe_temp`` under the same scheme. May be a local path or an
+        fsspec URL; remote scratch requires zarr intermediates (NetCDF cannot
+        be written to object storage).
     log_destination:
         Where per-step stdout/stderr is sent. ``"file"`` (default) writes only
         to ``standard_out.txt``; ``"console"`` returns the captured text for
@@ -639,7 +649,12 @@ def execute(
     checkpoint_format:
         Serialization format for checkpoint files. One of ``"zarr"`` (default),
         ``"netcdf"``, or ``"pickle"``. Overrides the recipe's
-        ``execution.checkpoint_format`` setting when provided.
+        ``execution.checkpoint_format`` setting when provided. ``"netcdf"`` is
+        rejected for a remote (``gs://``) ``output_dir``.
+    storage_options:
+        fsspec storage options applied to every remote (URL) storage location
+        (cache, exe_temp, outputs). For Google Cloud Storage these are usually
+        left ``None`` so gcsfs picks up Application Default Credentials.
     save_provenance:
         If provided, write the captured provenance as YAML at this path. When
         ``output_dir`` is set and this is None, a default sidecar named
@@ -687,30 +702,36 @@ def execute(
         skip_sinks=skip_sinks,
         regenerate_outputs=regenerate_outputs,
         outputs_dir=outputs_dir,
+        temp_dir=temp_dir,
         log_destination=log_destination,
         checkpoint_mode=checkpoint_mode,
         checkpoint_steps=checkpoint_steps,
         checkpoint_format=checkpoint_format,
+        storage_options=storage_options,
         progress=progress,
     )
 
-    sidecar_path: Path | None = None
+    sidecar_loc: StorageLocation | None = None
     if save_provenance is not None:
-        sidecar_path = Path(save_provenance)
+        sidecar_loc = StorageLocation.parse(save_provenance, storage_options)
     elif result.outputs_dir is not None:
-        sidecar_path = result.outputs_dir / PROVENANCE_DIR / "provenance.yaml"
-    if sidecar_path is not None and result.provenance is not None:
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_provenance_sidecar(result.provenance, sidecar_path)
+        sidecar_loc = (
+            StorageLocation.parse(result.outputs_dir, storage_options)
+            / PROVENANCE_DIR
+            / "provenance.yaml"
+        )
+    if sidecar_loc is not None and result.provenance is not None:
+        sidecar_loc.parent.mkdir()
+        _write_provenance_sidecar(result.provenance, sidecar_loc)
 
     return result
 
 
-def _write_provenance_sidecar(provenance: Any, path: Path) -> None:
-    """Serialize a Provenance object to YAML."""
+def _write_provenance_sidecar(provenance: Any, loc: StorageLocation) -> None:
+    """Serialize a Provenance object to YAML at a local or remote location."""
     from aa_recipe_manager.provenance.recorder import to_yaml
 
-    path.write_text(to_yaml(provenance), encoding="utf-8")
+    loc.write_text(to_yaml(provenance))
 
 
 def clean(
@@ -720,12 +741,12 @@ def clean(
     inputs: dict[str, Any] | None = None,
     mode: str = "intermediate",
     dry_run: bool = False,
-) -> list[Path]:
+) -> list[StorageLocation]:
     """Remove checkpoint files for a recipe under ``output_dir``.
 
-    Modes are ``"intermediate"`` (default), ``"all"``, and ``"stale"``. When
-    ``dry_run`` is true the files that would be deleted are returned without
-    being removed.
+    ``output_dir`` may be a local path or an fsspec URL (``gs://...``). Modes are
+    ``"intermediate"`` (default), ``"all"``, and ``"stale"``. When ``dry_run`` is
+    true the locations that would be deleted are returned without being removed.
     """
     from aa_recipe_manager.executor import (
         CheckpointManager,
