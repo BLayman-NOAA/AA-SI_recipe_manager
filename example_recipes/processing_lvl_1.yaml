@@ -69,7 +69,7 @@ steps:
     params:
       sonar_model: ${inputs.sonar_model}
       include_bot: true
-      intermediate_format: "netcdf"
+      intermediate_format: "zarr"
 
   - id: combine_raw
     op: combine_raw_files

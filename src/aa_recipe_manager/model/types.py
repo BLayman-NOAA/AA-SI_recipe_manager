@@ -107,7 +107,7 @@ CheckpointMode = Literal["eager", "explicit", "terminal", "none"]
 """Recipe/run-level checkpoint policy.
 
 ``eager`` writes a checkpoint after every successful step (default).
-``explicit`` writes only for steps marked ``checkpoint: always``.
+``explicit`` writes only for steps marked ``checkpoint: always`` or ``checkpoint: save``.
 ``terminal`` writes only for steps with no downstream consumers.
 ``none`` writes nothing (equivalent to ``--no-checkpoints``).
 A per-step ``Step.checkpoint`` value overrides the mode when set.
@@ -157,7 +157,7 @@ class Step(BaseModel):
     collect: str | None = None
     sweep: SweepDeclaration | None = None
     execution: StepExecutionHints | None = None
-    checkpoint: Literal["always", "never"] | None = None
+    checkpoint: Literal["always", "never", "save"] | None = None
 
 
 class IncludeBlock(BaseModel):

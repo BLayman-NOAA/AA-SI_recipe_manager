@@ -42,11 +42,12 @@ params:
       "none": all EchoData objects are kept in memory with no temp files.
       Use when the full dataset fits comfortably in RAM.
 
-      "zarr" (NOT recommended): zarr v3 intermediate stores use
-      serializer-backed dtypes that are incompatible with the zarr v2
-      checkpoint writer used for EchoData checkpoints. Using this option will
-      reproduce the error: "Zarr format 2 arrays do not support serializer".
-      Kept as an option for experimentation only.
+      "zarr": each raw file is written as a temporary zarr store (zarr_format=2,
+      matching the checkpoint writer) and reopened lazily for combining. Unlike
+      netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket),
+      which is the intended path for surveys too large to stage on local disk.
+      Local-disk zarr is supported today; bucket-backed intermediates require the
+      storage-options plumbing still in progress.
     required: false
     default: "netcdf"
   use_swap:

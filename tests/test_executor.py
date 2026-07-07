@@ -1495,6 +1495,60 @@ class TestCheckpointPolicy:
         _set_step_checkpoint(dag, "second", "never")
         assert explicit_checkpoint_steps(dag) == {"first"}
 
+    def test_explicit_checkpoint_steps_helper_includes_save(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "always")
+        _set_step_checkpoint(dag, "start", "save")
+        _set_step_checkpoint(dag, "second", "never")
+        assert explicit_checkpoint_steps(dag) == {"first", "start"}
+
+    def test_save_checkpoints_under_explicit_mode(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "save")
+        policy = resolve_checkpoint_policy(dag, mode="explicit")
+        assert policy == {"first"}
+
+    def test_save_respects_none_mode(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "always")
+        _set_step_checkpoint(dag, "start", "save")
+        # "always" forces save under none, but "save" respects it
+        policy = resolve_checkpoint_policy(dag, mode="none")
+        assert policy == {"first"}
+
+    def test_save_under_eager_mode(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "save")
+        policy = resolve_checkpoint_policy(dag, mode="eager")
+        # Under eager, everything gets checkpointed including "save"
+        assert policy == {"start", "first", "second"}
+
+    def test_save_under_terminal_mode_only_if_terminal(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "save")  # intermediate step
+        _set_step_checkpoint(dag, "second", "save")  # terminal step
+        policy = resolve_checkpoint_policy(dag, mode="terminal")
+        # Only terminal steps get checkpointed, so only "second"
+        assert policy == {"second"}
+
+    def test_mixed_always_save_never(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "start", "always")
+        _set_step_checkpoint(dag, "first", "save")
+        _set_step_checkpoint(dag, "second", "never")
+        policy = resolve_checkpoint_policy(dag, mode="explicit")
+        # "always" and "save" are included, "never" blocks second
+        assert policy == {"start", "first"}
+
+    def test_save_with_none_mode_and_ad_hoc_pins(self):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "start", "save")
+        policy = resolve_checkpoint_policy(
+            dag, mode="none", extra_step_ids={"first"}
+        )
+        # Ad-hoc pin forces "first", "save" is excluded under none
+        assert policy == {"first"}
+
 
 class TestExecutorCheckpointModes:
     def test_explicit_mode_only_writes_marked_step(
@@ -1537,6 +1591,34 @@ class TestExecutorCheckpointModes:
             checkpoint_steps=["start"],
         )
         meta_files = _meta_names(out)
+        assert meta_files == {"start__cache_meta.json"}
+
+    def test_save_writes_under_explicit_mode(self, helper_module, tmp_path):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "save")
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="explicit",
+        )
+        meta_files = _meta_names(out)
+        assert meta_files == {"first__cache_meta.json"}
+
+    def test_save_respects_none_mode_integration(self, helper_module, tmp_path):
+        dag = _linear_inc_dag()
+        _set_step_checkpoint(dag, "first", "save")
+        _set_step_checkpoint(dag, "start", "always")
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            checkpoint_mode="none",
+        )
+        meta_files = _meta_names(out)
+        # "always" forces save, "save" respects none
         assert meta_files == {"start__cache_meta.json"}
 
     def test_explicit_mode_resume_from_marked_step(

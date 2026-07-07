@@ -380,11 +380,11 @@ def _resolve_recipe_mode(dag: PipelineDAG) -> CheckpointMode:
 
 
 def explicit_checkpoint_steps(dag: PipelineDAG) -> set[str]:
-    """Step ids explicitly marked ``checkpoint: always`` in the recipe."""
+    """Step ids explicitly marked ``checkpoint: always`` or ``checkpoint: save`` in the recipe."""
     return {
         node.step.id
         for node in dag.nodes.values()
-        if node.step.checkpoint == "always"
+        if node.step.checkpoint in ("always", "save")
     }
 
 
@@ -397,13 +397,14 @@ def resolve_checkpoint_policy(
     """Return the set of step ids whose outputs should be persisted.
 
     Combines (in priority order):
-        * per-step ``Step.checkpoint`` ("always" forces save, "never" blocks)
+        * per-step ``Step.checkpoint`` ("always" forces save even under mode=none,
+          "save" checkpoints under all modes except none, "never" blocks)
         * ad-hoc ``extra_step_ids`` (force save)
         * the recipe / call-site ``mode``
             - ``eager``   : every step
-            - ``explicit``: only steps marked ``checkpoint: always``
+            - ``explicit``: only steps marked ``checkpoint: always`` or ``checkpoint: save``
             - ``terminal``: only steps with no downstream consumers
-            - ``none``    : empty set
+            - ``none``    : empty set (but "always" still forces)
 
     Sink steps and steps with no declared outputs are excluded because they
     have nothing to persist. Unknown ids in ``extra_step_ids`` or ids that
@@ -445,6 +446,14 @@ def resolve_checkpoint_policy(
             continue
         if per_step == "always" or step_id in extras:
             policy.add(step_id)
+            continue
+        if per_step == "save":
+            # "save" respects mode=none (unlike "always"), but checkpoints under all other modes
+            if effective_mode in ("eager", "explicit"):
+                policy.add(step_id)
+            elif effective_mode == "terminal" and step_id in terminal:
+                policy.add(step_id)
+            # mode=none falls through without adding
             continue
         if effective_mode == "eager":
             policy.add(step_id)
