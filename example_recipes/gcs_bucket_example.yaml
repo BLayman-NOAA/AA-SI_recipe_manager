@@ -1,0 +1,123 @@
+# GCS Bucket Example - Modular Pipeline Recipe
+#
+# Demonstrates the third input mode (alongside NCEI download and BYO-local
+# folder): raw data that already lives in a Google Cloud Storage bucket.
+# Point raw_input_folder / cal_input_folder / line_file_path at gs:// URLs and
+# the pipeline reads them directly — no separate download step.
+#
+# How remote raw files are handled:
+#   Each .raw file is fetched to a local scratch directory, processed, and its
+#   local copy deleted before the next file is fetched. The workstation only
+#   ever holds ~1 raw file at a time (per concurrent instance), so a survey too
+#   large to fit on local disk can still be processed. Bucket objects are never
+#   modified or deleted. Calibration folders and the line CSV are small and are
+#   read directly / bulk-localized.
+#
+# Authentication:
+#   gcsfs uses Application Default Credentials by default. On a Cloud
+#   Workstation (or after `gcloud auth application-default login`) no extra
+#   configuration is needed. For non-ADC credentials, pass a storage_options
+#   dict via the Python API: api.execute(recipe, storage_options={...}).
+#
+# Requirements:
+#   pip install -e AA-SI_recipe_manager[gcs] AA-SI_Utils[gcs] AA-SI_calibration[gcs]
+#
+# Time-window filtering (optional):
+#   Restrict processing to a datetime window by overriding file_time_start /
+#   file_time_end (ISO datetimes matched against the D{YYYYMMDD}-T{HHMMSS} stamp
+#   in each file name). Filtering is name-based, so out-of-window files are
+#   never downloaded.
+#
+# Run modes:
+#   Low-disk survey (recommended for large surveys) — keep cache/scratch in the
+#   bucket and use zarr intermediates so local disk stays at ~1 raw file:
+#     aa-recipe run gcs_bucket_example.yaml \
+#       --output-dir gs://YOUR_BUCKET/runs/hb1603/recipe_cache \
+#       --temp-dir   gs://YOUR_BUCKET/runs/hb1603/exe_temp \
+#       --outputs-dir ./outputs \
+#       --input intermediate_format=zarr
+#
+#   Simple mode — local cache/scratch with default netcdf intermediates:
+#     aa-recipe run gcs_bucket_example.yaml --output-dir ./recipe_cache
+#
+# NOTE: --outputs-dir must remain a LOCAL path for now. Calibration artifacts
+# are still written through pathlib, so a gs:// outputs dir is not yet
+# supported (checkpoint cache and exe_temp may be remote).
+#
+# Usage: aa-recipe generate gcs_bucket_example.yaml
+
+recipe:
+  name: "gcs_bucket_example"
+  description: >
+    GCS-bucket variant of the modular pipeline; raw, calibration, and line
+    inputs are read from gs:// URLs with one-raw-file-at-a-time download.
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # Replace YOUR_BUCKET with your bucket, or override each with --input.
+  raw_input_folder:
+    type: path
+    default: "gs://YOUR_BUCKET/HB1603/raw"
+    # Content-fingerprint the (remote) folder so cache keys track the file set.
+    # Uses a single stat/list call per run and authenticates via storage_options.
+    fingerprint_contents: true
+  cal_input_folder:
+    type: path
+    default: "gs://YOUR_BUCKET/HB1603/calibration"
+  line_file_path:
+    type: path
+    default: "gs://YOUR_BUCKET/HB1603/line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  # Optional subset of files within raw_input_folder. Leave empty for all.
+  raw_file_names:
+    type: list
+    default: []
+  # Optional filename-datetime window. Unset means no time filtering.
+  file_time_start:
+    type: str
+    required: false
+  file_time_end:
+    type: str
+    required: false
+  # "zarr" is recommended when --temp-dir is a bucket; "netcdf" (the sub-recipe
+  # default) requires a local --temp-dir. Override with --input as shown above.
+  intermediate_format:
+    type: str
+    default: "netcdf"
+
+steps:
+
+  # Generic processing pipeline. No query/download step - raw_input_folder
+  # (a gs:// URL) is read directly. raw_file_names / file_time_* / the
+  # shared inputs flow through by name.
+  - include: processing_lvls_1_to_3.yaml
+    input_overrides:
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  # Dataset-specific line overlay (reads the gs:// CSV in place).
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  # Visualization wired to processing outputs.
+  - include: visualization.yaml
+    input_overrides:
+      sv_clean: ${mask_sparse.ds_Sv}
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile_fit"
+
+  # ML wired to processing outputs. echodata comes from combine_raw and the
+  # pre-sparse-mask Sv (sv_clean_unmasked) from remove_noise.
+  - include: machine_learning.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"

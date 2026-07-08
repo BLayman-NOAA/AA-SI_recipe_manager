@@ -15,13 +15,23 @@ outputs:
 params:
   raw_input_folder:
     type: path
-    description: Folder containing raw acoustic files; used to determine channel configuration
+    description: >
+      Folder containing raw acoustic files; used to determine channel
+      configuration. May be a local path or a remote fsspec URL (e.g.
+      gs://bucket/survey/raw). Remote raw files are scanned one at a time:
+      each is downloaded to local scratch, read for its channel config, and
+      the local copy deleted before the next file is fetched.
     required: true
     constraints:
       # Auto-create if missing: typically populated by download_ncei_data.
       create_if_missing: true
   cal_input_folder:
     type: path
+    description: >
+      Folder containing manufacturer calibration files (.cal / .xml). May be a
+      local path or a remote fsspec URL; a remote folder is downloaded to a
+      local scratch directory for the duration of the parse (these files are
+      small) and removed afterwards.
     required: true
     constraints:
       # Auto-create if missing so dry-run does not fail before the user has
@@ -58,6 +68,21 @@ params:
     description: Print progress information during mapping; implementation-specific
     required: false
     default: true
+  file_time_start:
+    type: str
+    required: false
+    description: >-
+      Optional inclusive ISO datetime restricting the scanned raw files to those
+      whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this
+      bound. Should match the initial_setup window so the channel-configuration
+      scan covers exactly the files being processed. For remote folders the
+      filter is applied before any file is downloaded.
+  file_time_end:
+    type: str
+    required: false
+    description: >-
+      Optional inclusive ISO datetime upper bound for filename-encoded file
+      times. See file_time_start.
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.generate_standardized_cal_mapping

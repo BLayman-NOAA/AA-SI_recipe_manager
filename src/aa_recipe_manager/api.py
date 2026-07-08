@@ -653,8 +653,11 @@ def execute(
         rejected for a remote (``gs://``) ``output_dir``.
     storage_options:
         fsspec storage options applied to every remote (URL) storage location
-        (cache, exe_temp, outputs). For Google Cloud Storage these are usually
-        left ``None`` so gcsfs picks up Application Default Credentials.
+        (cache, exe_temp, outputs) and to remote *data input* paths: ops read
+        the dict from the execution context to access ``gs://`` input folders
+        and files, and remote-input cache fingerprinting authenticates with it.
+        For Google Cloud Storage these are usually left ``None`` so gcsfs picks
+        up Application Default Credentials.
     save_provenance:
         If provided, write the captured provenance as YAML at this path. When
         ``output_dir`` is set and this is None, a default sidecar named
@@ -741,12 +744,15 @@ def clean(
     inputs: dict[str, Any] | None = None,
     mode: str = "intermediate",
     dry_run: bool = False,
+    storage_options: dict[str, Any] | None = None,
 ) -> list[StorageLocation]:
     """Remove checkpoint files for a recipe under ``output_dir``.
 
     ``output_dir`` may be a local path or an fsspec URL (``gs://...``). Modes are
     ``"intermediate"`` (default), ``"all"``, and ``"stale"``. When ``dry_run`` is
     true the locations that would be deleted are returned without being removed.
+    ``storage_options`` authenticates remote cache access and remote-input
+    fingerprinting, mirroring :func:`execute`.
     """
     from aa_recipe_manager.executor import (
         CheckpointManager,
@@ -760,6 +766,7 @@ def clean(
     dag = _load_dag(recipe, input_values=inputs, check_versions=False)
     manager = CheckpointManager(
         output_dir,
-        compute_step_hashes(dag, inputs or {}),
+        compute_step_hashes(dag, inputs or {}, storage_options=storage_options),
+        storage_options=storage_options,
     )
     return manager.clean(dag, mode=mode, dry_run=dry_run)  # type: ignore[arg-type]

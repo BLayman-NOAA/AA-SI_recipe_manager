@@ -18,6 +18,11 @@ params:
   raw_input_folder:
     type: path
     required: true
+    description: >
+      Folder containing .raw files. May be a local path or a remote fsspec URL
+      (e.g. gs://bucket/survey/raw); remote folders are listed without
+      downloading any data, and existence checks are skipped at validation
+      time for remote URLs.
     constraints:
       # Auto-create if missing: an upstream step (e.g. download_ncei_data)
       # may populate this folder, and at dry-run time it may not yet exist.
@@ -41,6 +46,21 @@ params:
     type: bool
     required: false
     default: true
+  file_time_start:
+    type: str
+    required: false
+    description: >-
+      Optional inclusive ISO datetime (e.g. "2016-07-25T20:58") restricting the
+      raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS})
+      is at or after this bound. Filenames without a parseable datetime are
+      excluded when a bound is set. Applies to local and gs:// folders alike;
+      filtering is name-based, so no data is read (or downloaded) to filter.
+  file_time_end:
+    type: str
+    required: false
+    description: >-
+      Optional inclusive ISO datetime upper bound for filename-encoded file
+      times. See file_time_start.
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.initial_setup_and_validation

@@ -49,6 +49,27 @@ inputs:
       means "use every .raw file in the folder". Note that
       generate_standardized_cal_mapping always scans the full folder; this
       input only constrains the set of files that get opened and processed.
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime (e.g. "2016-07-25T20:58") restricting
+      processing to raw files whose filename-encoded time
+      (D{YYYYMMDD}-T{HHMMSS}) falls in the window. Applies to both the
+      processed file set and the calibration scan. Leave unset to process every
+      file. Works for local and gs:// folders; filtering reads only file names.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+  intermediate_format:
+    type: str
+    default: "netcdf"
+    description: >
+      Per-file intermediate store format written between read_raw and
+      combine_raw. "netcdf" (default) requires a local --temp-dir. Use "zarr"
+      when pointing --temp-dir at a bucket, which keeps local disk usage to
+      roughly one raw file for the whole run.
   range_bin:
     type: str
     default: "20m"
@@ -71,6 +92,8 @@ steps:
       calibration_outputs: ${inputs.calibration_outputs}
       raw_file_names: ${inputs.raw_file_names}
       clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
 
   - id: gen_cal_mapping
     op: generate_standardized_cal_mapping
@@ -83,6 +106,8 @@ steps:
       short_filenames: true
       keep_unused: true
       conflict_resolution: "error"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
 
   - id: read_raw
     op: read_raw_files
@@ -91,7 +116,7 @@ steps:
     params:
       sonar_model: ${inputs.sonar_model}
       include_bot: true
-      intermediate_format: "netcdf"
+      intermediate_format: ${inputs.intermediate_format}
 
   - id: combine_raw
     op: combine_raw_files

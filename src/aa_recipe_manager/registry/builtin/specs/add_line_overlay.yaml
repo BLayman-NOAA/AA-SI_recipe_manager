@@ -14,7 +14,12 @@ outputs:
 params:
   line_file_path:
     type: path
-    description: Path to the CSV file containing the line data
+    description: >
+      Path to the CSV file containing the line data. May be a local path or a
+      remote fsspec URL (e.g. gs://bucket/survey/line_files/dive.csv); remote
+      CSVs are read in place (no download). The must_exist check below is
+      skipped at validation time for remote URLs and enforced by the step at
+      run time instead.
     required: true
     constraints:
       must_exist: true

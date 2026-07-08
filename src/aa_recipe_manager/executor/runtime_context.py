@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, Mapping
 
 from aa_recipe_manager.storage import StorageLocation
 
@@ -20,6 +20,10 @@ class ExecutionContext:
     step_id: str | None = None
     artifacts_dir: Path | StorageLocation | None = None
     temp_dir: Path | StorageLocation | None = None
+    #: Global fsspec storage options for remote (gs://, ...) *input* paths.
+    #: Must stay a plain picklable dict so future distributed executors can
+    #: re-establish the context inside worker tasks.
+    storage_options: Mapping[str, Any] | None = None
 
 
 _EXECUTION_CONTEXT: ContextVar[ExecutionContext] = ContextVar(
@@ -41,6 +45,7 @@ def execution_context(
     step_id: str | None = None,
     artifacts_dir: str | Path | StorageLocation | None = None,
     temp_dir: str | Path | StorageLocation | None = None,
+    storage_options: Mapping[str, Any] | None = None,
 ) -> Iterator[ExecutionContext]:
     """Temporarily set the recipe execution context for the current task.
 
@@ -65,6 +70,9 @@ def execution_context(
             step_id=step_id,
             artifacts_dir=resolved_artifacts_dir,
             temp_dir=resolved_temp_dir,
+            # Empty dicts confuse xarray/zarr ("provided but unused"); publish
+            # None instead so consumers can pass the value straight through.
+            storage_options=dict(storage_options) if storage_options else None,
         )
     )
     try:

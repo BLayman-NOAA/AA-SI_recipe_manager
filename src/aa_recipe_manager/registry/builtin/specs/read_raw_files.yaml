@@ -10,7 +10,12 @@ category: io
 inputs:
   raw_file_paths:
     type: list
-    description: Paths to .raw files to open
+    description: >
+      Paths to .raw files to open. Entries may be local paths or remote fsspec
+      URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded
+      to a local scratch directory, converted, and the local copy deleted
+      before the next file is fetched — the machine only ever holds ~1 raw
+      file at a time; bucket objects are never modified or deleted.
 outputs:
   raw_stores:
     type: list
@@ -44,10 +49,10 @@ params:
 
       "zarr": each raw file is written as a temporary zarr store (zarr_format=2,
       matching the checkpoint writer) and reopened lazily for combining. Unlike
-      netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket),
-      which is the intended path for surveys too large to stage on local disk.
-      Local-disk zarr is supported today; bucket-backed intermediates require the
-      storage-options plumbing still in progress.
+      netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket)
+      by passing a gs:// --temp-dir, which is the intended path for surveys too
+      large to stage on local disk. Combined with gs:// raw_file_paths, local
+      disk usage stays at roughly one raw file for the whole run.
     required: false
     default: "netcdf"
   use_swap:

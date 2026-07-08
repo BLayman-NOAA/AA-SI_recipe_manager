@@ -172,7 +172,9 @@ class SequentialExecutor:
             )
             checkpoints = CheckpointManager(
                 cache_loc,
-                compute_step_hashes(dag, pipeline_inputs),
+                compute_step_hashes(
+                    dag, pipeline_inputs, storage_options=storage_options
+                ),
                 preferred_format=effective_format,
                 storage_options=storage_options,
             )
@@ -252,6 +254,7 @@ class SequentialExecutor:
                 regenerate_outputs=regenerate_outputs,
                 progress=progress,
                 log_sink=log_sink,
+                storage_options=storage_options,
             )
         finally:
             if log_file_handle is not None:
@@ -327,6 +330,7 @@ class SequentialExecutor:
         regenerate_outputs: bool,
         progress: ProgressCallback,
         log_sink: _Tee,
+        storage_options: dict[str, Any] | None = None,
     ) -> None:
         step_ids = list(dag.topological_order)
         total = len(step_ids)
@@ -414,6 +418,7 @@ class SequentialExecutor:
                     step_id=step_id,
                     artifacts_dir=resolved_outputs_dir,
                     temp_dir=resolved_temp_dir,
+                    storage_options=storage_options,
                 ), redirect_stdout(log_sink), redirect_stderr(log_sink):
                     outputs = self._execute_step(node, runtime, pipeline_inputs)
             except PipelineExecutionError as exc:

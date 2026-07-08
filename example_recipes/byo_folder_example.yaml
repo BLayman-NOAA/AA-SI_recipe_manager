@@ -10,6 +10,11 @@
 # raw_file_names to a list of filenames within raw_input_folder. Leave it
 # as an empty list to process every .raw file in the folder.
 #
+# To restrict processing to a datetime window instead, set file_time_start
+# and/or file_time_end (ISO datetimes). Files are matched on the
+# D{YYYYMMDD}-T{HHMMSS} stamp in their names; leave both unset to disable.
+# Example: --input file_time_start=2016-07-25T20:58 --input file_time_end=2016-07-25T21:45
+#
 # Usage: aa-recipe generate byo_folder_example.yaml
 
 recipe:
@@ -37,6 +42,14 @@ inputs:
   raw_file_names:
     type: list
     default: []
+  # Optional filename-datetime window. Unset means "no time filtering", so the
+  # default behavior of this recipe is unchanged.
+  file_time_start:
+    type: str
+    required: false
+  file_time_end:
+    type: str
+    required: false
 
 steps:
 

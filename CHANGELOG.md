@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remote-aware checkpoint fingerprinting and path-param validation: `gs://`
   inputs skip local existence/mkdir checks and are fingerprinted via fsspec,
   degrading to a warning (not a crash) when credentials/drivers are absent.
+- Optional Google Cloud Storage backing for the three run storage locations —
+  the checkpoint cache (`--output-dir`), the `exe_temp` scratch dir
+  (`--temp-dir`), and the user-facing outputs dir (`--outputs-dir`).
+- `gs://` support extended to **data inputs**: recipe path inputs
+  (`raw_input_folder`, `cal_input_folder`, `line_file_path`) may be local paths
+  or `gs://` URLs, detected by scheme (no recipe flag). The global
+  `storage_options` dict now also reaches ops (via a new
+  `ExecutionContext.storage_options` field) and authenticates remote-input
+  fingerprinting; credentials default to Application Default Credentials.
+  Remote raw files are downloaded one at a time to local scratch, processed,
+  and deleted before the next — local disk holds ~1 raw file at a time, so a
+  survey too large for the workstation disk can still be processed. New
+  `example_recipes/gcs_bucket_example.yaml` demonstrates the flow.
+- Optional filename-datetime filtering for provided raw folders
+  (`file_time_start` / `file_time_end` on `initial_setup` and
+  `generate_standardized_cal_mapping`): restrict processing to files whose
+  `D{YYYYMMDD}-T{HHMMSS}` name stamp falls in a window. Name-based, so remote
+  files outside the window are never downloaded. `api.clean()` gained a
+  `storage_options` argument for parity with `execute()`.
 - Project scaffold customized from AA-SI Python template
 
 ### Changed

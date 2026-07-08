@@ -83,17 +83,24 @@ def _referenced_pipeline_inputs(node: DAGNode) -> set[str]:
     return names
 
 
-def _remote_path_fingerprint(path_value: str) -> dict[str, Any]:
+def _remote_path_fingerprint(
+    path_value: str,
+    storage_options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Stat-only fingerprint for an fsspec URL (gs://, s3://, ...).
 
     Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes.
     Costs one HEAD/LIST per fingerprinted input per run. Credential or network
     failures degrade to ``remote-unverified`` (a warning) rather than crashing
     the hash computation, so a run without cloud auth still proceeds.
+
+    ``storage_options`` is transport-only: it authenticates the stat calls but
+    never enters the returned fingerprint (credentials must not change cache
+    keys).
     """
     try:
         fs, fs_path = __import__("fsspec.core", fromlist=["url_to_fs"]).url_to_fs(
-            path_value
+            path_value, **(storage_options or {})
         )
         if not fs.exists(fs_path):
             return {"path": path_value, "kind": "missing"}
@@ -133,7 +140,10 @@ def _info_mtime(info: dict[str, Any]) -> Any:
     return None
 
 
-def _path_fingerprint(path_value: Any) -> dict[str, Any] | None:
+def _path_fingerprint(
+    path_value: Any,
+    storage_options: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Return a deterministic, stat-only fingerprint for a path-like value.
 
     Files are fingerprinted by size and nanosecond mtime. Directories are
@@ -141,14 +151,15 @@ def _path_fingerprint(path_value: Any) -> dict[str, Any] | None:
     kind, size, and nanosecond mtime. This catches common local-input changes
     (added/removed/replaced files) without reading large file contents.
 
-    fsspec URLs are fingerprinted remotely via :func:`_remote_path_fingerprint`.
+    fsspec URLs are fingerprinted remotely via :func:`_remote_path_fingerprint`;
+    ``storage_options`` authenticates those calls but never enters the result.
     """
     if path_value is None:
         return None
     if not isinstance(path_value, (str, Path)):
         path_value = str(path_value)
     if is_remote_url(path_value):
-        return _remote_path_fingerprint(str(path_value))
+        return _remote_path_fingerprint(str(path_value), storage_options)
     path = Path(path_value)
     if not path.exists():
         return {"path": str(path), "kind": "missing"}
@@ -189,6 +200,7 @@ def _step_fingerprint(
     node: DAGNode,
     pipeline_inputs: dict[str, Any],
     input_declarations: dict[str, Any],
+    storage_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Content fingerprint of a single step's definition.
 
@@ -203,12 +215,12 @@ def _step_fingerprint(
     referenced = _referenced_pipeline_inputs(node)
     resolved_inputs = {name: pipeline_inputs.get(name) for name in sorted(referenced)}
     pipeline_input_paths = {
-        name: _path_fingerprint(resolved_inputs[name])
+        name: _path_fingerprint(resolved_inputs[name], storage_options)
         for name in sorted(referenced)
         if getattr(input_declarations.get(name), "fingerprint_contents", False)
     }
     param_paths = {
-        name: _path_fingerprint(node.resolved_params.get(name))
+        name: _path_fingerprint(node.resolved_params.get(name), storage_options)
         for name, declaration in sorted(node.spec.params.items())
         if getattr(declaration, "fingerprint_contents", False)
     }
@@ -248,6 +260,8 @@ def _step_upstream(dag: PipelineDAG) -> dict[str, set[str]]:
 def compute_step_hashes(
     dag: PipelineDAG,
     pipeline_inputs: dict[str, Any] | None = None,
+    *,
+    storage_options: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Per-step Merkle hashes used for content-addressed checkpoint validation.
 
@@ -267,7 +281,9 @@ def compute_step_hashes(
     hashes: dict[str, str] = {}
     for step_id in dag.topological_order:
         node = dag.nodes[step_id]
-        fingerprint = _step_fingerprint(node, pipeline_inputs, input_declarations)
+        fingerprint = _step_fingerprint(
+            node, pipeline_inputs, input_declarations, storage_options
+        )
         parents = sorted(p for p in upstream.get(step_id, set()) if p in hashes)
         parent_hashes = [hashes[p] for p in parents]
         payload = json.dumps(
