@@ -1,0 +1,44 @@
+# Per-user run configuration for aa-recipe (EXAMPLE).
+#
+# Storage locations and cloud credentials are environment-specific, so they live
+# here rather than in the shared, portable recipe. Copy this file to one of the
+# auto-discovered locations, edit it for your environment, and then just run:
+#
+#   aa-recipe run processing_levels_pipeline_gcs.yaml
+#
+# Auto-discovered locations (first found wins; only one file is loaded):
+#   1. --config <path>                        (explicit flag)
+#   2. $AA_RECIPE_CONFIG                      (explicit path via env var)
+#   3. <recipe_dir>/<recipe_stem>.config.yaml (PER-RECIPE — e.g. running
+#      processing_levels_pipeline_gcs.yaml picks up
+#      processing_levels_pipeline_gcs.config.yaml from the recipe's folder;
+#      use this when recipes in the same directory need different buckets)
+#   4. ./aa-recipe.config.yaml                (generic shared defaults, cwd)
+#   5. ~/.config/aa-recipe/config.yaml
+# CLI flags override these values; these values override the recipe's own
+# input defaults.
+#
+# Keep real configs out of version control: *.config.yaml is git-ignored
+# (these *.config.example.yaml templates stay tracked).
+
+# Checkpoint cache + exe_temp scratch may live in a bucket (low-disk mode).
+output_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/runs/hb1603/recipe_cache
+temp_dir:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/runs/hb1603/exe_temp
+
+# outputs_dir must stay LOCAL for now: calibration artifacts and images are
+# written through pathlib and cannot target object storage yet.
+outputs_dir: ./outputs
+
+# fsspec storage options for remote paths. Leave commented for Application
+# Default Credentials (the usual case on a Cloud Workstation). Only set this for
+# non-default credentials, e.g. a service-account token file.
+# storage_options:
+#   token: /path/to/service-account.json
+
+# Optional: per-user defaults for recipe INPUTS (override the recipe's defaults).
+# Handy for pointing raw/cal/line inputs at your own bucket without editing the
+# shared recipe. CLI --input NAME=VALUE still overrides these.
+inputs:
+  raw_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/raw
+  # cal_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/calibration
+  # line_file_path:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/line_files/your_line_file.csv

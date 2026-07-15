@@ -46,6 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and deleted before the next — local disk holds ~1 raw file at a time, so a
   survey too large for the workstation disk can still be processed. New
   `example_recipes/gcs_bucket_example.yaml` demonstrates the flow.
+- Per-user run-config file (`aa_recipe_manager.config`): the `run` command reads
+  `output_dir`, `temp_dir`, `outputs_dir`, `storage_options`, and input defaults
+  from a git-ignored config file so environment-specific bucket paths stay out
+  of the shared recipe. Auto-discovery (first found wins): `--config PATH` >
+  `$AA_RECIPE_CONFIG` > per-recipe `<recipe_stem>.config.yaml` beside the recipe
+  (lets recipes sharing a directory target different buckets) > generic
+  `./aa-recipe.config.yaml` > `~/.config/aa-recipe/config.yaml`. Value
+  precedence: CLI flag > config file > recipe default > built-in. See
+  `example_recipes/aa-recipe.config.example.yaml`.
 - Optional filename-datetime filtering for provided raw folders
   (`file_time_start` / `file_time_end` on `initial_setup` and
   `generate_standardized_cal_mapping`): restrict processing to files whose

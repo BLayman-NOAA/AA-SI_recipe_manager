@@ -9,7 +9,7 @@ from typing import Any
 
 import click
 
-from aa_recipe_manager import api
+from aa_recipe_manager import api, config
 from aa_recipe_manager.executor.checkpoint import DEFAULT_OUTPUT_ROOT
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -374,13 +374,27 @@ class _CLIProgress:
     help="Executor backend (only 'sequential' is implemented in Stage 6).",
 )
 @click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Per-user run config file (output/temp/outputs dirs, storage_options, "
+        "input defaults). Auto-discovered when omitted: "
+        "<recipe_stem>.config.yaml next to the recipe (per-recipe), then "
+        "./aa-recipe.config.yaml, then ~/.config/aa-recipe/config.yaml "
+        "(or $AA_RECIPE_CONFIG). CLI flags override the config; the config "
+        "overrides recipe defaults."
+    ),
+)
+@click.option(
     "--output-dir",
-    default=f"./{DEFAULT_OUTPUT_ROOT}",
-    show_default=True,
+    default=None,
     help=(
         "Directory for serialized step outputs and checkpoints. May be a local "
         "path or a gs:// URL (requires the 'gcs' extra; credentials via "
-        "Application Default Credentials)."
+        "Application Default Credentials). Falls back to the config file's "
+        f"output_dir, then './{DEFAULT_OUTPUT_ROOT}'."
     ),
 )
 @click.option(
@@ -473,7 +487,8 @@ class _CLIProgress:
 def run_cmd(
     recipe: str,
     executor: str,
-    output_dir: str,
+    config_path: str | None,
+    output_dir: str | None,
     outputs_dir: str | None,
     temp_dir: str | None,
     implementation: str | None,
@@ -511,14 +526,31 @@ def run_cmd(
         name, _, value = item.partition("=")
         parsed_inputs[name.strip()] = value.strip()
 
+    # Per-user run config supplies storage locations and input defaults that are
+    # too environment-specific for the portable recipe. Precedence for every
+    # value is: explicit CLI flag > config file > recipe default > built-in.
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if run_config.source is not None:
+        click.echo(f"Using run config: {run_config.source}")
+
+    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    outputs_dir = outputs_dir or run_config.outputs_dir
+    temp_dir = temp_dir or run_config.temp_dir
+    # CLI --input wins over config inputs, which win over recipe defaults.
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
     try:
         result = api.execute(
             recipe,
-            inputs=parsed_inputs or None,
+            inputs=merged_inputs or None,
             executor=executor,
             output_dir=output_dir,
             outputs_dir=outputs_dir,
             temp_dir=temp_dir,
+            storage_options=run_config.storage_options,
             implementation_override=implementation,
             force=force,
             no_checkpoints=no_checkpoints,
