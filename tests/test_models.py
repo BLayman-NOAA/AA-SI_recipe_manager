@@ -313,7 +313,7 @@ def test_recipe_full():
             "output_dir": InputDeclaration(type="path", default="./output"),
         },
         steps=[
-            Step(id="open_raw", op="open_raw_files"),
+            Step(id="open_raw", op="read_raw_files"),
             Step(
                 id="calibrate",
                 op="compute_sv",
@@ -498,6 +498,7 @@ def test_provenance():
         recipe_version="1.0.0",
         timestamp=datetime(2026, 4, 17, tzinfo=timezone.utc),
         python_version="3.12.3",
+        python_version_number="3.12.3",
         os_info="Windows-10",
         resolved_steps={
             "compute_sv": ResolvedStepInfo(

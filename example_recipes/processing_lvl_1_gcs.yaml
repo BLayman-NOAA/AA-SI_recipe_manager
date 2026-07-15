@@ -1,0 +1,116 @@
+# Processing Level 1 (GCS) - Raw Ingest and Calibration Extraction
+#
+# GCS-bucket variant of processing_lvl_1.yaml for the "data already in a bucket"
+# use case (no NCEI download). raw_input_folder / cal_input_folder may be gs://
+# URLs; raw files are downloaded one at a time to local scratch, converted to
+# zarr intermediates (written to --temp-dir, which may itself be a bucket), and
+# the local copy deleted before the next file.
+#
+# Unlike the NCEI-download pipeline, there is no query stage to restrict the file
+# set by time, so this variant wires the optional file_time_start / file_time_end
+# window through to initial_setup and generate_standardized_cal_mapping. The
+# filter is name-based (D{YYYYMMDD}-T{HHMMSS}), so out-of-window remote files are
+# never downloaded.
+
+recipe:
+  name: "processing_lvl_1_gcs"
+  description: "Initial setup through calibration parameter extraction (gs:// inputs)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+  cal_input_folder:
+    type: path
+    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK60"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder".
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime restricting processing to raw files whose
+      filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound.
+      Applied to both the processed file set and the calibration scan; leave
+      unset to process every file.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+  ping_time_chunk:
+    type: int
+    default: 1000
+    description: >
+      Chunk length along ping_time for the combined EchoData (and therefore its
+      zarr checkpoint). Larger values = fewer, bigger objects = faster gs://
+      checkpoint writes, at the cost of more RAM per chunk.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  - id: read_raw
+    op: read_raw_files
+    inputs:
+      raw_file_paths: ${initial_setup.raw_file_paths}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: true
+      intermediate_format: "zarr"
+
+  - id: combine_raw
+    op: combine_raw_files
+    checkpoint: always
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+    params:
+      ping_time_chunk: ${inputs.ping_time_chunk}
+
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}

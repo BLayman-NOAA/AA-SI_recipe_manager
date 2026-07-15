@@ -78,11 +78,12 @@ steps:
       mvbs_with_lines: ${add_line_overlay.ds}
       overlay_line_var: "sw_dive_profile_fit"
 
-  # ML wired to processing outputs.
+  # ML wired to processing outputs. echodata comes from combine_raw and the
+  # pre-sparse-mask Sv (sv_clean_unmasked) from remove_noise; machine_learning
+  # computes its own per-cell statistics internally.
   - include: machine_learning.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
-      sv_clean: ${mask_sparse.ds_Sv}
-      echodata: ${open_raw.echodata}
-      sv_cell_stats: ${compute_cell_stats.ds_Sv}
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      echodata: ${combine_raw.echodata}
       overlay_line_var: "sw_dive_profile"

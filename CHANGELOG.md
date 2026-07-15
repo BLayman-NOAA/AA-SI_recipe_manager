@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- EchoData checkpoints to a remote (`gs://`) cache were silently written to a
+  local relative directory instead of the bucket (echopype 0.11.1's
+  `EchoData.to_zarr` hands the protocol-stripped fsspec mapper root to
+  `xarray.to_zarr`). The checkpoint writer now streams the EchoData's xarray
+  datatree directly to the bucket — the combined survey is never staged on
+  local disk — with a local-write-then-upload fallback for EchoData stand-ins
+  without a datatree. `xr.Dataset`/`DataArray` remote checkpoints were already
+  correct (they use `xarray.to_zarr` with `storage_options`).
+
 ### Added
 - Optional Google Cloud Storage backing for the three run storage locations —
   the checkpoint cache (`--output-dir`), the `exe_temp` scratch dir

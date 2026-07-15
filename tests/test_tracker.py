@@ -26,7 +26,7 @@ MINIMAL_RECIPE = {
     "steps": [
         {"id": "query_ncei", "op": "query_ncei_data", "params": {"file_time_start": "2016-01-01"}},
         {"id": "download_raw", "op": "download_ncei_data", "params": {"output_dir": "/tmp/raw"}},
-        {"id": "open_raw", "op": "open_raw_files", "params": {"sonar_model": "EK60"}},
+        {"id": "open_raw", "op": "read_raw_files", "params": {"sonar_model": "EK60"}},
     ],
 }
 

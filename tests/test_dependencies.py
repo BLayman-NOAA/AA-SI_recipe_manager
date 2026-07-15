@@ -57,7 +57,7 @@ FOUR_STEP_RECIPE = """\
         params:
           output_dir: ${inputs.raw_input_folder}
       - id: setup_files
-        op: setup_raw_files
+        op: initial_setup
         depends_on: [download_raw]
         params:
           raw_input_folder: ${inputs.raw_input_folder}
@@ -65,7 +65,7 @@ FOUR_STEP_RECIPE = """\
           sv_output_folder: "./sv_files"
           output_logs_folder: "./logs"
       - id: open_raw
-        op: open_raw_files
+        op: read_raw_files
         inputs:
           raw_file_paths: ${setup_files.raw_file_paths}
         params:

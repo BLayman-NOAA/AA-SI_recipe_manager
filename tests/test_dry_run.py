@@ -41,7 +41,7 @@ FOUR_STEP_RECIPE = """\
         params:
           output_dir: ${inputs.raw_input_folder}
       - id: setup_files
-        op: setup_raw_files
+        op: initial_setup
         depends_on: [download_raw]
         params:
           raw_input_folder: ${inputs.raw_input_folder}
@@ -49,7 +49,7 @@ FOUR_STEP_RECIPE = """\
           sv_output_folder: "./sv_files"
           output_logs_folder: "./logs"
       - id: open_raw
-        op: open_raw_files
+        op: read_raw_files
         inputs:
           raw_file_paths: ${setup_files.raw_file_paths}
         params:
@@ -162,7 +162,7 @@ class TestDryRunReport:
         report = engine.run(dag, check_versions=False)
         ops = {s.op for s in report.resolved_steps}
         assert "query_ncei_data" in ops
-        assert "open_raw_files" in ops
+        assert "read_raw_files" in ops
 
     def test_step_info_version_status_no_impl_for_custom_steps(self, tmp_path):
         dag = _build_four_step_dag(tmp_path)
@@ -233,7 +233,7 @@ class TestDryRunPublicAPI:
                                     file_time_start: "2016-07-25T20:58"
                                     file_time_end: "2016-07-25T21:45"
                             - id: setup
-                                op: setup_raw_files
+                                op: initial_setup
                                 params:
                                     raw_input_folder: "./raw"
                                     netcdf_output_folder: ${inputs.netcdf_output_folder}

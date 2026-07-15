@@ -61,13 +61,13 @@ FOUR_STEP_RECIPE = """\
         params:
           output_dir: ${inputs.raw_input_folder}
       - id: setup_files
-        op: setup_raw_files
+        op: initial_setup
         depends_on: [download_raw]
         params:
           raw_input_folder: ${inputs.raw_input_folder}
           netcdf_output_folder: ${inputs.netcdf_output_folder}
       - id: open_raw
-        op: open_raw_files
+        op: read_raw_files
         inputs:
           raw_file_paths: ${setup_files.raw_file_paths}
         params:
@@ -507,7 +507,7 @@ class TestNotebookGeneration:
                                 params:
                                     output_dir: "./raw_file_inputs"
                             - id: setup_files
-                                op: setup_raw_files
+                                op: initial_setup
                                 params:
                                     raw_input_folder: ${download_raw.download_dir}
                                     netcdf_output_folder: "./NetCDF-files"

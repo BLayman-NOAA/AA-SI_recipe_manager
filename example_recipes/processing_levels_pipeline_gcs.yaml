@@ -1,0 +1,136 @@
+# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket)
+#
+# Fully-bucket variant of processing_levels_pipeline.yaml for the "raw data
+# already lives in a GCS bucket" use case. There is NO NCEI download stage
+# (processing_lvl_0): raw, calibration, and line inputs are read straight from
+# gs:// URLs. Raw files are downloaded one at a time to local scratch, converted
+# to zarr intermediates, and deleted before the next file — the workstation only
+# ever holds ~1 raw file at a time.
+#
+# Fill in the three gs:// URLs below (or override them with --input).
+#
+# Authentication: gcsfs uses Application Default Credentials by default (e.g.
+# `gcloud auth application-default login`, or a Cloud Workstation's identity).
+#
+# Requirements:
+#   pip install -e AA-SI_recipe_manager[gcs] AA-SI_Utils[gcs] AA-SI_calibration[gcs]
+#
+# Run (low-disk survey — cache + scratch in the bucket, zarr intermediates so
+# local disk stays at ~1 raw file for the whole run):
+#   aa-recipe run processing_levels_pipeline_gcs.yaml \
+#     --output-dir gs://YOUR_BUCKET/runs/hb1603/recipe_cache \
+#     --temp-dir   gs://YOUR_BUCKET/runs/hb1603/exe_temp \
+#     --outputs-dir ./outputs
+#
+# Run (simple test — local cache + scratch; raws still stream from the bucket):
+#   aa-recipe run processing_levels_pipeline_gcs.yaml --output-dir ./recipe_cache
+#
+# NOTE: --outputs-dir must stay LOCAL for now (calibration artifacts and images
+# are written through pathlib); the checkpoint cache and exe_temp may be gs://.
+
+recipe:
+  name: "processing_levels_pipeline_gcs"
+  description: "HB1603 processing levels pipeline reading all inputs from a GCS bucket."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/raw"
+    # Content-fingerprint the (remote) folder so the cache key tracks the file
+    # set. Costs one list call per run; authenticated via storage_options.
+    fingerprint_contents: true
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  # Optional filename-datetime window (matches the original HB1603 window).
+  # Leave unset / override to process the whole bucket folder.
+  file_time_start:
+    type: str
+    default: "2016-07-25T20:58"
+  file_time_end:
+    type: str
+    default: "2016-07-25T21:45"
+  range_bin:
+    type: str
+    default: "20m"
+  ping_time_bin:
+    type: str
+    default: "20s"
+
+steps:
+
+  # No processing_lvl_0 (NCEI download): the raw files already live in the
+  # bucket, so level 1 reads raw_input_folder (a gs:// URL) directly.
+  - include: processing_lvl_1_gcs.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  - include: processing_lvl_2.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - include: processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  - include: processing_lvl_4.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}

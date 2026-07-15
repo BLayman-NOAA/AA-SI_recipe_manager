@@ -745,13 +745,45 @@ def _serialize_output(
                 )
 
         def _write_echodata_remote() -> None:
-            value.to_zarr(
-                save_path=target.url,
-                overwrite=True,
-                compress=False,
-                zarr_format=2,
-                output_storage_options=storage_options,
-            )
+            # echopype's EchoData.to_zarr cannot write to a remote store: its
+            # save_file() hands the protocol-stripped fsspec mapper root
+            # (e.g. "bucket/key.zarr") to xarray.to_zarr with no filesystem, so a
+            # gs:// save_path silently becomes a LOCAL relative write.
+            #
+            # The combined EchoData is the whole survey, so we must NOT stage it
+            # on local disk. echopype backs EchoData with an xarray DataTree;
+            # writing that tree directly with xarray streams it chunk-by-chunk
+            # from the (lazy) source stores straight to the bucket — bounded
+            # memory, no local copy.
+            tree = getattr(value, "_tree", None)
+            if tree is not None:
+                # consolidated=True writes a single .zmetadata per group so the
+                # downstream open_converted reopens with one request instead of
+                # listing every key (much faster over high-latency object storage).
+                tree.to_zarr(
+                    target.url,
+                    mode="w",
+                    zarr_format=2,
+                    storage_options=xr_storage_options,
+                    consolidated=True,
+                )
+                return
+            # Fallback for EchoData-likes without a datatree (e.g. test stubs):
+            # write to local scratch, then upload the directory.
+            import tempfile
+
+            scratch = Path(tempfile.mkdtemp(prefix="aa_recipe_echodata_"))
+            try:
+                local_store = scratch / target.name
+                value.to_zarr(
+                    save_path=local_store,
+                    overwrite=True,
+                    compress=False,
+                    zarr_format=2,
+                )
+                target.fs.put(str(local_store), target.fs_path, recursive=True)
+            finally:
+                shutil.rmtree(scratch, ignore_errors=True)
 
         _write_zarr(target, _write_echodata_local, _write_echodata_remote)
         return target, "echodata_zarr"

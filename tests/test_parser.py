@@ -33,7 +33,7 @@ MINIMAL_RECIPE = """\
     inputs: {}
     steps:
       - id: open_raw
-        op: open_raw_files
+        op: read_raw_files
         params:
           netcdf_output_folder: "./out"
           sonar_model: "EK60"
@@ -74,7 +74,7 @@ class TestLoadRecipe:
               schema_version: "1"
             steps:
               - id: open_raw
-                op: open_raw_files
+                op: read_raw_files
                 params:
                   netcdf_output_folder: ./out
                   sonar_model: EK60
@@ -114,7 +114,7 @@ class TestLoadRecipe:
               schema_version: "1"
             steps:
               - id: open_raw
-                op: open_raw_files
+                op: read_raw_files
                 params:
                   netcdf_output_folder: "./out"
                   sonar_model: "EK60"
@@ -145,7 +145,7 @@ class TestLoadRecipe:
                 default: "<Your Name>"
             steps:
               - id: open_raw
-                op: open_raw_files
+                op: read_raw_files
                 params:
                   netcdf_output_folder: "./out"
                   sonar_model: "EK60"
@@ -209,7 +209,7 @@ class TestRecipeIncludes:
                 type: path
             steps:
               - id: preprocess
-                op: setup_raw_files
+                op: initial_setup
                 params:
                   raw_input_folder: ${inputs.raw_folder}
                   netcdf_output_folder: ${inputs.raw_folder}/netcdf

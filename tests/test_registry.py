@@ -231,7 +231,9 @@ class TestBuiltinLoader:
         reg = load_builtin_registry()
         spec = reg.get_spec("embed_clustering_results")
 
-        assert spec.inputs["clustering_results"].type == "dict"
+        # clustering_results is an xarray Dataset (checkpoints as Zarr), not a
+        # bare dict; a collected list is accepted via many=True.
+        assert spec.inputs["clustering_results"].type == "Dataset"
         assert spec.inputs["clustering_results"].many is True
         assert "ds_Sv" not in spec.inputs
         assert spec.outputs["gridded_results"].type == "DataArray"
@@ -363,6 +365,8 @@ class TestBuiltinLoader:
             "clustering_results": "['clustering_results']",
             "clustering_model": "['clustering_model']",
             "background_label": "['background_label']",
+            # map_over scaffolding: sorted non-noise cluster labels for fan-out.
+            "cluster_labels": "['cluster_labels']",
         }
 
         embed_impl = reg.get_implementation("embed_clustering_results")

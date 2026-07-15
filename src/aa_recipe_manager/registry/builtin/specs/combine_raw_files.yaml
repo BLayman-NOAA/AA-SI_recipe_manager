@@ -14,7 +14,19 @@ outputs:
   echodata:
     type: EchoData
     description: Combined echopype EchoData object
-params: {}
+params:
+  ping_time_chunk:
+    type: int
+    required: false
+    default: 1000
+    description: >
+      Target chunk length along ping_time for the combined EchoData, which
+      directly sets the chunking of the downstream zarr checkpoint. Larger
+      values mean fewer, bigger objects — faster remote (gs://) checkpoint
+      writes and fewer read requests, at the cost of more RAM per computed
+      chunk and coarser lazy-read granularity for windowed access. 1000 is a
+      balanced default; try 2000-4000 for bucket-backed caches if the combined
+      checkpoint write is slow and memory allows.
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.combine_raw_stores
