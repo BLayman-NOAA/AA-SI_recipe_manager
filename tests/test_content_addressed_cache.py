@@ -130,21 +130,29 @@ def test_artifacts_present_tristate(tmp_path):
     outputs = StorageLocation.parse(tmp_path / "outputs")
     manager = CheckpointManager(tmp_path / "ckpt", {"plot": "abcd1234"})
 
-    # None recorded (pre-feature) -> unverifiable -> absent.
-    manager.save_marker("plot")
-    assert _artifacts_present(manager, "plot", outputs) is False
+    def present(is_side_effect):
+        return _artifacts_present(
+            manager, "plot", outputs, is_side_effect=is_side_effect
+        )
 
-    # [] recorded (ran, emitted nothing) -> present.
+    # None recorded (pre-feature) -> unverifiable -> absent for both.
+    manager.save_marker("plot")
+    assert present(is_side_effect=True) is False
+    assert present(is_side_effect=False) is False
+
+    # [] recorded: a sink should have emitted something (recording unavailable)
+    # -> absent; a data step may emit nothing -> present.
     manager.save_marker("plot", artifacts=[])
-    assert _artifacts_present(manager, "plot", outputs) is True
+    assert present(is_side_effect=True) is False
+    assert present(is_side_effect=False) is True
 
     # Recorded path present iff the file exists under the outputs dir.
     manager.save_marker("plot", artifacts=["images/plot.png"])
-    assert _artifacts_present(manager, "plot", outputs) is False
+    assert present(is_side_effect=True) is False
     img = tmp_path / "outputs" / "images" / "plot.png"
     img.parent.mkdir(parents=True, exist_ok=True)
     img.write_bytes(b"x")
-    assert _artifacts_present(manager, "plot", outputs) is True
+    assert present(is_side_effect=True) is True
 
 
 # ---------------------------------------------------------------------------

@@ -24,8 +24,11 @@ they are absent from the current run's outputs directory, even on a cache hit.
   artifact-emitting step, data steps included.
 - Steps now record the artifact paths they wrote (relative to the outputs dir)
   in their checkpoint/marker sidecar (`artifacts` field), so a later run can
-  verify presence before skipping. Pre-existing sidecars have no such field and
-  regenerate once (self-healing).
+  verify presence before skipping. A sidecar with no recorded artifacts —
+  either a pre-feature entry (`None`) or an empty list from an older plotting
+  lib that didn't report its paths — is treated as unverifiable for a sink /
+  side-effect step, so it regenerates and self-heals. A non-sink data step may
+  legitimately emit nothing, so for it an empty list means "present".
 
 ### Changed — tiered content-addressed cache (Stage 7)
 

@@ -39,8 +39,7 @@ inputs:
   raw_input_folder:
     type: path
     default: "gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/raw"
-    # Content-fingerprint the (remote) folder so the cache key tracks the file
-    # set. Costs one list call per run; authenticated via storage_options.
+    # Content-fingerprint the (remote) folder so the cache key tracks the file set
     fingerprint_contents: true
   cal_input_folder:
     type: path
@@ -48,7 +47,6 @@ inputs:
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
-  # Optional filename-datetime window (matches the original HB1603 window).
   # Leave unset / override to process the whole bucket folder.
   file_time_start:
     type: str
@@ -65,8 +63,6 @@ inputs:
 
 steps:
 
-  # No processing_lvl_0 (NCEI download): the raw files already live in the
-  # bucket, so level 1 reads raw_input_folder (a gs:// URL) directly.
   - include: processing_lvl_1_gcs.yaml
     input_overrides:
       raw_input_folder: ${inputs.raw_input_folder}

@@ -490,23 +490,29 @@ def _artifacts_present(
     checkpoints: CheckpointStore | CheckpointManager,
     step_id: str,
     outputs_loc: StorageLocation | None,
+    *,
+    is_side_effect: bool,
 ) -> bool:
     """True when a step's recorded artifacts all exist under the outputs dir.
 
-    Tri-state on the recorded list (see ``_StepCacheMeta.artifacts``):
+    Interpretation of the recorded list (see ``_StepCacheMeta.artifacts``):
 
-    * ``None`` — the entry predates artifact recording (unverifiable); treated
-      as *absent* so ``if-missing`` regenerates once and self-heals.
-    * ``[]`` — the step ran and emitted nothing; verifiably *present*.
+    * ``None`` — the entry predates artifact recording (unverifiable); *absent*
+      so ``if-missing`` regenerates once and self-heals.
+    * ``[]`` — nothing was captured. A side-effect step (sink / no-output)
+      exists to emit an artifact, so an empty record means recording was
+      unavailable (e.g. an older plotting lib that didn't report its paths) —
+      *absent* so it regenerates. A non-sink data step may legitimately emit
+      nothing, so for it an empty record is *present* (don't recompute forever).
     * non-empty — present iff every listed path exists under ``outputs_loc``.
 
     A missing outputs location is unverifiable and treated as absent.
     """
     recorded = checkpoints.recorded_artifacts(step_id)
-    if recorded is None:
-        return False
     if not recorded:
-        return True
+        # None (pre-feature) or [] (nothing captured). Present only for a
+        # non-sink step that recorded an explicit empty list.
+        return recorded == [] and not is_side_effect
     if outputs_loc is None:
         return False
     return all((outputs_loc / rel).exists() for rel in recorded)
@@ -558,7 +564,9 @@ def _should_regenerate(
     if attr == "always":
         return True
     if attr == "if-missing":
-        return not _artifacts_present(checkpoints, step_id, outputs_loc)
+        return not _artifacts_present(
+            checkpoints, step_id, outputs_loc, is_side_effect=is_side_effect
+        )
     return False
 
 

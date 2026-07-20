@@ -187,6 +187,25 @@ def _install_helper_module() -> types.ModuleType:
         _write_artifact()
         return None
 
+    def plotting_sink_norecord(value: int) -> None:
+        """Sink that writes an image but does NOT record it on the artifact
+        sink — mimics an older plotting lib without the side-channel."""
+        from pathlib import Path
+
+        from aa_recipe_manager.executor.runtime_context import (
+            get_execution_context,
+        )
+
+        _record("plotting_sink_norecord", value=value)
+        ctx = get_execution_context()
+        artifacts_dir = getattr(ctx, "artifacts_dir", None)
+        if artifacts_dir is not None:
+            step_id = getattr(ctx, "step_id", None) or "artifact"
+            target = Path(str(artifacts_dir)) / "images" / f"{step_id}.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"fake image bytes")
+        return None
+
     def data_with_artifact(x: int) -> int:
         """Non-sink step that returns data *and* writes a side-effect artifact."""
         _record("data_with_artifact", x=x)
@@ -218,6 +237,7 @@ def _install_helper_module() -> types.ModuleType:
     module.sink_step = sink_step  # type: ignore[attr-defined]
     module.sink_with_label = sink_with_label  # type: ignore[attr-defined]
     module.plotting_sink = plotting_sink  # type: ignore[attr-defined]
+    module.plotting_sink_norecord = plotting_sink_norecord  # type: ignore[attr-defined]
     module.data_with_artifact = data_with_artifact  # type: ignore[attr-defined]
     module.boom = boom  # type: ignore[attr-defined]
     module.make_container = make_container  # type: ignore[attr-defined]
@@ -456,15 +476,19 @@ def _sink_after_chain_dag() -> PipelineDAG:
 
 
 def _regen_pipeline_dag(
-    *, sink_regen: str | None = None, data_regen: str | None = None
+    *,
+    sink_regen: str | None = None,
+    data_regen: str | None = None,
+    sink_callable: str = "plotting_sink",
 ) -> PipelineDAG:
     """``compute(data_with_artifact) -> plot(plotting_sink, sink)``.
 
     Both steps write an ``images/<step_id>.png`` artifact. ``compute`` is a
     non-sink data step (regenerating it recomputes) and ``plot`` is a sink
     (regenerating it only re-renders). Each step's ``regenerate`` attribute is
-    configurable so tests can exercise every regeneration mode.
-    """
+    configurable so tests can exercise every regeneration mode. ``sink_callable``
+    selects the sink implementation (e.g. ``plotting_sink_norecord`` to mimic an
+    older plotting lib that writes an image but records no path)."""
     compute_spec = Spec(
         op="data_with_artifact",
         description="data step that also writes an artifact",
@@ -487,7 +511,7 @@ def _regen_pipeline_dag(
     plot_impl = Implementation(
         op="plotting_sink",
         key="default",
-        callable_path=f"{_HELPER_MODULE_NAME}.plotting_sink",
+        callable_path=f"{_HELPER_MODULE_NAME}.{sink_callable}",
         dependency=_dep(),
     )
     compute = DAGNode(
@@ -1168,6 +1192,30 @@ class TestRegenerate:
         assert helper_module.call_log == []
         assert "compute" not in result.executed_steps
         assert "plot" not in result.executed_steps
+
+    def test_sink_with_empty_record_does_not_silently_skip(
+        self, helper_module, tmp_path
+    ):
+        # A sink whose plotting lib doesn't report its paths records an empty
+        # artifact list. That must be treated as unverifiable (regenerate), not
+        # "emitted nothing" (skip) — otherwise the image is never produced even
+        # when it is missing from the outputs dir.
+        dag = _regen_pipeline_dag(
+            sink_regen="if-missing", sink_callable="plotting_sink_norecord"
+        )
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        # First run recorded an empty artifact list for the sink.
+        helper_module.call_log.clear()
+
+        second = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        # The sink re-runs rather than skipping on the empty record.
+        assert "plot" in second.executed_steps
+        assert [n for n, _ in helper_module.call_log] == ["plotting_sink_norecord"]
 
     def test_invalid_regenerate_mode_raises(self, helper_module, tmp_path):
         dag = _regen_pipeline_dag()
