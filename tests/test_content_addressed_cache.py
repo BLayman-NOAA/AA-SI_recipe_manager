@@ -90,6 +90,64 @@ def test_artifact_urls_resolve(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Recorded user-facing artifacts (regenerate support)
+# ---------------------------------------------------------------------------
+
+
+def test_marker_records_and_reads_artifacts(tmp_path):
+    manager = CheckpointManager(tmp_path / "ckpt", {"plot": "abcd1234"})
+    manager.save_marker("plot", artifacts=["images/plot.png"])
+    meta_file = _entry_dir(tmp_path / "ckpt", "plot", "abcd1234") / META_FILENAME
+    assert json.loads(meta_file.read_text())["artifacts"] == ["images/plot.png"]
+    assert manager.recorded_artifacts("plot") == ["images/plot.png"]
+
+
+def test_marker_without_artifacts_is_unverifiable(tmp_path):
+    # A pre-feature marker (no artifacts recorded) reads back as None so
+    # if-missing regenerates once and self-heals.
+    manager = CheckpointManager(tmp_path / "ckpt", {"plot": "abcd1234"})
+    manager.save_marker("plot")
+    assert manager.recorded_artifacts("plot") is None
+
+
+def test_checkpoint_records_artifacts(tmp_path):
+    manager = CheckpointManager(tmp_path / "ckpt", {"s": "abcd1234"})
+    manager.save("s", {"v": {"k": 1}}, artifacts=["images/s.png"])
+    assert manager.recorded_artifacts("s") == ["images/s.png"]
+
+
+def test_recorded_artifacts_none_on_hash_mismatch(tmp_path):
+    manager = CheckpointManager(tmp_path / "ckpt", {"plot": "abcd1234"})
+    manager.save_marker("plot", artifacts=["images/plot.png"])
+    stale = CheckpointManager(tmp_path / "ckpt", {"plot": "ffff9999"})
+    assert stale.recorded_artifacts("plot") is None
+
+
+def test_artifacts_present_tristate(tmp_path):
+    from aa_recipe_manager.executor.checkpoint import _artifacts_present
+    from aa_recipe_manager.storage import StorageLocation
+
+    outputs = StorageLocation.parse(tmp_path / "outputs")
+    manager = CheckpointManager(tmp_path / "ckpt", {"plot": "abcd1234"})
+
+    # None recorded (pre-feature) -> unverifiable -> absent.
+    manager.save_marker("plot")
+    assert _artifacts_present(manager, "plot", outputs) is False
+
+    # [] recorded (ran, emitted nothing) -> present.
+    manager.save_marker("plot", artifacts=[])
+    assert _artifacts_present(manager, "plot", outputs) is True
+
+    # Recorded path present iff the file exists under the outputs dir.
+    manager.save_marker("plot", artifacts=["images/plot.png"])
+    assert _artifacts_present(manager, "plot", outputs) is False
+    img = tmp_path / "outputs" / "images" / "plot.png"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"x")
+    assert _artifacts_present(manager, "plot", outputs) is True
+
+
+# ---------------------------------------------------------------------------
 # Commit protocol: the sidecar is the commit point
 # ---------------------------------------------------------------------------
 

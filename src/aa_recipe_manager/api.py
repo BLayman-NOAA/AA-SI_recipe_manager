@@ -580,7 +580,7 @@ def execute(
     force: bool = False,
     no_checkpoints: bool = False,
     skip_sinks: bool = False,
-    regenerate_outputs: bool = False,
+    regenerate: str = "auto",
     outputs_dir: str | Path | None = None,
     temp_dir: str | Path | None = None,
     log_destination: str = "file",
@@ -617,12 +617,15 @@ def execute(
         Skip both checkpoint reads and writes for this run.
     skip_sinks:
         Skip steps marked ``sink: true`` in their spec.
-    regenerate_outputs:
-        Force side-effect steps (sinks / steps with no declared outputs, e.g.
-        plotting and logging) to re-run even when their cached marker matches.
-        Use this when a checkpoint cache was shared without its on-disk
-        artifacts so the plots/logs are regenerated locally. Has no effect on
-        steps whose outputs are loaded from a data checkpoint.
+    regenerate:
+        Artifact-regeneration mode. ``"auto"`` (default) honors each step's
+        ``regenerate`` attribute (``if-missing`` / ``always`` / ``never``);
+        ``"off"`` ignores those attributes and regenerates nothing; ``"sinks"``
+        forces every sink step to re-run (cheap — upstream loads from cache);
+        ``"all"`` forces every artifact-emitting step, including data steps
+        (which recompute, since the artifact is a side effect of running). Use
+        this when a cache was reused without its on-disk artifacts so the
+        plots/logs are regenerated locally.
     outputs_dir:
         Directory for user-facing outputs (images under ``outputs_dir/images``
         and logs under ``outputs_dir/logs/standard_out.txt``). When ``None``
@@ -720,7 +723,7 @@ def execute(
         force=force,
         no_checkpoints=no_checkpoints,
         skip_sinks=skip_sinks,
-        regenerate_outputs=regenerate_outputs,
+        regenerate=regenerate,
         outputs_dir=outputs_dir,
         temp_dir=temp_dir,
         log_destination=log_destination,

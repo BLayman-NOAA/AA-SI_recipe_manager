@@ -170,6 +170,16 @@ class Step(BaseModel):
     sweep: SweepDeclaration | None = None
     execution: StepExecutionHints | None = None
     checkpoint: Literal["always", "never", "save"] | None = None
+    regenerate: Literal["if-missing", "always", "never"] | None = None
+    """Whether to regenerate this step's user-facing artifacts (plots, logs,
+    reports) when they are absent from the current run's outputs directory.
+
+    ``if-missing`` re-runs the step only when a recorded artifact is missing;
+    ``always`` re-runs every run; unset / ``never`` keeps the cached-skip
+    behavior. Applies to sink steps (cheap: only the render re-runs, upstream
+    loads from cache) and to data steps (the step recomputes, since the artifact
+    is a side effect of running). The run-level ``--regenerate`` mode overrides
+    this per-step value."""
 
 
 class IncludeBlock(BaseModel):

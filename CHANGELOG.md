@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — regenerate missing outputs
+
+A step can now regenerate its user-facing artifacts (plots, logs, reports) when
+they are absent from the current run's outputs directory, even on a cache hit.
+
+- **Per-step `regenerate` attribute** (sibling of `checkpoint:`): `if-missing`
+  re-runs the step only when a recorded artifact is missing; `always` re-runs
+  every run; unset / `never` keeps the cached-skip behavior. Works for sink
+  steps (cheap — upstream loads from cache, only the render re-runs) and data
+  steps (the step recomputes, since the artifact is a side effect of running).
+- **`--regenerate [auto|off|sinks|all]`** (run-level, replaces the removed
+  `--regenerate-outputs` flag / `regenerate_outputs=` API argument): `auto`
+  (default) honors each step's attribute; `off` regenerates nothing; `sinks`
+  forces every sink step (the old flag's behavior); `all` forces every
+  artifact-emitting step, data steps included.
+- Steps now record the artifact paths they wrote (relative to the outputs dir)
+  in their checkpoint/marker sidecar (`artifacts` field), so a later run can
+  verify presence before skipping. Pre-existing sidecars have no such field and
+  regenerate once (self-healing).
+
 ### Changed — tiered content-addressed cache (Stage 7)
 
 **BREAKING (cache layout): all existing checkpoint caches are invalidated.**

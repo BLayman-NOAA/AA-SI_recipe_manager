@@ -85,6 +85,7 @@ steps:
 
   - id: plot_sv_clean
     op: plot_sv_echogram
+    regenerate: if-missing
     inputs:
       ds_Sv: ${remove_noise.ds_Sv}
     params:
@@ -111,6 +112,7 @@ steps:
 
   - id: plot_mvbs
     op: plot_sv_echogram
+    regenerate: if-missing
     inputs:
       ds_Sv: ${add_line_overlay.ds}
       ds_Sv_source: ${mask_sparse.ds_Sv}
@@ -127,10 +129,10 @@ steps:
             color: "red"
             linewidth: 3.5
 
-  - include: processing_lvl_4.yaml
-    input_overrides:
-      mvbs_with_lines: ${add_line_overlay.ds}
-      echodata: ${combine_raw.echodata}
-      overlay_line_var: "sw_dive_profile"
-      sv_clean_unmasked: ${remove_noise.ds_Sv}
-      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+  # - include: processing_lvl_4.yaml
+  #   input_overrides:
+  #     mvbs_with_lines: ${add_line_overlay.ds}
+  #     echodata: ${combine_raw.echodata}
+  #     overlay_line_var: "sw_dive_profile"
+  #     sv_clean_unmasked: ${remove_noise.ds_Sv}
+  #     cell_stats_sv: ${compute_cell_stats.ds_Sv}

@@ -24,6 +24,13 @@ class ExecutionContext:
     #: Must stay a plain picklable dict so future distributed executors can
     #: re-establish the context inside worker tasks.
     storage_options: Mapping[str, Any] | None = None
+    #: Mutable per-step collector for user-facing artifact paths. Ops that write
+    #: files (e.g. plotting via ``render_figure``) append each path *relative to
+    #: ``artifacts_dir``* here; the executor reads it after the step to record
+    #: what was written (see the checkpoint sidecar's ``artifacts`` field). The
+    #: field is frozen but the list object is mutated in place. ``None`` when the
+    #: executor is not collecting (e.g. generated notebooks).
+    artifact_sink: list[str] | None = None
 
 
 _EXECUTION_CONTEXT: ContextVar[ExecutionContext] = ContextVar(
@@ -46,6 +53,7 @@ def execution_context(
     artifacts_dir: str | Path | StorageLocation | None = None,
     temp_dir: str | Path | StorageLocation | None = None,
     storage_options: Mapping[str, Any] | None = None,
+    artifact_sink: list[str] | None = None,
 ) -> Iterator[ExecutionContext]:
     """Temporarily set the recipe execution context for the current task.
 
@@ -73,6 +81,7 @@ def execution_context(
             # Empty dicts confuse xarray/zarr ("provided but unused"); publish
             # None instead so consumers can pass the value straight through.
             storage_options=dict(storage_options) if storage_options else None,
+            artifact_sink=artifact_sink,
         )
     )
     try:

@@ -338,6 +338,23 @@ class TestHelpOutput:
         assert result.exit_code == 0
         assert "checkpoint-format" in result.output
 
+    def test_run_help_lists_regenerate_choices(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--regenerate" in result.output
+        for choice in ("auto", "off", "sinks", "all"):
+            assert choice in result.output
+
+    def test_run_rejects_invalid_regenerate_choice(self, tmp_path):
+        recipe_path = _write_recipe(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["run", str(recipe_path), "--regenerate", "bogus"]
+        )
+        assert result.exit_code != 0
+        assert "bogus" in result.output
+
 
 class TestRunCommandValidation:
     def test_no_checkpoints_conflicts_with_checkpoint_mode(self, tmp_path):

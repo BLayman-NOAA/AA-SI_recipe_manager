@@ -480,21 +480,112 @@ class ExecutionPlan:
     blockers: list[str]
 
 
+#: Run-level artifact-regeneration modes (``--regenerate``). ``auto`` honors
+#: each step's ``regenerate`` attribute; ``off`` disables all regeneration;
+#: ``sinks`` forces every sink step; ``all`` forces every artifact-emitting step.
+REGENERATE_MODES = ("auto", "off", "sinks", "all")
+
+
+def _artifacts_present(
+    checkpoints: CheckpointStore | CheckpointManager,
+    step_id: str,
+    outputs_loc: StorageLocation | None,
+) -> bool:
+    """True when a step's recorded artifacts all exist under the outputs dir.
+
+    Tri-state on the recorded list (see ``_StepCacheMeta.artifacts``):
+
+    * ``None`` — the entry predates artifact recording (unverifiable); treated
+      as *absent* so ``if-missing`` regenerates once and self-heals.
+    * ``[]`` — the step ran and emitted nothing; verifiably *present*.
+    * non-empty — present iff every listed path exists under ``outputs_loc``.
+
+    A missing outputs location is unverifiable and treated as absent.
+    """
+    recorded = checkpoints.recorded_artifacts(step_id)
+    if recorded is None:
+        return False
+    if not recorded:
+        return True
+    if outputs_loc is None:
+        return False
+    return all((outputs_loc / rel).exists() for rel in recorded)
+
+
+def _emits_artifacts(
+    node: DAGNode,
+    checkpoints: CheckpointStore | CheckpointManager,
+    step_id: str,
+) -> bool:
+    """Best-effort test for whether a step produces user-facing artifacts.
+
+    True for sinks/no-output steps, for steps that opt into regeneration with a
+    ``regenerate`` attribute, or for steps whose recorded artifact list is
+    non-empty. Used by ``--regenerate all`` so plain data steps that emit
+    nothing are left cached rather than needlessly recomputed.
+    """
+    if node.spec.sink or not node.spec.outputs:
+        return True
+    if node.step.regenerate is not None:
+        return True
+    return bool(checkpoints.recorded_artifacts(step_id))
+
+
+def _should_regenerate(
+    node: DAGNode,
+    step_id: str,
+    *,
+    mode: str,
+    checkpoints: CheckpointStore | CheckpointManager,
+    outputs_loc: StorageLocation | None,
+) -> bool:
+    """Whether a step must re-run this run to (re)produce its artifacts.
+
+    Resolves the run-level ``mode`` against the per-step ``regenerate``
+    attribute and current artifact presence. ``off`` disables everything;
+    ``all`` forces every artifact-emitting step; ``sinks`` forces sink steps;
+    otherwise the per-step attribute decides (``always`` unconditionally,
+    ``if-missing`` only when a recorded artifact is absent).
+    """
+    if mode == "off":
+        return False
+    is_side_effect = node.spec.sink or not node.spec.outputs
+    if mode == "all" and _emits_artifacts(node, checkpoints, step_id):
+        return True
+    if mode == "sinks" and is_side_effect:
+        return True
+    attr = node.step.regenerate
+    if attr == "always":
+        return True
+    if attr == "if-missing":
+        return not _artifacts_present(checkpoints, step_id, outputs_loc)
+    return False
+
+
 def plan_execution(
     dag: PipelineDAG,
     checkpoints: CheckpointStore | CheckpointManager | None,
     *,
     force: bool = False,
-    regenerate_outputs: bool = False,
+    regenerate: str = "auto",
+    outputs_loc: StorageLocation | None = None,
 ) -> ExecutionPlan:
     """Plan minimal correct execution for a DAG given current checkpoints.
 
     The planner walks the DAG backward from the required goal steps (terminal
-    steps, sinks, no-output steps, and any recipe-declared outputs). When a
-    required step has a valid checkpoint, that checkpoint becomes the frontier
-    and its ancestors are not pulled in. When a required side-effect step has a
-    valid marker, the step is skipped and its ancestors are likewise pruned.
+    steps, sinks, no-output steps, recipe-declared outputs, and any step that
+    must regenerate its artifacts this run). When a required step has a valid
+    checkpoint, that checkpoint becomes the frontier and its ancestors are not
+    pulled in. When a required side-effect step has a valid marker, the step is
+    skipped and its ancestors are likewise pruned. A step selected for
+    regeneration (see :func:`_should_regenerate`) re-runs instead of loading /
+    marker-skipping, pulling its parents onto the frontier so its inputs load
+    from cache.
     """
+    if regenerate not in REGENERATE_MODES:
+        raise ValueError(
+            f"regenerate must be one of {REGENERATE_MODES}, got {regenerate!r}"
+        )
     if checkpoints is None:
         return ExecutionPlan(
             must_run=set(dag.topological_order),
@@ -509,7 +600,23 @@ def plan_execution(
     recipe_output_steps = {
         output.step_id for output in (dag.recipe.outputs or {}).values()
     }
-    needed: set[str] = {
+
+    # Pre-pass: which steps must regenerate their artifacts this run. Computed
+    # up front so regen steps can be seeded as goals — otherwise an intermediate
+    # data step's ``if-missing`` would never fire when its consumers are cached.
+    # (Skipped under ``force``, which re-runs everything regardless.)
+    regen: dict[str, bool] = {}
+    if not force:
+        for step_id in dag.topological_order:
+            regen[step_id] = _should_regenerate(
+                dag.nodes[step_id],
+                step_id,
+                mode=regenerate,
+                checkpoints=checkpoints,
+                outputs_loc=outputs_loc,
+            )
+
+    goal_steps: set[str] = {
         step_id
         for step_id in dag.topological_order
         if (
@@ -519,6 +626,9 @@ def plan_execution(
             or step_id in recipe_output_steps
         )
     }
+    needed: set[str] = set(goal_steps)
+    needed.update(step_id for step_id, do in regen.items() if do)
+
     must_run: set[str] = set()
     loadable: set[str] = set()
     marker_hits: set[str] = set()
@@ -538,15 +648,18 @@ def plan_execution(
             needed.update(parents)
             continue
 
+        if regen.get(step_id):
+            # Regenerate the artifact: re-run (sinks render; data steps
+            # recompute) and pull parents onto the frontier to feed the re-run.
+            must_run.add(step_id)
+            needed.update(parents)
+            continue
+
         if not is_side_effect and checkpoints.has_checkpoint(step_id):
             loadable.add(step_id)
             continue
 
-        if (
-            is_side_effect
-            and not regenerate_outputs
-            and checkpoints.has_marker(step_id)
-        ):
+        if is_side_effect and checkpoints.has_marker(step_id):
             marker_hits.add(step_id)
             continue
 
@@ -556,27 +669,15 @@ def plan_execution(
     # Compute which must-run intermediate steps are limiting the resume frontier.
     # These are steps that have no checkpoint but sit between a pruned/loadable
     # upstream and a goal step, meaning adding checkpoint:always to them would
-    # let future runs skip more work.
-    terminal, _intermediate = classify_steps(dag)
-    recipe_output_steps = {
-        output.step_id for output in (dag.recipe.outputs or {}).values()
-    }
-    goal_steps: set[str] = {
-        step_id
-        for step_id in dag.topological_order
-        if (
-            step_id in terminal
-            or dag.nodes[step_id].spec.sink
-            or not dag.nodes[step_id].spec.outputs
-            or step_id in recipe_output_steps
-        )
-    }
+    # let future runs skip more work. Regen steps are excluded: they re-run by
+    # intent, not because a checkpoint is missing.
     blockers: list[str] = [
         step_id
         for step_id in dag.topological_order
         if (
             step_id in must_run
             and step_id not in goal_steps
+            and not regen.get(step_id)
             and not dag.nodes[step_id].spec.sink
             and dag.nodes[step_id].spec.outputs
         )
@@ -1155,12 +1256,19 @@ class _StepCacheMeta:
     recipe: dict[str, str] | None = None  # {"name": ..., "version": ...}
     fingerprint_payload: dict[str, Any] | None = None  # powers explain-cache
     provenance_ref: str | None = None  # curated survey-tier entries only
+    #: User-facing artifact paths this step wrote, relative to the run's
+    #: outputs directory (e.g. ``images/plot_sv_clean.png``). ``None`` means the
+    #: entry predates artifact recording (unverifiable -> regenerate); ``[]``
+    #: means the step ran and emitted nothing (verifiably present). Stored
+    #: relative so the list stays portable across users/machines/tiers.
+    artifacts: list[str] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _StepCacheMeta:
         # Tolerant reader: accept v2, v1 (step_hash, no schema_version), and
         # pre-v1 (recipe_hash only) sidecars. Missing new fields -> defaults.
         step_hash = data.get("step_hash") or data.get("recipe_hash", "")
+        artifacts = data.get("artifacts")
         return cls(
             step_id=data["step_id"],
             step_hash=step_hash,
@@ -1172,6 +1280,7 @@ class _StepCacheMeta:
             recipe=data.get("recipe"),
             fingerprint_payload=data.get("fingerprint_payload"),
             provenance_ref=data.get("provenance_ref"),
+            artifacts=list(artifacts) if artifacts is not None else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1186,6 +1295,7 @@ class _StepCacheMeta:
             "outputs": self.outputs,
             "fingerprint_payload": self.fingerprint_payload,
             "provenance_ref": self.provenance_ref,
+            "artifacts": self.artifacts,
         }
 
 
@@ -1364,6 +1474,22 @@ class CheckpointManager:
         """Public tolerant sidecar read (None when absent/corrupt)."""
         return self._read_meta(step_id)
 
+    def recorded_artifacts(self, step_id: str) -> list[str] | None:
+        """User-facing artifact paths recorded for a hash-matching entry.
+
+        Returns the sidecar's ``artifacts`` list (paths relative to the outputs
+        dir) for the entry addressed by this step's current hash, or ``None``
+        when there is no matching entry or the entry predates artifact
+        recording. A returned ``[]`` means the step ran and emitted nothing.
+        """
+        meta = self._read_meta(step_id)
+        if meta is None:
+            return None
+        expected = self._hashes.get(step_id)
+        if expected is None or meta.step_hash != expected:
+            return None
+        return meta.artifacts
+
     def iter_entries(self) -> list[tuple[StorageLocation, _StepCacheMeta]]:
         """Every parseable sidecar under this root (any recipe, any hash).
 
@@ -1390,6 +1516,7 @@ class CheckpointManager:
         outputs: dict[str, dict[str, str]],
         *,
         marker: bool = False,
+        artifacts: list[str] | None = None,
     ) -> _StepCacheMeta:
         return _StepCacheMeta(
             step_id=step_id,
@@ -1401,6 +1528,7 @@ class CheckpointManager:
             recipe=self._recipe_info,
             fingerprint_payload=self._payloads.get(step_id),
             provenance_ref=self.provenance_ref,
+            artifacts=list(artifacts) if artifacts is not None else None,
         )
 
     def _write_meta(self, meta: _StepCacheMeta) -> None:
@@ -1408,21 +1536,33 @@ class CheckpointManager:
         entry_dir.mkdir()
         (entry_dir / META_FILENAME).write_text(json.dumps(meta.to_dict(), indent=2))
 
-    def save_marker(self, step_id: str) -> None:
+    def save_marker(self, step_id: str, *, artifacts: list[str] | None = None) -> None:
         """Record that a side-effect (sink / no-output) step ran for this hash.
 
         Writes a metadata-only sidecar (no serialized outputs) so a later run
         with an unchanged per-step hash can skip re-generating the step's
-        on-disk side effects.
+        on-disk side effects. ``artifacts`` records the user-facing files the
+        step wrote (relative to the outputs dir) so a later run can verify they
+        still exist before skipping.
         """
         step_hash = self._require_hash(step_id)
-        self._write_meta(self._build_meta(step_id, step_hash, {}, marker=True))
+        self._write_meta(
+            self._build_meta(step_id, step_hash, {}, marker=True, artifacts=artifacts)
+        )
 
-    def save(self, step_id: str, outputs: dict[str, Any]) -> None:
+    def save(
+        self,
+        step_id: str,
+        outputs: dict[str, Any],
+        *,
+        artifacts: list[str] | None = None,
+    ) -> None:
         """Persist a step's outputs, committing with a sidecar-last write.
 
         All artifacts land under ``<hash>/<run_id>/…`` first; the ``meta.json``
         sidecar is written last, making the entry visible atomically.
+        ``artifacts`` records any user-facing files the step wrote (relative to
+        the outputs dir), separate from the cached data ``outputs``.
         """
         step_hash = self._require_hash(step_id)
         run_dir = self._entry_dir(step_id, step_hash) / self.run_id
@@ -1439,7 +1579,9 @@ class CheckpointManager:
                 "path": f"{self.run_id}/{category}/{target.name}",
                 "format": fmt,
             }
-        self._write_meta(self._build_meta(step_id, step_hash, out_meta))
+        self._write_meta(
+            self._build_meta(step_id, step_hash, out_meta, artifacts=artifacts)
+        )
 
     def clean(
         self,

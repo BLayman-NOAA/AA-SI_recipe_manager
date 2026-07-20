@@ -41,11 +41,21 @@ class CheckpointStore(Protocol):
 
     def has_marker(self, step_id: str) -> bool: ...
 
+    def recorded_artifacts(self, step_id: str) -> list[str] | None: ...
+
     def load(self, step_id: str) -> dict[str, Any]: ...
 
-    def save(self, step_id: str, outputs: dict[str, Any]) -> None: ...
+    def save(
+        self,
+        step_id: str,
+        outputs: dict[str, Any],
+        *,
+        artifacts: list[str] | None = None,
+    ) -> None: ...
 
-    def save_marker(self, step_id: str) -> None: ...
+    def save_marker(
+        self, step_id: str, *, artifacts: list[str] | None = None
+    ) -> None: ...
 
 
 class TieredCheckpointStore:
@@ -144,6 +154,24 @@ class TieredCheckpointStore:
                 return True
         return False
 
+    def recorded_artifacts(self, step_id: str) -> list[str] | None:
+        """Artifacts recorded for the entry that would serve this step.
+
+        Sinks are served by the user-tier marker (markers are user-tier only),
+        so that sidecar is checked first; a data step is served by the first
+        read-order tier holding a hash-matching checkpoint.
+        """
+        user = self._managers[USER_TIER]
+        user_meta = user.read_meta(step_id)
+        if user_meta is not None and user_meta.marker:
+            return user.recorded_artifacts(step_id)
+        for tier in self._read_order:
+            manager = self._managers[tier]
+            if manager.has_checkpoint(step_id):
+                self._hit_tier[step_id] = tier
+                return manager.recorded_artifacts(step_id)
+        return None
+
     def load(self, step_id: str) -> dict[str, Any]:
         manager = self._manager_for(step_id)
         if manager is not None:
@@ -155,7 +183,13 @@ class TieredCheckpointStore:
             f"no checkpoint for step {step_id!r} in tiers {self._read_order}"
         )
 
-    def save(self, step_id: str, outputs: dict[str, Any]) -> None:
+    def save(
+        self,
+        step_id: str,
+        outputs: dict[str, Any],
+        *,
+        artifacts: list[str] | None = None,
+    ) -> None:
         writer = self._managers[self.write_tier]
         if self.write_tier == SURVEY_TIER:
             # Shared-tier eligibility: only portable formats (zarr/json).
@@ -172,7 +206,7 @@ class TieredCheckpointStore:
                         "environments; only zarr/json artifacts are shared). "
                         "Run with the user write tier instead."
                     )
-        writer.save(step_id, outputs)
+        writer.save(step_id, outputs, artifacts=artifacts)
         # The immediate save-then-reload round trip (and the manifest) must
         # resolve against the tier that now holds the entry.
         self._hit_tier[step_id] = self.write_tier
@@ -182,6 +216,8 @@ class TieredCheckpointStore:
     def has_marker(self, step_id: str) -> bool:
         return self._managers[USER_TIER].has_marker(step_id)
 
-    def save_marker(self, step_id: str) -> None:
-        self._managers[USER_TIER].save_marker(step_id)
+    def save_marker(
+        self, step_id: str, *, artifacts: list[str] | None = None
+    ) -> None:
+        self._managers[USER_TIER].save_marker(step_id, artifacts=artifacts)
         self._hit_tier.setdefault(step_id, USER_TIER)

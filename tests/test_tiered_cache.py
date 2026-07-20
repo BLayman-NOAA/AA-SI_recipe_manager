@@ -275,6 +275,22 @@ class TestMarkers:
             )
         assert result.step_dispositions["report"].disposition == "marker"
 
+    def test_recorded_artifacts_resolves_marker_and_checkpoint(
+        self, clear_memory_fs
+    ):
+        """Marker artifacts resolve from the user tier; data-step artifacts
+        resolve from whichever read tier holds the checkpoint (here, survey)."""
+        hashes = {"plot": "aaaa1111", "compute": "bbbb2222"}
+        user = CheckpointManager(USER_ROOT, hashes)
+        survey = CheckpointManager(SURVEY_ROOT, hashes)
+        store = TieredCheckpointStore(user=user, survey=survey)
+
+        user.save_marker("plot", artifacts=["images/plot.png"])
+        survey.save("compute", {"out": 1}, artifacts=["images/compute.png"])
+
+        assert store.recorded_artifacts("plot") == ["images/plot.png"]
+        assert store.recorded_artifacts("compute") == ["images/compute.png"]
+
 
 # ---------------------------------------------------------------------------
 # Curated-run read policy + shared-tier eligibility

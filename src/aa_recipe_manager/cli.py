@@ -427,14 +427,17 @@ class _CLIProgress:
 @click.option("--save-provenance", default=None, help="Path for the provenance sidecar file.")
 @click.option("--skip-sinks", is_flag=True, default=False, help="Skip sink steps.")
 @click.option(
-    "--regenerate-outputs",
-    is_flag=True,
-    default=False,
+    "--regenerate",
+    type=click.Choice(["auto", "off", "sinks", "all"]),
+    default="auto",
+    show_default=True,
     help=(
-        "Force side-effect steps (plots, logs, and other sink/no-output "
-        "steps) to re-run even when unchanged. Use this when a checkpoint "
-        "cache was shared without its on-disk artifacts so they are "
-        "regenerated locally."
+        "Artifact-regeneration mode. 'auto' honors each step's 'regenerate' "
+        "attribute (if-missing/always/never); 'off' regenerates nothing; "
+        "'sinks' forces every sink step (plots/logs) to re-run; 'all' forces "
+        "every artifact-emitting step, including data steps (which recompute). "
+        "Use a non-auto mode when a cache was reused without its on-disk "
+        "artifacts so they are regenerated locally."
     ),
 )
 @click.option("--force", is_flag=True, default=False, help="Bypass checkpoint checks.")
@@ -519,7 +522,7 @@ def run_cmd(
     inputs: tuple[str, ...],
     save_provenance: str | None,
     skip_sinks: bool,
-    regenerate_outputs: bool,
+    regenerate: str,
     force: bool,
     log_output: str,
     no_checkpoints: bool,
@@ -587,7 +590,7 @@ def run_cmd(
             force=force,
             no_checkpoints=no_checkpoints,
             skip_sinks=skip_sinks,
-            regenerate_outputs=regenerate_outputs,
+            regenerate=regenerate,
             log_destination=log_output,
             checkpoint_mode=checkpoint_mode,
             checkpoint_steps=list(checkpoint_steps) or None,

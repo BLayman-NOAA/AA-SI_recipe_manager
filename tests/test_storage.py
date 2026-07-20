@@ -221,9 +221,11 @@ def test_remote_checkpoint_zarr_dataset_round_trip():
 
 def test_remote_checkpoint_marker_round_trip():
     manager = CheckpointManager("memory://cache/recipe_cache", {"plot": "h"})
-    manager.save_marker("plot")
+    manager.save_marker("plot", artifacts=["images/plot.png"])
     assert manager.has_marker("plot")
     assert not manager.has_checkpoint("plot")
+    # Recorded artifacts round-trip through a remote (memory://) sidecar.
+    assert manager.recorded_artifacts("plot") == ["images/plot.png"]
 
 
 def test_remote_netcdf_checkpoint_format_rejected():

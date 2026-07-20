@@ -66,6 +66,7 @@ steps:
 
   - id: plot_normalized_ml
     op: plot_ml_echogram
+    regenerate: if-missing
     inputs:
       ds_normalized: ${normalize_ml.ds_normalized}
       ds_Sv: ${inputs.sv_clean_unmasked}
@@ -105,6 +106,7 @@ steps:
 
   - id: plot_clustering_report
     op: plot_clustering_report
+    regenerate: if-missing
     inputs:
       ds_normalized: ${embed_results.ds_normalized}
       clustering_results: ${run_hdbscan.clustering_results}

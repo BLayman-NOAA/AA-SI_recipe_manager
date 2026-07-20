@@ -159,6 +159,40 @@ def _install_helper_module() -> types.ModuleType:
         _record("sink_step", value=value, label=label)
         return None
 
+    def _write_artifact() -> None:
+        """Write a fake image under <outputs>/images and record it on the
+        execution context's artifact_sink, mimicking render_figure."""
+        from pathlib import Path
+
+        from aa_recipe_manager.executor.runtime_context import (
+            get_execution_context,
+        )
+
+        ctx = get_execution_context()
+        artifacts_dir = getattr(ctx, "artifacts_dir", None)
+        if artifacts_dir is None:
+            return
+        step_id = getattr(ctx, "step_id", None) or "artifact"
+        rel = f"images/{step_id}.png"
+        target = Path(str(artifacts_dir)) / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"fake image bytes")
+        sink = getattr(ctx, "artifact_sink", None)
+        if sink is not None:
+            sink.append(rel)
+
+    def plotting_sink(value: int) -> None:
+        """Sink that writes an artifact file (like an echogram plot)."""
+        _record("plotting_sink", value=value)
+        _write_artifact()
+        return None
+
+    def data_with_artifact(x: int) -> int:
+        """Non-sink step that returns data *and* writes a side-effect artifact."""
+        _record("data_with_artifact", x=x)
+        _write_artifact()
+        return x + 100
+
     def boom(value: int) -> int:
         _record("boom", value=value)
         raise RuntimeError("kaboom")
@@ -183,6 +217,8 @@ def _install_helper_module() -> types.ModuleType:
     module.renamed_arg = renamed_arg  # type: ignore[attr-defined]
     module.sink_step = sink_step  # type: ignore[attr-defined]
     module.sink_with_label = sink_with_label  # type: ignore[attr-defined]
+    module.plotting_sink = plotting_sink  # type: ignore[attr-defined]
+    module.data_with_artifact = data_with_artifact  # type: ignore[attr-defined]
     module.boom = boom  # type: ignore[attr-defined]
     module.make_container = make_container  # type: ignore[attr-defined]
     module.path_probe = path_probe  # type: ignore[attr-defined]
@@ -352,7 +388,7 @@ def _sink_after_chain_dag() -> PipelineDAG:
     """``start(add_one) -> first(add_one) -> report(sink)`` chain.
 
     The terminal ``report`` step is a sink with a ``label`` param so tests can
-    verify marker-based skipping, ``regenerate_outputs`` forcing, and per-step
+    verify marker-based skipping, ``regenerate`` forcing, and per-step
     invalidation when only the sink's param changes.
     """
     add_spec = Spec(
@@ -417,6 +453,72 @@ def _sink_after_chain_dag() -> PipelineDAG:
         ),
     ]
     return _make_dag([start, first, report], edges)
+
+
+def _regen_pipeline_dag(
+    *, sink_regen: str | None = None, data_regen: str | None = None
+) -> PipelineDAG:
+    """``compute(data_with_artifact) -> plot(plotting_sink, sink)``.
+
+    Both steps write an ``images/<step_id>.png`` artifact. ``compute`` is a
+    non-sink data step (regenerating it recomputes) and ``plot`` is a sink
+    (regenerating it only re-renders). Each step's ``regenerate`` attribute is
+    configurable so tests can exercise every regeneration mode.
+    """
+    compute_spec = Spec(
+        op="data_with_artifact",
+        description="data step that also writes an artifact",
+        inputs={"x": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    compute_impl = Implementation(
+        op="data_with_artifact",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.data_with_artifact",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    plot_spec = Spec(
+        op="plotting_sink",
+        description="sink that writes an artifact",
+        sink=True,
+        inputs={"value": PortDeclaration(type="int")},
+    )
+    plot_impl = Implementation(
+        op="plotting_sink",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.plotting_sink",
+        dependency=_dep(),
+    )
+    compute = DAGNode(
+        step=Step(
+            id="compute",
+            op="data_with_artifact",
+            inputs={"x": "${inputs.seed}"},
+            regenerate=data_regen,
+        ),
+        spec=compute_spec,
+        implementation=compute_impl,
+    )
+    plot = DAGNode(
+        step=Step(
+            id="plot",
+            op="plotting_sink",
+            inputs={"value": "${compute.out}"},
+            regenerate=sink_regen,
+        ),
+        spec=plot_spec,
+        implementation=plot_impl,
+    )
+    edges = [
+        DAGEdge(
+            source_step_id="compute",
+            source_output="out",
+            target_step_id="plot",
+            target_input="value",
+        ),
+    ]
+    return _make_dag([compute, plot], edges)
 
 
 def _path_input_dag(path_value: str) -> PipelineDAG:
@@ -800,7 +902,7 @@ class TestSequentialExecutor:
         assert second.executed_steps == []
         assert helper_module.call_log == []
 
-    def test_regenerate_outputs_forces_sink_rerun(self, helper_module, tmp_path):
+    def test_regenerate_sinks_forces_sink_rerun(self, helper_module, tmp_path):
         dag = _sink_after_chain_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
@@ -812,7 +914,7 @@ class TestSequentialExecutor:
             dag,
             inputs={"seed": 1},
             output_dir=out,
-            regenerate_outputs=True,
+            regenerate="sinks",
             checkpoint_mode="eager",
         )
         # Upstream data steps still load from cache; only the sink re-runs.
@@ -871,7 +973,9 @@ class TestSequentialExecutor:
         dag = _linear_inc_dag()
         saved: dict[str, dict[str, Any]] = {}
 
-        def fake_save(_self, step_id: str, outputs: dict[str, Any]) -> None:
+        def fake_save(
+            _self, step_id: str, outputs: dict[str, Any], *, artifacts=None
+        ) -> None:
             saved[step_id] = dict(outputs)
 
         def fake_load(_self, step_id: str) -> dict[str, Any]:
@@ -942,6 +1046,138 @@ class TestSequentialExecutor:
         assert delays == [0.25, 0.5]
         assert len(gc_calls) == 2
         assert not temp_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# Artifact regeneration (regenerate attribute + --regenerate mode)
+# ---------------------------------------------------------------------------
+
+
+class TestRegenerate:
+    @staticmethod
+    def _images_dir(tmp_path: Path) -> Path:
+        # outputs_dir defaults to a sibling of output_dir named "outputs".
+        return tmp_path / "outputs" / "images"
+
+    def test_sink_if_missing_skips_when_present_regenerates_when_gone(
+        self, helper_module, tmp_path
+    ):
+        dag = _regen_pipeline_dag(sink_regen="if-missing")
+        out = tmp_path / "ckpt"
+        img = self._images_dir(tmp_path) / "plot.png"
+
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert img.exists()
+        helper_module.call_log.clear()
+
+        # Image present -> the sink's marker hit stands (skipped).
+        second = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert "plot" in second.skipped_steps
+        assert helper_module.call_log == []
+        helper_module.call_log.clear()
+
+        # Delete the image -> the sink regenerates it; upstream loads from cache.
+        img.unlink()
+        third = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert third.executed_steps == ["plot"]
+        assert "compute" in third.skipped_steps
+        assert img.exists()
+        assert [n for n, _ in helper_module.call_log] == ["plotting_sink"]
+
+    def test_data_step_if_missing_recomputes_when_artifact_gone(
+        self, helper_module, tmp_path
+    ):
+        dag = _regen_pipeline_dag(data_regen="if-missing")
+        out = tmp_path / "ckpt"
+        compute_img = self._images_dir(tmp_path) / "compute.png"
+
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert compute_img.exists()
+        helper_module.call_log.clear()
+
+        # Artifact present -> nothing re-runs (plot marker hit prunes compute).
+        second = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert "compute" not in second.executed_steps
+        assert helper_module.call_log == []
+        helper_module.call_log.clear()
+
+        # Delete compute's artifact -> the data step recomputes (fires even
+        # though its only consumer, the sink, is a cache hit).
+        compute_img.unlink()
+        third = SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        assert "compute" in third.executed_steps
+        assert compute_img.exists()
+        assert [n for n, _ in helper_module.call_log] == ["data_with_artifact"]
+
+    def test_regenerate_all_forces_sink_and_data_step(
+        self, helper_module, tmp_path
+    ):
+        dag = _regen_pipeline_dag()  # no per-step attributes
+        out = tmp_path / "ckpt"
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        helper_module.call_log.clear()
+
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            regenerate="all",
+            checkpoint_mode="eager",
+        )
+        names = [n for n, _ in helper_module.call_log]
+        assert "data_with_artifact" in names  # data step recomputed
+        assert "plotting_sink" in names       # sink re-rendered
+        assert "compute" in result.executed_steps
+        assert "plot" in result.executed_steps
+
+    def test_regenerate_off_skips_even_when_artifacts_missing(
+        self, helper_module, tmp_path
+    ):
+        dag = _regen_pipeline_dag(sink_regen="if-missing", data_regen="if-missing")
+        out = tmp_path / "ckpt"
+        images = self._images_dir(tmp_path)
+        SequentialExecutor().execute(
+            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        )
+        (images / "plot.png").unlink()
+        (images / "compute.png").unlink()
+        helper_module.call_log.clear()
+
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 1},
+            output_dir=out,
+            regenerate="off",
+            checkpoint_mode="eager",
+        )
+        # 'off' overrides the per-step if-missing: nothing regenerates.
+        assert helper_module.call_log == []
+        assert "compute" not in result.executed_steps
+        assert "plot" not in result.executed_steps
+
+    def test_invalid_regenerate_mode_raises(self, helper_module, tmp_path):
+        dag = _regen_pipeline_dag()
+        with pytest.raises(ValueError, match="regenerate must be one of"):
+            SequentialExecutor().execute(
+                dag,
+                inputs={"seed": 1},
+                output_dir=tmp_path / "ckpt",
+                regenerate="bogus",
+            )
 
 
 # ---------------------------------------------------------------------------

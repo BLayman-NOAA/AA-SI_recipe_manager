@@ -131,7 +131,7 @@ class PipelineExecutor(Protocol):
         force: bool = False,
         no_checkpoints: bool = False,
         skip_sinks: bool = False,
-        regenerate_outputs: bool = False,
+        regenerate: str = "auto",
         outputs_dir: str | Path | None = None,
         temp_dir: str | Path | None = None,
         log_destination: str = "file",

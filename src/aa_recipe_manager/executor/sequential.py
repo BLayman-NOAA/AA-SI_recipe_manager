@@ -27,6 +27,7 @@ from aa_recipe_manager.executor.base import (
 )
 from aa_recipe_manager.executor.checkpoint import (
     PROVENANCE_DIR,
+    REGENERATE_MODES,
     CheckpointManager,
     compute_step_fingerprints,
     generate_run_id,
@@ -141,7 +142,7 @@ class SequentialExecutor:
         force: bool = False,
         no_checkpoints: bool = False,
         skip_sinks: bool = False,
-        regenerate_outputs: bool = False,
+        regenerate: str = "auto",
         outputs_dir: str | Path | None = None,
         temp_dir: str | Path | None = None,
         log_destination: str = "file",
@@ -159,6 +160,11 @@ class SequentialExecutor:
             raise ValueError(
                 f"log_destination must be one of {_LOG_DESTINATIONS}, "
                 f"got {log_destination!r}"
+            )
+        if regenerate not in REGENERATE_MODES:
+            raise ValueError(
+                f"regenerate must be one of {REGENERATE_MODES}, "
+                f"got {regenerate!r}"
             )
         if cache_write_tier not in CACHE_WRITE_TIERS:
             raise ValueError(
@@ -335,7 +341,7 @@ class SequentialExecutor:
                 resolved_temp_dir=resolved_temp_loc,
                 force=force,
                 skip_sinks=skip_sinks,
-                regenerate_outputs=regenerate_outputs,
+                regenerate=regenerate,
                 progress=progress,
                 log_sink=log_sink,
                 storage_options=storage_options,
@@ -537,7 +543,7 @@ class SequentialExecutor:
         resolved_temp_dir: StorageLocation | None,
         force: bool,
         skip_sinks: bool,
-        regenerate_outputs: bool,
+        regenerate: str,
         progress: ProgressCallback,
         log_sink: _Tee,
         storage_options: dict[str, Any] | None = None,
@@ -548,7 +554,8 @@ class SequentialExecutor:
             dag,
             checkpoints,
             force=force,
-            regenerate_outputs=regenerate_outputs,
+            regenerate=regenerate,
+            outputs_loc=resolved_outputs_dir,
         )
         # Filter blockers by policy: only flag steps that aren't already
         # checkpointed (those in policy get saved, so they aren't really blockers).
@@ -645,6 +652,10 @@ class SequentialExecutor:
 
                 log_sink.write(f"\n=== step {step_id} ({index}/{total}) ===\n")
                 log_sink.flush()
+                # Collector for user-facing artifact paths (relative to the
+                # outputs dir) that ops write via render_figure; recorded in the
+                # step's sidecar so a later run can verify they still exist.
+                artifact_paths: list[str] = []
                 with execution_context(
                     mode="direct",
                     output_dir=resolved_output_dir,
@@ -652,6 +663,7 @@ class SequentialExecutor:
                     artifacts_dir=resolved_outputs_dir,
                     temp_dir=resolved_temp_dir,
                     storage_options=storage_options,
+                    artifact_sink=artifact_paths,
                 ), redirect_stdout(log_sink), redirect_stderr(log_sink):
                     outputs = self._execute_step(node, runtime, pipeline_inputs)
             except PipelineExecutionError as exc:
@@ -674,7 +686,7 @@ class SequentialExecutor:
 
             saved = False
             if checkpoints is not None and outputs and step_id in policy:
-                checkpoints.save(step_id, outputs)
+                checkpoints.save(step_id, outputs, artifacts=artifact_paths)
                 # Replace temp-backed in-memory outputs with their persisted form
                 # immediately so downstream steps and final cleanup do not keep
                 # Windows NetCDF handles alive under exe_temp.
@@ -685,8 +697,9 @@ class SequentialExecutor:
             result.executed_steps.append(step_id)
             if checkpoints is not None and is_side_effect:
                 # Record a marker so an unchanged future run can skip
-                # regenerating this side-effect step's on-disk artifacts.
-                checkpoints.save_marker(step_id)
+                # regenerating this side-effect step's on-disk artifacts. The
+                # recorded artifact paths let a later run verify they still exist.
+                checkpoints.save_marker(step_id, artifacts=artifact_paths)
             elapsed = time.perf_counter() - start
             result.step_dispositions[step_id] = StepRecord(
                 disposition="computed",
