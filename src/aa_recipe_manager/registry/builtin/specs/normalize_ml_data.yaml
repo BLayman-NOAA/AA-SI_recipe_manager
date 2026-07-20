@@ -1,4 +1,5 @@
 op: normalize_ml_data
+cache_key: normalize_ml_data  # pinned cache identity - keep stable across op renames
 description: >
   Normalize ML features in the flattened Dataset. Supports per-feature
   normalization methods via per_group_methods.

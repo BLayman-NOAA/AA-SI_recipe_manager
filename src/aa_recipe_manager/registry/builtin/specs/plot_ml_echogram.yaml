@@ -1,4 +1,5 @@
 op: plot_ml_echogram
+cache_key: plot_ml_echogram  # pinned cache identity - keep stable across op renames
 description: >
   Render a normalized ML feature echogram for inspection.
   This is a sink step: it produces a side-effect (figure) with no data output.

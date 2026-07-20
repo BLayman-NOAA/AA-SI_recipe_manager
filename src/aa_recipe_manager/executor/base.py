@@ -14,6 +14,31 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class StepRecord:
+    """Per-step disposition for the run manifest.
+
+    ``disposition`` is one of ``computed`` / ``hit-user-cache`` /
+    ``hit-survey-cache`` / ``pruned`` / ``marker`` / ``skipped``
+    (``skipped`` = excluded by ``--skip-sinks``).
+    """
+
+    disposition: str
+    step_hash: str | None = None
+    tier: str | None = None
+    elapsed_seconds: float = 0.0
+    artifacts: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "disposition": self.disposition,
+            "step_hash": self.step_hash,
+            "tier": self.tier,
+            "elapsed_seconds": round(self.elapsed_seconds, 3),
+            "artifacts": self.artifacts,
+        }
+
+
+@dataclass
 class ExecutionResult:
     """The result of executing a PipelineDAG.
 
@@ -28,6 +53,12 @@ class ExecutionResult:
         outputs_dir: Directory holding user-facing outputs (images, logs).
         log_file: Path to the captured ``standard_out.txt`` log, if written.
         console_log: Captured per-step stdout/stderr text for the run.
+        run_id: Unique identifier for this execution (also the artifact
+            subdirectory inside each written cache entry).
+        step_dispositions: Per-step :class:`StepRecord` powering the manifest.
+        manifest_file: Path to the written ``manifest.json``, if any.
+        environment_mismatches: Warn-only differences between this run's
+            environment and the curated provenance of survey-tier hits.
     """
 
     outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -42,6 +73,10 @@ class ExecutionResult:
     outputs_dir: "Path | StorageLocation | None" = None
     log_file: "Path | StorageLocation | None" = None
     console_log: str = ""
+    run_id: str | None = None
+    step_dispositions: dict[str, StepRecord] = field(default_factory=dict)
+    manifest_file: "Path | StorageLocation | None" = None
+    environment_mismatches: list[dict[str, Any]] = field(default_factory=list)
 
 
 @runtime_checkable

@@ -1,4 +1,5 @@
 op: add_auxiliary_features
+cache_key: add_auxiliary_features  # pinned cache identity - keep stable across op renames
 description: >
   Append auxiliary coordinate-derived features (e.g. depth, ping_time_seconds)
   to the flattened ML-ready Dataset. Optional step; omit when no auxiliary

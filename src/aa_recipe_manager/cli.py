@@ -484,6 +484,30 @@ class _CLIProgress:
         "fallback. Overrides the recipe's execution.checkpoint_format setting."
     ),
 )
+@click.option(
+    "--survey-cache-dir",
+    "survey_cache_dir",
+    default=None,
+    metavar="DIR_OR_URL",
+    help=(
+        "Root of the shared (curated) survey cache tier. Cache reads probe "
+        "[user, survey] in order; the user tier is --output-dir. Usually set "
+        "via the run config (survey_cache_dir key) rather than this flag."
+    ),
+)
+@click.option(
+    "--cache-write-tier",
+    "cache_write_tier",
+    type=click.Choice(["user", "survey"]),
+    default="user",
+    show_default=True,
+    help=(
+        "Which cache tier this run writes. 'survey' marks a curated run: it "
+        "reads and writes only the shared survey tier (requires a survey "
+        "cache dir and credentials with write access to it — bucket IAM is "
+        "the enforcement). Deliberately not a config key."
+    ),
+)
 def run_cmd(
     recipe: str,
     executor: str,
@@ -502,6 +526,8 @@ def run_cmd(
     checkpoint_mode: str | None,
     checkpoint_steps: tuple[str, ...],
     checkpoint_format: str | None,
+    survey_cache_dir: str | None,
+    cache_write_tier: str,
 ) -> None:
     """Execute RECIPE's pipeline directly in this process."""
     # Force a non-interactive matplotlib backend before any visualization
@@ -539,6 +565,12 @@ def run_cmd(
     output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
     outputs_dir = outputs_dir or run_config.outputs_dir
     temp_dir = temp_dir or run_config.temp_dir
+    survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
+    if cache_write_tier == "survey" and survey_cache_dir is None:
+        _fail(
+            "--cache-write-tier survey requires a survey cache root; set "
+            "survey_cache_dir in the run config or pass --survey-cache-dir."
+        )
     # CLI --input wins over config inputs, which win over recipe defaults.
     merged_inputs = {**run_config.inputs, **parsed_inputs}
 
@@ -560,6 +592,8 @@ def run_cmd(
             checkpoint_mode=checkpoint_mode,
             checkpoint_steps=list(checkpoint_steps) or None,
             checkpoint_format=checkpoint_format,
+            survey_cache_dir=survey_cache_dir,
+            cache_write_tier=cache_write_tier,
             save_provenance=save_provenance,
             progress=_CLIProgress(),
         )
@@ -574,8 +608,17 @@ def run_cmd(
     )
     if result.output_dir is not None:
         click.echo(f"Cache in: {result.output_dir}")
+    if survey_cache_dir is not None:
+        hit_count = sum(
+            1
+            for record in result.step_dispositions.values()
+            if record.disposition == "hit-survey-cache"
+        )
+        click.echo(f"Survey cache: {survey_cache_dir} ({hit_count} hit(s))")
     if result.outputs_dir is not None:
         click.echo(f"Outputs in: {result.outputs_dir}")
+    if result.manifest_file is not None:
+        click.echo(f"Manifest: {result.manifest_file}")
     if result.log_file is not None:
         click.echo(f"Logs in: {result.log_file}")
     if log_output in ("console", "both") and result.console_log:
@@ -587,10 +630,23 @@ def run_cmd(
 @main.command("clean")
 @click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
 @click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Run-config file supplying the cache location and credentials "
+        "(same discovery as 'run' when omitted)."
+    ),
+)
+@click.option(
     "--output-dir",
-    default=f"./{DEFAULT_OUTPUT_ROOT}",
-    show_default=True,
-    help="Directory containing checkpoint files.",
+    default=None,
+    help=(
+        "Directory containing checkpoint files. Defaults to the run config's "
+        f"output_dir, else ./{DEFAULT_OUTPUT_ROOT}. Cleans the user cache "
+        "tier only — the shared survey tier is curated/manual."
+    ),
 )
 @click.option(
     "--input",
@@ -604,7 +660,8 @@ def run_cmd(
 @click.option("--dry-run", is_flag=True, default=False, help="Show files without removing them.")
 def clean_cmd(
     recipe: str,
-    output_dir: str,
+    config_path: str | None,
+    output_dir: str | None,
     inputs: tuple[str, ...],
     clean_all: bool,
     stale: bool,
@@ -622,13 +679,25 @@ def clean_cmd(
         name, _, value = item.partition("=")
         parsed_inputs[name.strip()] = value.strip()
 
+    # Same config discovery as 'run', so a gs:// cache configured there is
+    # cleanable without repeating the URL and credentials on the command line.
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if run_config.source is not None:
+        click.echo(f"Using run config: {run_config.source}")
+    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
     try:
         removed = api.clean(
             recipe,
             output_dir,
-            inputs=parsed_inputs or None,
+            inputs=merged_inputs or None,
             mode=mode,
             dry_run=dry_run,
+            storage_options=run_config.storage_options,
         )
     except Exception as exc:
         _handle_recipe_errors(exc)
@@ -641,3 +710,96 @@ def clean_cmd(
     click.echo(f"{verb} {len(removed)} file(s):")
     for path in removed:
         click.echo(f"  {path}")
+
+
+@main.command("explain-cache")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Run-config file supplying cache locations and credentials "
+        "(same discovery as 'run' when omitted)."
+    ),
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help=(
+        "User cache root to probe. Defaults to the run config's output_dir, "
+        f"else ./{DEFAULT_OUTPUT_ROOT}."
+    ),
+)
+@click.option(
+    "--survey-cache-dir",
+    "survey_cache_dir",
+    default=None,
+    metavar="DIR_OR_URL",
+    help="Survey cache root to probe (defaults to the run config's value).",
+)
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Supply a pipeline-level input value (repeatable).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the report as JSON instead of text.",
+)
+def explain_cache_cmd(
+    recipe: str,
+    config_path: str | None,
+    output_dir: str | None,
+    survey_cache_dir: str | None,
+    inputs: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Explain, per step, why RECIPE would hit or miss the cache tiers.
+
+    For each miss, the nearest stored entry with the same step id is diffed
+    against the recipe's recomputed fingerprint, reporting exactly which
+    field diverged (a param value, an input checksum, the cache epoch, an
+    upstream change, ...).
+    """
+    import json as _json
+
+    parsed_inputs: dict[str, str] = {}
+    for item in inputs:
+        if "=" not in item:
+            _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
+        name, _, value = item.partition("=")
+        parsed_inputs[name.strip()] = value.strip()
+
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if run_config.source is not None and not as_json:
+        click.echo(f"Using run config: {run_config.source}")
+    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
+    try:
+        explanation = api.explain_cache(
+            recipe,
+            inputs=merged_inputs or None,
+            output_dir=output_dir,
+            survey_cache_dir=survey_cache_dir,
+            storage_options=run_config.storage_options,
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    if as_json:
+        click.echo(_json.dumps(explanation.to_dict(), indent=2, default=str))
+    else:
+        click.echo(explanation.format_text())

@@ -1,4 +1,5 @@
 op: combine_masks
+cache_key: combine_masks  # pinned cache identity - keep stable across op renames
 description: >
   Combine two or more mask datasets into one final mask. Accepts a list of
   mask inputs to support inserting additional custom mask-producing steps

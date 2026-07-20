@@ -1,4 +1,5 @@
 op: embed_clustering_results
+cache_key: embed_clustering_results  # pinned cache identity - keep stable across op renames
 description: >
   Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a
   single result dict from run_hdbscan, or a collected list of result dicts

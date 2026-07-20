@@ -1,4 +1,5 @@
 op: add_line_overlay
+cache_key: add_line_overlay  # pinned cache identity - keep stable across op renames
 description: >
   Join a CSV line or profile file (e.g. a dive profile) to a Dataset as a
   new coordinate-aligned variable. The enriched Dataset is passed downstream

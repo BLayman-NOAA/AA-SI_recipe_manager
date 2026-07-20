@@ -1,4 +1,5 @@
 op: remove_background_noise
+cache_key: remove_background_noise  # pinned cache identity - keep stable across op renames
 description: >
   Estimate and remove background noise from Sv using the De Robertis and
   Higginbottom method. Returns a cleaned Sv Dataset.

@@ -1,4 +1,5 @@
 op: create_seafloor_mask
+cache_key: create_seafloor_mask  # pinned cache identity - keep stable across op renames
 description: >
   Build a seafloor mask from baseline Sv and detected seafloor depth.
   The seafloor depth is passed as an explicit input, enabling swappable

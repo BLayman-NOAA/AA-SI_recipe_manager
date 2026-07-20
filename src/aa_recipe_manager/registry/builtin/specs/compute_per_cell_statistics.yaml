@@ -1,4 +1,5 @@
 op: compute_per_cell_statistics
+cache_key: compute_per_cell_statistics  # pinned cache identity - keep stable across op renames
 description: >
   Compute per-MVBS-cell statistics (e.g. coefficient of variation) from
   fine-resolution Sv data before masking or MVBS averaging. Results are

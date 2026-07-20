@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: NOAA Fisheries
 """Per-user run configuration file discovery and loading.
 
-Storage locations (``output_dir``, ``temp_dir``, ``outputs_dir``) and cloud
-credentials (``storage_options``) are environment-specific, so they belong in a
-per-user config file rather than the portable recipe. This module discovers and
-loads that file; the ``run`` CLI command merges it under any explicit flags.
+Storage locations (``output_dir``, ``temp_dir``, ``outputs_dir``,
+``survey_cache_dir``) and cloud credentials (``storage_options``) are
+environment-specific, so they belong in a per-user config file rather than the
+portable recipe. This module discovers and loads that file; the ``run`` CLI
+command merges it under any explicit flags.
 
 The recipe stays shareable (no bucket paths baked in); each user keeps their own
 git-ignored config with their buckets.
@@ -38,7 +39,14 @@ ENV_VAR = "AA_RECIPE_CONFIG"
 
 #: Keys accepted at the top level of the config file.
 _KNOWN_KEYS = frozenset(
-    {"output_dir", "temp_dir", "outputs_dir", "storage_options", "inputs"}
+    {
+        "output_dir",
+        "temp_dir",
+        "outputs_dir",
+        "survey_cache_dir",
+        "storage_options",
+        "inputs",
+    }
 )
 
 
@@ -48,11 +56,17 @@ class RunConfig:
 
     Every field is optional; an absent config yields an all-empty instance, so
     callers can unconditionally consult it and fall back to their own defaults.
+
+    ``survey_cache_dir`` is the shared (curated) cache read tier — everyone
+    reads it, only curated runs write it. The *write tier* is deliberately not
+    a config key: writing to the survey tier is a per-run act selected with
+    ``--cache-write-tier`` (and enforced by bucket IAM, not by this client).
     """
 
     output_dir: str | None = None
     temp_dir: str | None = None
     outputs_dir: str | None = None
+    survey_cache_dir: str | None = None
     storage_options: dict[str, Any] | None = None
     inputs: dict[str, Any] = field(default_factory=dict)
     #: Path the config was loaded from, or ``None`` when no file was found.
@@ -146,7 +160,7 @@ def load_run_config(
             f"Allowed keys: {', '.join(sorted(_KNOWN_KEYS))}."
         )
 
-    for str_key in ("output_dir", "temp_dir", "outputs_dir"):
+    for str_key in ("output_dir", "temp_dir", "outputs_dir", "survey_cache_dir"):
         if str_key in data and data[str_key] is not None and not isinstance(
             data[str_key], str
         ):
@@ -173,6 +187,7 @@ def load_run_config(
         output_dir=data.get("output_dir"),
         temp_dir=data.get("temp_dir"),
         outputs_dir=data.get("outputs_dir"),
+        survey_cache_dir=data.get("survey_cache_dir"),
         storage_options=storage_options,
         inputs=dict(inputs),
         source=path,

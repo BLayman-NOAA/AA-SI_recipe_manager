@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import gc
 import io
+import json
 import os
 import shutil
 import stat
 import time
+import warnings
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,12 +23,20 @@ from aa_recipe_manager.executor.base import (
     ExecutionResult,
     NullProgressCallback,
     ProgressCallback,
+    StepRecord,
 )
 from aa_recipe_manager.executor.checkpoint import (
+    PROVENANCE_DIR,
     CheckpointManager,
-    compute_step_hashes,
+    compute_step_fingerprints,
+    generate_run_id,
     plan_execution,
     resolve_checkpoint_policy,
+)
+from aa_recipe_manager.executor.tiered import (
+    CACHE_WRITE_TIERS,
+    SURVEY_TIER,
+    TieredCheckpointStore,
 )
 from aa_recipe_manager.executor.invocation import (
     RuntimeContext,
@@ -42,6 +53,7 @@ if TYPE_CHECKING:
 
 LOGS_DIR = "logs"
 STANDARD_OUT_FILENAME = "standard_out.txt"
+MANIFEST_FILENAME = "manifest.json"
 _DEFAULT_OUTPUTS_DIRNAME = "outputs"
 _LOG_DESTINATIONS = ("file", "console", "both")
 
@@ -137,14 +149,31 @@ class SequentialExecutor:
         checkpoint_steps: Iterable[str] | None = None,
         checkpoint_format: CheckpointFormat | str | None = None,
         storage_options: dict[str, Any] | None = None,
+        survey_cache_dir: str | Path | None = None,
+        cache_write_tier: str = "user",
         progress: ProgressCallback | None = None,
     ) -> ExecutionResult:
-        from aa_recipe_manager.provenance.recorder import ProvenanceRecorder
+        from aa_recipe_manager.provenance.recorder import ProvenanceRecorder, to_json
 
         if log_destination not in _LOG_DESTINATIONS:
             raise ValueError(
                 f"log_destination must be one of {_LOG_DESTINATIONS}, "
                 f"got {log_destination!r}"
+            )
+        if cache_write_tier not in CACHE_WRITE_TIERS:
+            raise ValueError(
+                f"cache_write_tier must be one of {CACHE_WRITE_TIERS}, "
+                f"got {cache_write_tier!r}"
+            )
+        if cache_write_tier == SURVEY_TIER and survey_cache_dir is None:
+            raise ValueError(
+                "cache_write_tier='survey' requires a survey cache root "
+                "(config key survey_cache_dir or --survey-cache-dir)"
+            )
+        if survey_cache_dir is not None and output_dir is None:
+            raise ValueError(
+                "survey_cache_dir requires output_dir (the user cache root); "
+                "the user tier holds side-effect markers even for curated runs"
             )
 
         pipeline_inputs = dict(inputs or {})
@@ -159,7 +188,9 @@ class SequentialExecutor:
             else None
         )
 
-        checkpoints: CheckpointManager | None = None
+        run_id = generate_run_id()
+        step_hashes: dict[str, str] = {}
+        checkpoints: TieredCheckpointStore | None = None
         resolved_output_dir: StorageLocation | None = None
         if cache_loc is not None and not no_checkpoints:
             resolved_output_dir = cache_loc
@@ -170,13 +201,62 @@ class SequentialExecutor:
                 or (hints.checkpoint_format if hints is not None else None)
                 or "zarr"
             )
-            checkpoints = CheckpointManager(
+            if cache_write_tier == SURVEY_TIER and str(effective_format) == "pickle":
+                raise ValueError(
+                    "checkpoint_format='pickle' is not eligible for the shared "
+                    "survey cache (pickles are not portable across "
+                    "environments); use 'zarr' instead"
+                )
+            fingerprints = compute_step_fingerprints(
+                dag, pipeline_inputs, storage_options=storage_options
+            )
+            step_hashes = fingerprints.hashes
+            recipe_info = {
+                "name": dag.recipe.name,
+                "version": dag.recipe.version,
+            }
+            user_manager = CheckpointManager(
                 cache_loc,
-                compute_step_hashes(
-                    dag, pipeline_inputs, storage_options=storage_options
-                ),
+                fingerprints.hashes,
                 preferred_format=effective_format,
                 storage_options=storage_options,
+                payloads=fingerprints.payloads,
+                run_id=run_id,
+                recipe_info=recipe_info,
+            )
+            survey_manager: CheckpointManager | None = None
+            if survey_cache_dir is not None:
+                survey_loc = StorageLocation.parse(survey_cache_dir, storage_options)
+                # Curated runs publish their provenance (environment, deps,
+                # inputs) next to the survey cache at run START — the
+                # environment is fully known upfront, and writing it first
+                # means sidecars never reference a not-yet-written file. Every
+                # sidecar this run writes carries the ref.
+                provenance_ref: str | None = None
+                if cache_write_tier == SURVEY_TIER:
+                    provenance_ref = (
+                        f"{PROVENANCE_DIR}/{dag.recipe.name}@{run_id}.json"
+                    )
+                    prov = ProvenanceRecorder.capture(
+                        dag, inputs=pipeline_inputs or None
+                    )
+                    prov_loc = survey_loc / provenance_ref
+                    prov_loc.parent.mkdir()
+                    prov_loc.write_text(to_json(prov))
+                survey_manager = CheckpointManager(
+                    survey_loc,
+                    fingerprints.hashes,
+                    preferred_format=effective_format,
+                    storage_options=storage_options,
+                    payloads=fingerprints.payloads,
+                    run_id=run_id,
+                    recipe_info=recipe_info,
+                    provenance_ref=provenance_ref,
+                )
+            checkpoints = TieredCheckpointStore(
+                user=user_manager,
+                survey=survey_manager,
+                write_tier=cache_write_tier,
             )
 
         policy: set[str] = set()
@@ -192,6 +272,7 @@ class SequentialExecutor:
             if resolved_output_dir is None
             else resolved_output_dir.as_context_value()
         )
+        result.run_id = run_id
 
         # User-facing outputs (images, logs) live in a separate tree from the
         # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
@@ -238,6 +319,8 @@ class SequentialExecutor:
             result.log_file = remote_log_loc
         log_sink = _Tee(log_buffer, log_file_handle)
 
+        run_started_at = datetime.now(timezone.utc).isoformat()
+        status = "completed"
         try:
             self._run_steps(
                 dag=dag,
@@ -246,6 +329,7 @@ class SequentialExecutor:
                 pipeline_inputs=pipeline_inputs,
                 checkpoints=checkpoints,
                 policy=policy,
+                step_hashes=step_hashes,
                 resolved_output_dir=resolved_output_dir,
                 resolved_outputs_dir=resolved_outputs_loc,
                 resolved_temp_dir=resolved_temp_loc,
@@ -256,6 +340,14 @@ class SequentialExecutor:
                 log_sink=log_sink,
                 storage_options=storage_options,
             )
+            # Warn-only: compare this environment to the curated provenance
+            # of any survey-tier hits. Never blocks or downgrades a hit.
+            self._check_curated_environment(
+                dag=dag, result=result, store=checkpoints
+            )
+        except BaseException:
+            status = "failed"
+            raise
         finally:
             if log_file_handle is not None:
                 log_file_handle.close()
@@ -269,10 +361,127 @@ class SequentialExecutor:
                 except Exception:  # never mask the original error
                     pass
             self._cleanup_temp_dir(resolved_temp_loc)
+            # Best-effort run manifest (written on failure too, status="failed").
+            self._write_manifest(
+                dag=dag,
+                result=result,
+                store=checkpoints,
+                outputs_loc=resolved_outputs_loc,
+                status=status,
+                started_at=run_started_at,
+                write_tier=cache_write_tier,
+            )
 
         result.console_log = log_buffer.getvalue()
         result.provenance = ProvenanceRecorder.capture(dag, inputs=pipeline_inputs or None)
         return result
+
+    @staticmethod
+    def _check_curated_environment(
+        *,
+        dag: PipelineDAG,
+        result: ExecutionResult,
+        store: TieredCheckpointStore | None,
+    ) -> None:
+        """Diff the live environment against curated provenance (warn-only).
+
+        Runs once per distinct provenance ref found on this run's survey-tier
+        hits. Prominent mismatches (packages implementing this recipe's ops)
+        are surfaced as ``RuntimeWarning``; everything lands in the result and
+        the manifest. A missing/unreadable provenance file is a soft warning,
+        never an error — the cache hits themselves are unaffected either way.
+        """
+        if store is None:
+            return
+        refs = store.survey_hit_provenance_refs()
+        if not refs:
+            return
+        from aa_recipe_manager.provenance.env_check import (
+            check_environment_against_provenance,
+        )
+
+        survey_root = store.survey_root()
+        for ref in sorted(refs):
+            prov_loc = survey_root / ref
+            try:
+                provenance = json.loads(prov_loc.read_text())
+            except Exception:
+                message = (
+                    f"curated provenance file {prov_loc} could not be read; "
+                    "skipping the environment check for its cache hits"
+                )
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
+                result.logs.append(f"warning: {message}")
+                continue
+            for mismatch in check_environment_against_provenance(provenance, dag):
+                mismatch.provenance_ref = ref
+                result.environment_mismatches.append(mismatch.to_dict())
+                line = (
+                    f"environment differs from curated run ({ref}): "
+                    f"{mismatch.package} curated="
+                    f"{mismatch.curated_version} local={mismatch.local_version}"
+                )
+                if mismatch.severity == "prominent":
+                    warnings.warn(
+                        f"survey-cache hits were produced with a different "
+                        f"version of an op-implementing package — "
+                        f"{mismatch.package}: curated "
+                        f"{mismatch.curated_version}, local "
+                        f"{mismatch.local_version} (results are reused "
+                        "anyway; recreate the curated environment from "
+                        f"{ref} for exact reproduction)",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    result.logs.append(f"warning: {line}")
+                else:
+                    result.logs.append(f"note: {line}")
+
+    @staticmethod
+    def _write_manifest(
+        *,
+        dag: PipelineDAG,
+        result: ExecutionResult,
+        store: TieredCheckpointStore | None,
+        outputs_loc: StorageLocation | None,
+        status: str,
+        started_at: str,
+        write_tier: str,
+    ) -> None:
+        """Write the per-run ``manifest.json`` into the outputs directory.
+
+        The manifest answers "where is my product?" definitively without
+        copying anything: per-step disposition (computed / hit user cache /
+        hit survey cache / pruned / marker), absolute artifact URIs, and
+        timings. Best-effort — a manifest failure never masks the run's own
+        outcome.
+        """
+        if outputs_loc is None:
+            return
+        hints = dag.recipe.execution
+        manifest = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "recipe": {"name": dag.recipe.name, "version": dag.recipe.version},
+            "cache_epoch": hints.cache_epoch if hints is not None else None,
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "write_tier": write_tier if store is not None else None,
+            "tiers": store.tier_roots() if store is not None else {},
+            "steps": {
+                step_id: record.to_dict()
+                for step_id, record in result.step_dispositions.items()
+            },
+            "environment_mismatches": result.environment_mismatches,
+        }
+        try:
+            outputs_loc.mkdir()
+            manifest_loc = outputs_loc / MANIFEST_FILENAME
+            manifest_loc.write_text(json.dumps(manifest, indent=2))
+            result.manifest_file = manifest_loc.as_context_value()
+        except Exception:  # never mask the run's own error
+            result.logs.append("warning: failed to write manifest.json")
 
     @staticmethod
     def _cleanup_temp_dir(temp_loc: StorageLocation | Path | None) -> None:
@@ -320,8 +529,9 @@ class SequentialExecutor:
         result: ExecutionResult,
         runtime: RuntimeContext,
         pipeline_inputs: dict[str, Any],
-        checkpoints: CheckpointManager | None,
+        checkpoints: TieredCheckpointStore | None,
         policy: set[str],
+        step_hashes: dict[str, str],
         resolved_output_dir: StorageLocation | None,
         resolved_outputs_dir: StorageLocation | None,
         resolved_temp_dir: StorageLocation | None,
@@ -354,6 +564,10 @@ class SequentialExecutor:
             if skip_sinks and node.spec.sink:
                 result.logs.append(f"skip sink: {step_id}")
                 runtime.record(step_id, {})
+                result.step_dispositions[step_id] = StepRecord(
+                    disposition="skipped",
+                    step_hash=step_hashes.get(step_id),
+                )
                 continue
 
             # Side-effect steps (sinks / no declared outputs) produce on-disk
@@ -372,6 +586,11 @@ class SequentialExecutor:
                     result.logs.append(
                         f"pruned: {step_id} ({elapsed:.3f}s)"
                     )
+                    result.step_dispositions[step_id] = StepRecord(
+                        disposition="pruned",
+                        step_hash=step_hashes.get(step_id),
+                        elapsed_seconds=elapsed,
+                    )
                     progress.on_step_end(
                         step_id, index, total, skipped=True, elapsed=elapsed
                     )
@@ -379,12 +598,20 @@ class SequentialExecutor:
 
                 if step_id in execution_plan.loadable:
                     outputs = checkpoints.load(step_id)
+                    tier = checkpoints.hit_tier(step_id) or "user"
                     runtime.record(step_id, outputs)
                     result.outputs[step_id] = outputs
                     result.skipped_steps.append(step_id)
                     elapsed = time.perf_counter() - start
                     result.logs.append(
-                        f"cache hit: {step_id} ({elapsed:.3f}s)"
+                        f"cache hit: {step_id} [{tier}] ({elapsed:.3f}s)"
+                    )
+                    result.step_dispositions[step_id] = StepRecord(
+                        disposition=f"hit-{tier}-cache",
+                        step_hash=step_hashes.get(step_id),
+                        tier=tier,
+                        elapsed_seconds=elapsed,
+                        artifacts=checkpoints.artifact_urls(step_id),
                     )
                     progress.on_step_end(
                         step_id, index, total, skipped=True, elapsed=elapsed
@@ -398,6 +625,12 @@ class SequentialExecutor:
                     elapsed = time.perf_counter() - start
                     result.logs.append(
                         f"sink cache hit: {step_id} ({elapsed:.3f}s)"
+                    )
+                    result.step_dispositions[step_id] = StepRecord(
+                        disposition="marker",
+                        step_hash=step_hashes.get(step_id),
+                        tier="user",
+                        elapsed_seconds=elapsed,
                     )
                     progress.on_step_end(
                         step_id, index, total, skipped=True, elapsed=elapsed
@@ -439,12 +672,14 @@ class SequentialExecutor:
                 )
                 raise wrapped from exc
 
+            saved = False
             if checkpoints is not None and outputs and step_id in policy:
                 checkpoints.save(step_id, outputs)
                 # Replace temp-backed in-memory outputs with their persisted form
                 # immediately so downstream steps and final cleanup do not keep
                 # Windows NetCDF handles alive under exe_temp.
                 outputs = checkpoints.load(step_id)
+                saved = True
             runtime.record(step_id, outputs)
             result.outputs[step_id] = outputs
             result.executed_steps.append(step_id)
@@ -453,6 +688,13 @@ class SequentialExecutor:
                 # regenerating this side-effect step's on-disk artifacts.
                 checkpoints.save_marker(step_id)
             elapsed = time.perf_counter() - start
+            result.step_dispositions[step_id] = StepRecord(
+                disposition="computed",
+                step_hash=step_hashes.get(step_id),
+                tier=checkpoints.write_tier if saved else None,
+                elapsed_seconds=elapsed,
+                artifacts=checkpoints.artifact_urls(step_id) if saved else {},
+            )
             result.logs.append(f"ran: {step_id} ({elapsed:.3f}s)")
             log_sink.write(f"--- {step_id}: done ({elapsed:.3f}s) ---\n")
             log_sink.flush()

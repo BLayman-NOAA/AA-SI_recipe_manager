@@ -224,9 +224,11 @@ def test_bad_inputs_type_raises(tmp_path):
 class _FakeResult:
     executed_steps: list = []
     skipped_steps: list = []
+    step_dispositions: dict = {}
     output_dir = None
     outputs_dir = None
     log_file = None
+    manifest_file = None
     console_log = ""
 
 
@@ -334,3 +336,146 @@ def test_cli_missing_config_errors(monkeypatch, tmp_path):
         cli.main, ["run", str(recipe), "--config", str(tmp_path / "nope.yaml")]
     )
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Tiered cache plumbing: survey_cache_dir + --cache-write-tier
+# ---------------------------------------------------------------------------
+
+
+def test_survey_cache_dir_parsed_from_config(tmp_path):
+    p = _write(
+        tmp_path / "c.yaml",
+        {"output_dir": "gs://b/users/me/cache", "survey_cache_dir": "gs://b/surveys/HB1603/cache"},
+    )
+    cfg = config.load_run_config(str(p))
+    assert cfg.survey_cache_dir == "gs://b/surveys/HB1603/cache"
+
+
+def test_survey_cache_dir_must_be_string(tmp_path):
+    p = _write(tmp_path / "c.yaml", {"survey_cache_dir": ["not", "a", "string"]})
+    with pytest.raises(ValueError, match="survey_cache_dir"):
+        config.load_run_config(str(p))
+
+
+def test_cli_survey_cache_dir_from_config(monkeypatch, tmp_path):
+    captured = _stub_execute(monkeypatch)
+    cfg = _write(
+        tmp_path / "run.yaml",
+        {"output_dir": "gs://b/cache", "survey_cache_dir": "gs://b/surveys/X/cache"},
+    )
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(cli.main, ["run", str(recipe), "--config", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert captured["survey_cache_dir"] == "gs://b/surveys/X/cache"
+    assert captured["cache_write_tier"] == "user"  # default
+
+
+def test_cli_survey_flag_overrides_config(monkeypatch, tmp_path):
+    captured = _stub_execute(monkeypatch)
+    cfg = _write(
+        tmp_path / "run.yaml",
+        {"output_dir": "gs://b/cache", "survey_cache_dir": "gs://b/surveys/X/cache"},
+    )
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.main,
+        [
+            "run",
+            str(recipe),
+            "--config",
+            str(cfg),
+            "--survey-cache-dir",
+            "gs://b/surveys/Y/cache",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["survey_cache_dir"] == "gs://b/surveys/Y/cache"
+
+
+def test_cli_cache_write_tier_forwarded(monkeypatch, tmp_path):
+    captured = _stub_execute(monkeypatch)
+    cfg = _write(
+        tmp_path / "run.yaml",
+        {"output_dir": "gs://b/cache", "survey_cache_dir": "gs://b/surveys/X/cache"},
+    )
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["run", str(recipe), "--config", str(cfg), "--cache-write-tier", "survey"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["cache_write_tier"] == "survey"
+
+
+def test_cli_write_tier_survey_without_dir_fails(monkeypatch, tmp_path):
+    _stub_execute(monkeypatch)
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.main, ["run", str(recipe), "--cache-write-tier", "survey"]
+    )
+    assert result.exit_code != 0
+    assert "survey cache root" in result.output
+
+
+def test_cli_clean_honors_config(monkeypatch, tmp_path):
+    """clean resolves output_dir and storage_options from the run config."""
+    captured: dict = {}
+
+    def fake_clean(recipe, output_dir, **kwargs):
+        captured["output_dir"] = output_dir
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(cli.api, "clean", fake_clean)
+    cfg = _write(
+        tmp_path / "run.yaml",
+        {"output_dir": "gs://b/users/me/cache", "storage_options": {"token": "x"}},
+    )
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.main, ["clean", str(recipe), "--config", str(cfg)]
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["output_dir"] == "gs://b/users/me/cache"
+    assert captured["storage_options"] == {"token": "x"}
+
+
+def test_cli_clean_flag_overrides_config(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_clean(recipe, output_dir, **kwargs):
+        captured["output_dir"] = output_dir
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(cli.api, "clean", fake_clean)
+    cfg = _write(tmp_path / "run.yaml", {"output_dir": "gs://b/users/me/cache"})
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["clean", str(recipe), "--config", str(cfg), "--output-dir", "./local"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["output_dir"] == "./local"
+
+
+def test_cli_clean_default_without_config(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_clean(recipe, output_dir, **kwargs):
+        captured["output_dir"] = output_dir
+        return []
+
+    monkeypatch.setattr(cli.api, "clean", fake_clean)
+    recipe = _dummy_recipe(tmp_path)
+
+    result = CliRunner().invoke(cli.main, ["clean", str(recipe)])
+    assert result.exit_code == 0, result.output
+    assert captured["output_dir"] == "./recipe_cache"

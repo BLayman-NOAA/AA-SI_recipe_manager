@@ -82,6 +82,12 @@ class CustomSpec(BaseModel):
     dependency: Dependency | None = None
     param_map: dict[str, str] | None = None
     output_map: dict[str, str] | None = None
+    cache_key: str | None = None
+    """Stable cache identity for this custom step. When set, renaming the
+    step's callable (or editing its description) stays cache-neutral; bump
+    :attr:`version` when the computation itself changes."""
+    version: str | None = None
+    """Explicit behavior version folded into the step's cache hash."""
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +139,12 @@ class ExecutionHints(BaseModel):
     executor: str | None = None
     checkpoint_mode: CheckpointMode | None = None
     checkpoint_format: CheckpointFormat | None = None
+    cache_epoch: str | None = None
+    """Salt folded into every step's cache hash. Bumping it deliberately
+    invalidates all cached results for this recipe (e.g. after a dependency
+    bug is found or an op behavior change shipped without a version bump).
+    Must be identical for the curator and every consumer of a shared cache,
+    which is why it lives in the recipe rather than per-user config."""
     dask_config: dict[str, Any] | None = None
     prefect_config: dict[str, Any] | None = None
 
@@ -248,6 +260,15 @@ class Spec(BaseModel):
     inputs: dict[str, PortDeclaration] = {}
     outputs: dict[str, PortDeclaration] = {}
     params: dict[str, ParamDeclaration] = {}
+    cache_key: str | None = None
+    """Stable cache identity for this op (defaults to ``op`` at fingerprint
+    time). Set once when the spec is created and **never auto-updated** —
+    renaming the op or moving its callable then stays cache-neutral. Bump
+    :attr:`version` instead when the op's *behavior* changes."""
+    version: str | None = None
+    """Explicit behavior version folded into step cache hashes. Bump this
+    (e.g. ``"2"``) when the op's computation changes so cached results from
+    the old behavior are invalidated."""
 
 
 class Implementation(BaseModel):
@@ -263,6 +284,10 @@ class Implementation(BaseModel):
     tested_versions: list[str] | None = None
     setup: str | None = None
     teardown: str | None = None
+    version: str | None = None
+    """Explicit behavior version for *this implementation*, folded into step
+    cache hashes. Bump when this implementation's computation changes without
+    a spec-level contract change (siblings keep their cached results)."""
 
 
 # ---------------------------------------------------------------------------

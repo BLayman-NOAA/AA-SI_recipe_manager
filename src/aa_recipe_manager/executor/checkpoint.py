@@ -18,16 +18,19 @@ import re
 import shutil
 import stat
 import time
+import uuid
 import warnings
 from contextlib import contextmanager
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from aa_recipe_manager.storage import StorageLocation, is_remote_url
 
 if TYPE_CHECKING:
+    from aa_recipe_manager.executor.tiered import CheckpointStore
     from aa_recipe_manager.model.types import (
         CheckpointFormat,
         CheckpointMode,
@@ -40,14 +43,87 @@ if TYPE_CHECKING:
 _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
 
-META_SUFFIX = "__cache_meta.json"
+META_SUFFIX = "__cache_meta.json"  # legacy v1 sidecar suffix (step_id-addressed)
+META_FILENAME = "meta.json"  # v2 sidecar name inside each <hash> entry dir
+CACHE_META_SCHEMA_VERSION = 2
 DEFAULT_OUTPUT_ROOT = "recipe_cache"
-ZARR_DATA_DIR = "zarr_data"
-JSON_DATA_DIR = "json_data"
-CACHE_METADATA_DIR = "cache_metadata"
+ZARR_DATA_DIR = "zarr"  # per-format artifact subdir under <run_id>/
+JSON_DATA_DIR = "json"
+CACHE_METADATA_DIR = "cache_metadata"  # legacy v1 sidecar directory
 IMAGE_DATA_DIR = "images"
 OTHER_DATA_DIR = "other"
 PROVENANCE_DIR = "provenance"
+
+#: Legacy (v1, step_id-addressed) cache directories swept by ``clean --all``.
+#: These are literal historical names (the current active subdir names are
+#: shorter — ``zarr``/``json`` — and live nested under each entry, not at the
+#: cache root, so they are not confused with these root-level v1 leftovers).
+_LEGACY_CACHE_DIRS = (
+    "cache_metadata",
+    "zarr_data",
+    "json_data",
+    "images",
+    "other",
+)
+
+
+#: Number of leading hex chars of the step hash used for the on-disk/GCS
+#: entry directory name (``<step_id>/<hash[:N]>``). The *full* step hash
+#: remains the authoritative identity (stored in the sidecar and checked on
+#: every read); this component only disambiguates different computations of
+#: the *same* step, and is kept short so the human-readable step id can sit in
+#: the path while deeply-nested Zarr stores stay under Windows' 260-char
+#: MAX_PATH limit. 8 hex = 32 bits: a prefix collision among versions of one
+#: step is very unlikely, and even then the full-hash check turns it into a
+#: cache miss (recompute), never a false hit — so this can be short without
+#: compromising correctness, buying back path length for deeply-nested Zarr
+#: stores with long internal variable names.
+_ENTRY_HASH_LEN = 8
+
+#: Characters allowed verbatim in the human-readable step-id path component;
+#: anything else is replaced with ``_`` so recipe step ids stay filesystem- and
+#: object-store-safe.
+_SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _sanitize_component(name: str) -> str:
+    """Filesystem/object-store-safe form of a step id for a directory name."""
+    return _SAFE_COMPONENT.sub("_", name) or "_"
+
+
+def entry_dir_parts(step_id: str, step_hash: str) -> tuple[str, str]:
+    """Relative directory parts for a cached step: ``(step_dir, hash_key)``.
+
+    The entry lives at ``<step_id>/<hash[:16]>`` so the cache is browsable by
+    step name at the top level while a short hash component disambiguates
+    different computations of the same step (e.g. different params). Both parts
+    are deterministic from ``(step_id, step_hash)`` — data the reader already
+    has when it looks a step up — so a curated survey entry and a user run
+    resolve to the same directory in every environment. The **full** step hash
+    remains the authoritative identity in the sidecar (see
+    :data:`_ENTRY_HASH_LEN`).
+
+    Trade-off: because the step id is in the path, two *differently named*
+    steps with an identical computation no longer share one entry. In practice
+    this is nearly vacuous — forks keep upstream step ids, so shared subgraphs
+    still dedupe — and it buys direct filesystem browsability.
+    """
+    return _sanitize_component(step_id), step_hash[:_ENTRY_HASH_LEN]
+
+
+def generate_run_id() -> str:
+    """Short, collision-safe run identifier for the per-run artifact subdir.
+
+    Used as the artifact subdirectory inside each content-addressed cache
+    entry, so concurrent writers of the same step hash never share object
+    keys (the commit protocol's no-interleaving invariant). Kept compact to
+    conserve path length on Windows; the full run timestamp lives in the
+    sidecar's ``created_at`` and the manifest's ``started_at`` fields. The
+    six-hex random suffix (24 bits) distinguishes writers racing on the same
+    entry within the same second.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%H%M%S")
+    return f"{stamp}-{uuid.uuid4().hex[:6]}"
 
 
 CleanMode = Literal["intermediate", "all", "stale"]
@@ -83,16 +159,43 @@ def _referenced_pipeline_inputs(node: DAGNode) -> set[str]:
     return names
 
 
+def _info_checksum(info: dict[str, Any]) -> list[str] | None:
+    """Best-effort content checksum from an fsspec info/listing dict.
+
+    Prefers strong content hashes: gcsfs exposes ``md5Hash`` and ``crc32c``
+    in the same HEAD/LIST response; S3/HTTP backends expose ``ETag``. Returns
+    ``[algorithm, value]`` or ``None`` when the backend reports no checksum.
+    """
+    for key, alg in (
+        ("md5Hash", "md5"),
+        ("crc32c", "crc32c"),
+        ("ETag", "etag"),
+        ("etag", "etag"),
+    ):
+        value = info.get(key)
+        if value:
+            return [alg, str(value)]
+    return None
+
+
 def _remote_path_fingerprint(
     path_value: str,
     storage_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Stat-only fingerprint for an fsspec URL (gs://, s3://, ...).
+    """Content fingerprint for an fsspec URL (gs://, s3://, ...).
 
-    Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes.
-    Costs one HEAD/LIST per fingerprinted input per run. Credential or network
-    failures degrade to ``remote-unverified`` (a warning) rather than crashing
-    the hash computation, so a run without cloud auth still proceeds.
+    Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes,
+    preferring backend-reported content checksums (md5/crc32c/etag) over
+    modification time — on GCS, mtime is *upload* time, so re-uploading an
+    identical file would otherwise invalidate every downstream checkpoint.
+    Size + mtime remain the fallback when the backend reports no checksum.
+    Costs one HEAD/LIST per fingerprinted input per run.
+
+    Credential or network failures degrade to a ``remote-unverified``
+    fingerprint carrying a unique nonce: the input is treated as *changed*
+    (guaranteed cache miss) rather than crashing the hash computation. A
+    false miss recomputes; a false hit would silently reuse results built
+    from unverified remote state.
 
     ``storage_options`` is transport-only: it authenticates the stat calls but
     never enters the returned fingerprint (credentials must not change cache
@@ -108,28 +211,40 @@ def _remote_path_fingerprint(
         if info.get("type") == "directory":
             entries: list[dict[str, Any]] = []
             for entry in sorted(fs.ls(fs_path, detail=True), key=lambda e: e["name"]):
-                entries.append(
-                    {
-                        "name": entry["name"].rstrip("/").rsplit("/", 1)[-1],
-                        "kind": "dir" if entry.get("type") == "directory" else "file",
-                        "size": entry.get("size"),
-                    }
-                )
+                entry_fp: dict[str, Any] = {
+                    "name": entry["name"].rstrip("/").rsplit("/", 1)[-1],
+                    "kind": "dir" if entry.get("type") == "directory" else "file",
+                    "size": entry.get("size"),
+                }
+                checksum = _info_checksum(entry)
+                if checksum is not None:
+                    entry_fp["checksum"] = checksum
+                entries.append(entry_fp)
             return {"path": path_value, "kind": "dir", "entries": entries}
-        return {
+        fingerprint: dict[str, Any] = {
             "path": path_value,
             "kind": "file",
             "size": info.get("size"),
-            "mtime_ns": _info_mtime(info),
         }
+        checksum = _info_checksum(info)
+        if checksum is not None:
+            fingerprint["checksum"] = checksum
+        else:
+            fingerprint["mtime_ns"] = _info_mtime(info)
+        return fingerprint
     except Exception as exc:  # missing creds, transient network, driver absent
         warnings.warn(
             f"could not fingerprint remote path {path_value!r} ({exc}); "
-            "treating as unverified for cache keying",
+            "treating as changed for cache keying — this run will not reuse "
+            "cached results that depend on it",
             RuntimeWarning,
             stacklevel=2,
         )
-        return {"path": path_value, "kind": "remote-unverified"}
+        return {
+            "path": path_value,
+            "kind": "remote-unverified",
+            "nonce": uuid.uuid4().hex,
+        }
 
 
 def _info_mtime(info: dict[str, Any]) -> Any:
@@ -204,14 +319,17 @@ def _step_fingerprint(
 ) -> dict[str, Any]:
     """Content fingerprint of a single step's definition.
 
-    Captures everything that can change a step's outputs *locally*: its op,
-    input/param wiring, resolved params, mapping/sweep declarations, the
-    resolved implementation, and the values of any pipeline inputs the step
-    references. Upstream data dependencies are folded in separately via the
-    Merkle parent hashes in :func:`compute_step_hashes`.
+    Captures everything that can change a step's outputs *locally*: its cache
+    identity (``cache_key`` + explicit ``version`` levers — deliberately *not*
+    the op name / callable path / implementation key, so renames and refactors
+    stay cache-neutral), input/param wiring, resolved params, mapping/sweep
+    declarations, and the values of any pipeline inputs the step references.
+    Upstream data dependencies are folded in separately via the Merkle parent
+    hashes in :func:`compute_step_fingerprints`.
     """
     step = node.step
     impl = node.implementation
+    custom = step.custom_spec
     referenced = _referenced_pipeline_inputs(node)
     resolved_inputs = {name: pipeline_inputs.get(name) for name in sorted(referenced)}
     pipeline_input_paths = {
@@ -224,21 +342,33 @@ def _step_fingerprint(
         for name, declaration in sorted(node.spec.params.items())
         if getattr(declaration, "fingerprint_contents", False)
     }
+    if custom is None:
+        custom_dump = None
+    elif custom.cache_key is not None:
+        # A pinned cache_key makes callable renames / doc edits cache-neutral
+        # for custom steps too; everything semantic stays in the dump.
+        custom_dump = custom.model_dump(exclude={"callable_path", "description"})
+    else:
+        custom_dump = custom.model_dump()
     return {
-        "op": step.op,
+        "cache_key": (
+            (custom.cache_key if custom is not None else None)
+            or node.spec.cache_key
+            or step.op
+        ),
+        "version": (
+            (custom.version if custom is not None else None) or node.spec.version
+        ),
+        "impl_version": impl.version if impl is not None else None,
         "inputs": step.inputs,
         "params": step.params,
         "resolved_params": node.resolved_params,
         "map_over": step.map_over,
         "collect": step.collect,
         "sweep": step.sweep.model_dump() if step.sweep is not None else None,
-        "callable_path": impl.callable_path if impl is not None else None,
-        "implementation_key": impl.key if impl is not None else None,
         "param_map": impl.param_map if impl is not None else None,
         "output_map": impl.output_map if impl is not None else None,
-        "custom_spec": (
-            step.custom_spec.model_dump() if step.custom_spec is not None else None
-        ),
+        "custom_spec": custom_dump,
         "pipeline_inputs": resolved_inputs,
         "pipeline_input_paths": pipeline_input_paths,
         "param_paths": param_paths,
@@ -257,28 +387,50 @@ def _step_upstream(dag: PipelineDAG) -> dict[str, set[str]]:
     return upstream
 
 
-def compute_step_hashes(
+@dataclass
+class StepFingerprints:
+    """Per-step Merkle hashes plus the exact payloads that were hashed.
+
+    ``payloads`` maps each step id to the JSON-round-tripped payload whose
+    canonical serialization produced ``hashes[step_id]``. Persisting these in
+    checkpoint sidecars is what powers ``explain-cache``: a stored payload can
+    be diffed field-by-field against a recomputed one to report exactly why a
+    cache entry missed. Round-tripping through JSON means the stored object is
+    byte-equivalent to what was hashed (no ``default=str`` type skew).
+    """
+
+    hashes: dict[str, str]
+    payloads: dict[str, dict[str, Any]]
+
+
+def compute_step_fingerprints(
     dag: PipelineDAG,
     pipeline_inputs: dict[str, Any] | None = None,
     *,
     storage_options: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    """Per-step Merkle hashes used for content-addressed checkpoint validation.
+) -> StepFingerprints:
+    """Per-step Merkle hashes + hashed payloads for content-addressed caching.
 
     Each step's hash combines a fingerprint of the step's own definition (see
     :func:`_step_fingerprint`) with the hashes of every upstream step that
-    feeds one of its inputs. Because steps are visited in topological order,
-    every parent hash is available before its children are computed.
+    feeds one of its inputs, plus the recipe-level cache epoch
+    (``execution.cache_epoch``). Because steps are visited in topological
+    order, every parent hash is available before its children are computed.
 
     The practical effect: editing a step (e.g. changing a param on a late ML
     step) only changes that step's hash and the hashes of its descendants.
     Unaffected upstream checkpoints keep the same hash and are reused on the
-    next run, instead of the whole recipe being treated as new.
+    next run, instead of the whole recipe being treated as new. Bumping the
+    cache epoch changes *every* hash — the deliberate invalidate-everything
+    lever.
     """
     pipeline_inputs = pipeline_inputs or {}
     input_declarations = dag.recipe.inputs
+    hints = dag.recipe.execution
+    epoch = hints.cache_epoch if hints is not None else None
     upstream = _step_upstream(dag)
     hashes: dict[str, str] = {}
+    payloads: dict[str, dict[str, Any]] = {}
     for step_id in dag.topological_order:
         node = dag.nodes[step_id]
         fingerprint = _step_fingerprint(
@@ -286,13 +438,30 @@ def compute_step_hashes(
         )
         parents = sorted(p for p in upstream.get(step_id, set()) if p in hashes)
         parent_hashes = [hashes[p] for p in parents]
-        payload = json.dumps(
-            {"fingerprint": fingerprint, "parents": parent_hashes},
+        payload_bytes = json.dumps(
+            {"fingerprint": fingerprint, "parents": parent_hashes, "epoch": epoch},
             sort_keys=True,
             default=str,
         ).encode("utf-8")
-        hashes[step_id] = hashlib.sha256(payload).hexdigest()
-    return hashes
+        hashes[step_id] = hashlib.sha256(payload_bytes).hexdigest()
+        payloads[step_id] = json.loads(payload_bytes.decode("utf-8"))
+    return StepFingerprints(hashes=hashes, payloads=payloads)
+
+
+def compute_step_hashes(
+    dag: PipelineDAG,
+    pipeline_inputs: dict[str, Any] | None = None,
+    *,
+    storage_options: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Per-step Merkle hashes used for content-addressed checkpoint caching.
+
+    Thin wrapper over :func:`compute_step_fingerprints` for callers that only
+    need the hashes (the fingerprint payloads are discarded).
+    """
+    return compute_step_fingerprints(
+        dag, pipeline_inputs, storage_options=storage_options
+    ).hashes
 
 
 @dataclass
@@ -313,7 +482,7 @@ class ExecutionPlan:
 
 def plan_execution(
     dag: PipelineDAG,
-    checkpoints: CheckpointManager | None,
+    checkpoints: CheckpointStore | CheckpointManager | None,
     *,
     force: bool = False,
     regenerate_outputs: bool = False,
@@ -671,9 +840,28 @@ def _checkpoint_output_category(
     return OTHER_DATA_DIR
 
 
-def _checkpoint_artifact_stem(step_id: str, out_name: str) -> str:
-    """Return the original stem for on-disk checkpoint artifacts."""
-    return f"{step_id}_{out_name}"
+def _checkpoint_artifact_stem(out_name: str) -> str:
+    """Return the on-disk artifact stem for a step output.
+
+    Just the output name: the enclosing ``<step_id>/<hash>/<run_id>/`` path
+    already identifies the step, so repeating the step id in the filename only
+    consumes path length (which matters under Windows' MAX_PATH limit).
+    """
+    return out_name
+
+
+def _would_pickle(value: Any, preferred_format: str) -> bool:
+    """True when :func:`_serialize_output` would fall back to pickle.
+
+    Mirrors the serialization dispatch without writing anything, so the
+    tiered store can reject pickle-ineligible values *before* any artifact
+    lands in the shared survey tier.
+    """
+    import xarray as xr
+
+    if _is_echodata(value) or isinstance(value, (xr.DataArray, xr.Dataset)):
+        return preferred_format == "pickle"
+    return not _is_json_safe(value)
 
 
 def _write_pickle(target: StorageLocation, value: Any) -> None:
@@ -949,43 +1137,88 @@ def _deserialize_output(loc: StorageLocation, fmt: str) -> Any:
 
 @dataclass
 class _StepCacheMeta:
+    """Checkpoint sidecar (schema v2, content-addressed).
+
+    The sidecar is the *commit point* of a cache entry: it is written last
+    (after all artifacts), so an entry without its sidecar is invisible.
+    ``outputs`` paths are relative to the entry's ``<hash>`` directory and
+    start with the writing run's ``run_id`` segment.
+    """
+
     step_id: str
     step_hash: str
     outputs: dict[str, dict[str, str]]  # out_name -> {"path": str, "format": str}
     marker: bool = False
+    schema_version: int = CACHE_META_SCHEMA_VERSION
+    run_id: str | None = None
+    created_at: str | None = None
+    recipe: dict[str, str] | None = None  # {"name": ..., "version": ...}
+    fingerprint_payload: dict[str, Any] | None = None  # powers explain-cache
+    provenance_ref: str | None = None  # curated survey-tier entries only
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _StepCacheMeta:
-        # Accept both current format (step_hash) and legacy format (recipe_hash
-        # only). Legacy sidecars missing step_hash are treated as stale.
+        # Tolerant reader: accept v2, v1 (step_hash, no schema_version), and
+        # pre-v1 (recipe_hash only) sidecars. Missing new fields -> defaults.
         step_hash = data.get("step_hash") or data.get("recipe_hash", "")
         return cls(
             step_id=data["step_id"],
             step_hash=step_hash,
             outputs=data.get("outputs", {}),
             marker=bool(data.get("marker", False)),
+            schema_version=int(data.get("schema_version", 1)),
+            run_id=data.get("run_id"),
+            created_at=data.get("created_at"),
+            recipe=data.get("recipe"),
+            fingerprint_payload=data.get("fingerprint_payload"),
+            provenance_ref=data.get("provenance_ref"),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "step_id": self.step_id,
             "step_hash": self.step_hash,
             "marker": self.marker,
+            "run_id": self.run_id,
+            "created_at": self.created_at,
+            "recipe": self.recipe,
             "outputs": self.outputs,
+            "fingerprint_payload": self.fingerprint_payload,
+            "provenance_ref": self.provenance_ref,
         }
 
 
 class CheckpointManager:
-    """Read/write per-step checkpoints under an output directory or fsspec URL.
+    """Read/write content-addressed step checkpoints under a cache root.
 
-    Cache validity is keyed on a per-step hash (see :func:`compute_step_hashes`)
-    so that editing one step only invalidates that step and its descendants —
-    upstream checkpoints stay reusable.
+    Entries are addressed by ``<step_id>/<hash[:8]>`` (see
+    :func:`compute_step_fingerprints` and :func:`entry_dir_parts`)::
+
+        <root>/<step_id>/<hash[:8]>/meta.json                # commit point
+        <root>/<step_id>/<hash[:8]>/<run_id>/<zarr|json|other>/<out_name>.<ext>
+
+    The step id sits at the top level so the cache is browsable by step name;
+    the short hash component disambiguates different computations of the same
+    step (e.g. different params) and keeps paths under Windows' MAX_PATH. The
+    *full* step hash is stored in the sidecar and validated on every read, so
+    content is still addressed by the full hash — identical computations of the
+    *same* step dedupe naturally across recipes, users, and recipe versions
+    (two *differently named* steps with an identical computation no longer
+    share one entry — an accepted trade for browsability). The human-facing
+    context (recipe name, output formats, fingerprint payload) lives *inside*
+    the ``meta.json`` sidecar.
+    The sidecar is written last (artifacts first), so a partially written
+    entry is invisible; per-``run_id`` artifact directories mean concurrent
+    writers of the same entry never share object keys.
 
     ``output_dir`` may be a local path or an fsspec URL (e.g. ``gs://bucket/
-    recipe_cache``). Artifact paths in the meta sidecars are stored relative to
-    ``output_dir`` (POSIX separators) so a cache prefix is relocatable; legacy
-    absolute-path entries are still honored on read.
+    users/me/cache``). Artifact paths in sidecars are relative to the entry
+    directory (POSIX separators) so a cache prefix is relocatable;
+    absolute/URL entries are honored as external references.
+
+    Legacy (v1) step_id-addressed caches are *not* readable by this layout —
+    they simply miss and can be removed with ``clean(mode="all")``.
     """
 
     def __init__(
@@ -995,6 +1228,10 @@ class CheckpointManager:
         *,
         preferred_format: CheckpointFormat | str = "zarr",
         storage_options: Mapping[str, Any] | None = None,
+        payloads: Mapping[str, dict[str, Any]] | None = None,
+        run_id: str | None = None,
+        recipe_info: Mapping[str, str] | None = None,
+        provenance_ref: str | None = None,
     ) -> None:
         self.location = StorageLocation.parse(output_dir, storage_options)
         if not self.location.is_local and str(preferred_format) == "netcdf":
@@ -1006,26 +1243,58 @@ class CheckpointManager:
         self.output_dir = self.location.as_context_value()
         self._hashes = dict(hashes)
         self.preferred_format = preferred_format
+        self._payloads = dict(payloads) if payloads else {}
+        self.run_id = run_id or generate_run_id()
+        self._recipe_info = dict(recipe_info) if recipe_info else None
+        self.provenance_ref = provenance_ref
 
-    def _meta_path(self, step_id: str) -> StorageLocation:
-        return self.location / CACHE_METADATA_DIR / f"{step_id}{META_SUFFIX}"
+    # -- addressing ---------------------------------------------------------
+
+    def _entry_dir(self, step_id: str, step_hash: str) -> StorageLocation:
+        """Content-addressed entry directory for a step.
+
+        Addressed by ``<step_id>/<hash[:16]>`` (:func:`entry_dir_parts`) so the
+        cache is browsable by step name while the path stays short on Windows;
+        the full hash is validated from the sidecar on read.
+        """
+        step_dir, key = entry_dir_parts(step_id, step_hash)
+        return self.location / step_dir / key
+
+    def _require_hash(self, step_id: str) -> str:
+        step_hash = self._hashes.get(step_id)
+        if not step_hash:
+            raise ValueError(
+                f"no step hash known for {step_id!r}; content-addressed "
+                "checkpoints cannot be written without one"
+            )
+        return step_hash
+
+    def _meta_path(self, step_id: str) -> StorageLocation | None:
+        step_hash = self._hashes.get(step_id)
+        if not step_hash:
+            return None
+        return self._entry_dir(step_id, step_hash) / META_FILENAME
 
     def _iter_meta_paths(self) -> list[StorageLocation]:
-        meta_dir = self.location / CACHE_METADATA_DIR
-        if not meta_dir.exists():
+        """All entry sidecars under this root (any recipe), sorted for determinism."""
+        if not self.location.exists():
             return []
-        return sorted(meta_dir.glob(f"*{META_SUFFIX}"), key=lambda loc: loc.name)
+        return sorted(
+            self.location.glob(f"*/*/{META_FILENAME}"), key=lambda loc: str(loc)
+        )
 
-    def _entry_location(self, entry_path: str) -> StorageLocation:
-        """Resolve a meta ``path`` entry: relative joins onto the cache root;
-        absolute paths and URLs (legacy / external) are used as-is."""
+    def _artifact_location(
+        self, meta: _StepCacheMeta, entry_path: str
+    ) -> StorageLocation:
+        """Resolve a sidecar ``path`` entry: relative joins onto the entry's
+        hash directory; absolute paths and URLs (external) are used as-is."""
         if is_remote_url(entry_path) or Path(entry_path).is_absolute():
             return StorageLocation.parse(entry_path, self.location.storage_options)
-        return self.location / entry_path
+        return self._entry_dir(meta.step_id, meta.step_hash) / entry_path
 
     def _read_meta(self, step_id: str) -> _StepCacheMeta | None:
         loc = self._meta_path(step_id)
-        if not loc.exists():
+        if loc is None or not loc.exists():
             return None
         try:
             data = json.loads(loc.read_text())
@@ -1033,15 +1302,19 @@ class CheckpointManager:
             return None
         return _StepCacheMeta.from_dict(data)
 
+    # -- reads --------------------------------------------------------------
+
     def has_checkpoint(self, step_id: str) -> bool:
         meta = self._read_meta(step_id)
         if meta is None or meta.marker:
             return False
         expected = self._hashes.get(step_id)
+        # The entry was found *at* the hash address; the sidecar comparison
+        # stays as a corruption guard.
         if expected is None or meta.step_hash != expected:
             return False
         for entry in meta.outputs.values():
-            if not self._entry_location(entry["path"]).exists():
+            if not self._artifact_location(meta, entry["path"]).exists():
                 return False
         return True
 
@@ -1060,37 +1333,6 @@ class CheckpointManager:
         expected = self._hashes.get(step_id)
         return expected is not None and meta.step_hash == expected
 
-    def _write_meta(self, meta: _StepCacheMeta) -> None:
-        meta_loc = self._meta_path(meta.step_id)
-        (self.location / CACHE_METADATA_DIR).mkdir()
-        meta_loc.write_text(json.dumps(meta.to_dict(), indent=2))
-
-    def save_marker(self, step_id: str) -> None:
-        """Record that a side-effect (sink / no-output) step ran for this hash.
-
-        Writes a metadata-only sidecar (no serialized outputs) so a later run
-        with an unchanged per-step hash can skip re-generating the step's
-        on-disk side effects.
-        """
-        step_hash = self._hashes.get(step_id, "")
-        meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs={}, marker=True)
-        self._write_meta(meta)
-
-    def save(self, step_id: str, outputs: dict[str, Any]) -> None:
-        out_meta: dict[str, dict[str, str]] = {}
-        for out_name, value in outputs.items():
-            category = _checkpoint_output_category(
-                value, str(self.preferred_format)
-            )
-            category_loc = self.location / category
-            category_loc.mkdir()
-            base = category_loc / _checkpoint_artifact_stem(step_id, out_name)
-            target, fmt = _serialize_output(value, base, self.preferred_format)
-            out_meta[out_name] = {"path": f"{category}/{target.name}", "format": fmt}
-        step_hash = self._hashes.get(step_id, "")
-        meta = _StepCacheMeta(step_id=step_id, step_hash=step_hash, outputs=out_meta)
-        self._write_meta(meta)
-
     def load(self, step_id: str) -> dict[str, Any]:
         meta = self._read_meta(step_id)
         if meta is None:
@@ -1104,9 +1346,100 @@ class CheckpointManager:
         loaded: dict[str, Any] = {}
         for out_name, entry in meta.outputs.items():
             loaded[out_name] = _deserialize_output(
-                self._entry_location(entry["path"]), entry["format"]
+                self._artifact_location(meta, entry["path"]), entry["format"]
             )
         return loaded
+
+    def artifact_urls(self, step_id: str) -> dict[str, str]:
+        """Absolute artifact locations for a cached step (for run manifests)."""
+        meta = self._read_meta(step_id)
+        if meta is None:
+            return {}
+        return {
+            out_name: str(self._artifact_location(meta, entry["path"]))
+            for out_name, entry in meta.outputs.items()
+        }
+
+    def read_meta(self, step_id: str) -> _StepCacheMeta | None:
+        """Public tolerant sidecar read (None when absent/corrupt)."""
+        return self._read_meta(step_id)
+
+    def iter_entries(self) -> list[tuple[StorageLocation, _StepCacheMeta]]:
+        """Every parseable sidecar under this root (any recipe, any hash).
+
+        Powers ``explain-cache``: under content addressing a miss is simply an
+        absent key, so explaining one means scanning sidecars for entries with
+        a matching ``step_id`` and diffing their stored fingerprint payloads
+        against the recomputed ones.
+        """
+        entries: list[tuple[StorageLocation, _StepCacheMeta]] = []
+        for meta_loc in self._iter_meta_paths():
+            try:
+                data = json.loads(meta_loc.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            entries.append((meta_loc, _StepCacheMeta.from_dict(data)))
+        return entries
+
+    # -- writes -------------------------------------------------------------
+
+    def _build_meta(
+        self,
+        step_id: str,
+        step_hash: str,
+        outputs: dict[str, dict[str, str]],
+        *,
+        marker: bool = False,
+    ) -> _StepCacheMeta:
+        return _StepCacheMeta(
+            step_id=step_id,
+            step_hash=step_hash,
+            outputs=outputs,
+            marker=marker,
+            run_id=self.run_id,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            recipe=self._recipe_info,
+            fingerprint_payload=self._payloads.get(step_id),
+            provenance_ref=self.provenance_ref,
+        )
+
+    def _write_meta(self, meta: _StepCacheMeta) -> None:
+        entry_dir = self._entry_dir(meta.step_id, meta.step_hash)
+        entry_dir.mkdir()
+        (entry_dir / META_FILENAME).write_text(json.dumps(meta.to_dict(), indent=2))
+
+    def save_marker(self, step_id: str) -> None:
+        """Record that a side-effect (sink / no-output) step ran for this hash.
+
+        Writes a metadata-only sidecar (no serialized outputs) so a later run
+        with an unchanged per-step hash can skip re-generating the step's
+        on-disk side effects.
+        """
+        step_hash = self._require_hash(step_id)
+        self._write_meta(self._build_meta(step_id, step_hash, {}, marker=True))
+
+    def save(self, step_id: str, outputs: dict[str, Any]) -> None:
+        """Persist a step's outputs, committing with a sidecar-last write.
+
+        All artifacts land under ``<hash>/<run_id>/…`` first; the ``meta.json``
+        sidecar is written last, making the entry visible atomically.
+        """
+        step_hash = self._require_hash(step_id)
+        run_dir = self._entry_dir(step_id, step_hash) / self.run_id
+        out_meta: dict[str, dict[str, str]] = {}
+        for out_name, value in outputs.items():
+            category = _checkpoint_output_category(
+                value, str(self.preferred_format)
+            )
+            category_loc = run_dir / category
+            category_loc.mkdir()
+            base = category_loc / _checkpoint_artifact_stem(out_name)
+            target, fmt = _serialize_output(value, base, self.preferred_format)
+            out_meta[out_name] = {
+                "path": f"{self.run_id}/{category}/{target.name}",
+                "format": fmt,
+            }
+        self._write_meta(self._build_meta(step_id, step_hash, out_meta))
 
     def clean(
         self,
@@ -1115,47 +1448,72 @@ class CheckpointManager:
         *,
         dry_run: bool = False,
     ) -> list[StorageLocation]:
-        """Remove checkpoint files according to ``mode``; returns removed paths.
+        """Remove cache entries according to ``mode``; returns removed paths.
+
+        The removal unit is a whole ``<hash>`` entry directory (sidecar +
+        all run artifact dirs). Because a content-addressed root can hold
+        entries from *many* recipes, per-recipe judgments only apply to
+        entries whose ``step_id`` belongs to the given DAG.
 
         Modes:
-            ``intermediate``: drop checkpoints for intermediate steps only.
-                Steps explicitly marked ``checkpoint: always`` in the recipe
-                are protected and kept.
-            ``all``: drop every checkpoint and sidecar in the directory.
-                ``checkpoint: always`` marks are **not** protected.
-            ``stale``: drop only checkpoints whose hash does not match the
-                current recipe's per-step hash. ``checkpoint: always`` marks
-                are **not** protected because mismatched hashes are unusable
-                anyway.
+            ``intermediate``: drop entries for this DAG's intermediate steps
+                only. Steps explicitly marked ``checkpoint: always`` in the
+                recipe are protected and kept. Entries from other recipes are
+                untouched.
+            ``all``: drop every cache entry under the root, including legacy
+                (v1, step_id-addressed) cache directories. ``checkpoint:
+                always`` marks are **not** protected.
+            ``stale``: drop only entries for this DAG's steps whose hash does
+                not match the current per-step hash. Entries whose step ids
+                are unknown to this DAG are kept (they may belong to another
+                recipe sharing the cache root).
         """
         if not self.location.exists():
             return []
         _terminal, intermediate = classify_steps(dag)
         protected = explicit_checkpoint_steps(dag)
+        dag_step_ids = set(dag.nodes)
         removed: list[StorageLocation] = []
         for meta_loc in self._iter_meta_paths():
-            step_id = meta_loc.name[: -len(META_SUFFIX)]
             try:
                 data = json.loads(meta_loc.read_text())
             except (OSError, json.JSONDecodeError):
                 continue
             meta = _StepCacheMeta.from_dict(data)
+            step_id = meta.step_id
             if mode == "intermediate":
                 if step_id not in intermediate:
                     continue
                 if step_id in protected:
                     continue
             if mode == "stale":
+                if step_id not in dag_step_ids:
+                    continue  # another recipe's entry — keep
                 expected = self._hashes.get(step_id)
                 if expected is not None and meta.step_hash == expected:
                     continue
 
-            for entry in meta.outputs.values():
-                removed.append(self._entry_location(entry["path"]))
-            removed.append(meta_loc)
+            removed.append(meta_loc.parent)  # the whole <step_id>/<hash> entry dir
+
+        if mode == "all":
+            for legacy_dir in _LEGACY_CACHE_DIRS:
+                loc = self.location / legacy_dir
+                if loc.exists():
+                    removed.append(loc)
 
         if dry_run:
             return removed
+        # Remember the <step_id> parents so we can tidy up any that end up empty
+        # (each entry dir is <step_id>/<hash>; removing the last hash of a step
+        # would otherwise leave a stray empty step folder in a browsable cache).
+        step_parents = {
+            loc.parent
+            for loc in removed
+            if loc.name not in _LEGACY_CACHE_DIRS
+        }
         for loc in removed:
             loc.rm()
+        for parent in step_parents:
+            if parent.is_local and parent.exists() and not any(parent.glob("*")):
+                parent.rm()
         return removed

@@ -1,4 +1,5 @@
 op: create_surface_mask
+cache_key: create_surface_mask  # pinned cache identity - keep stable across op renames
 description: >
   Build a surface-interference mask from baseline Sv using a selectable method.
 category: masking

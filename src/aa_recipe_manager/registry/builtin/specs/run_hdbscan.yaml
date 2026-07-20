@@ -1,4 +1,5 @@
 op: run_hdbscan
+cache_key: run_hdbscan  # pinned cache identity - keep stable across op renames
 description: >
   Run HDBSCAN unsupervised clustering on normalized feature data.
   Pure-compute step: accepts normalized features and returns a clustering

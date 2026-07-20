@@ -1,4 +1,5 @@
 op: compute_mvbs
+cache_key: compute_mvbs  # pinned cache identity - keep stable across op renames
 description: >
   Compute Mean Volume Backscattering Strength by averaging Sv over range and
   time bins. Returns a gridded MVBS Dataset.

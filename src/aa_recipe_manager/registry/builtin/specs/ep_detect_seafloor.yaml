@@ -1,4 +1,5 @@
 op: ep_detect_seafloor
+cache_key: ep_detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
   Detect seafloor depth using echopype's bottom detection dispatcher and
   return a 1-D (ping_time,) DataArray. Dispatches to one of echopype's

@@ -1,4 +1,5 @@
 op: apply_sv_mask
+cache_key: apply_sv_mask  # pinned cache identity - keep stable across op renames
 description: >
   Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.
 category: masking

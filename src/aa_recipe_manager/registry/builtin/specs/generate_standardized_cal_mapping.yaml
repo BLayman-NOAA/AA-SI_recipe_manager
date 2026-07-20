@@ -1,4 +1,5 @@
 op: generate_standardized_cal_mapping
+cache_key: generate_standardized_cal_mapping  # pinned cache identity - keep stable across op renames
 description: >
   Read manufacturer calibration files, convert them to per-channel standardized
   files, match each raw channel to its calibration data, and return a mapping

@@ -1,4 +1,5 @@
 op: extract_standardized_cal_params
+cache_key: extract_standardized_cal_params  # pinned cache identity - keep stable across op renames
 description: >
   Extract calibration parameters (gain, sa-correction, EBA) and environmental
   parameters (sound speed, absorption) from standardized calibration files,

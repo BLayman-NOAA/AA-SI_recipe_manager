@@ -1,4 +1,5 @@
 op: plot_sv_echogram
+cache_key: plot_sv_echogram  # pinned cache identity - keep stable across op renames
 description: >
   Render an Sv echogram. Supports two call patterns: (1) single dataset,
   plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes

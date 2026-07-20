@@ -1,4 +1,5 @@
 op: initial_setup
+cache_key: initial_setup  # pinned cache identity - keep stable across op renames
 description: >
   Validate the raw file set in the input directory, create calibration output
   directories if they do not exist, and return a list of raw file paths and the

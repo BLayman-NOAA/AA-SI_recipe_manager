@@ -1,4 +1,5 @@
 op: log_seafloor_detection_stats
+cache_key: log_seafloor_detection_stats  # pinned cache identity - keep stable across op renames
 description: >
   Sink step. Compute and print summary statistics for seafloor detection across
   all available channels. For each channel, reports depth range (min/max),

@@ -1,4 +1,5 @@
 op: query_ncei_data
+cache_key: query_ncei_data  # pinned cache identity - keep stable across op renames
 description: >
   Query an NCEI acoustic data catalog for file listings within a time window.
   Returns a list of result records (file metadata), not the files themselves.

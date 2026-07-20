@@ -1,4 +1,5 @@
 op: plot_clustering_report
+cache_key: plot_clustering_report  # pinned cache identity - keep stable across op renames
 description: >
   Render a full clustering report for one or more clustering results. Produces
   the clustering echogram, per-cluster statistics report, and the HDBSCAN

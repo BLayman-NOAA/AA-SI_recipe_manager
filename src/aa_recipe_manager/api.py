@@ -588,6 +588,8 @@ def execute(
     checkpoint_steps: list[str] | None = None,
     checkpoint_format: str | None = None,
     storage_options: dict[str, Any] | None = None,
+    survey_cache_dir: str | Path | None = None,
+    cache_write_tier: str = "user",
     save_provenance: str | Path | None = None,
     progress: Any = None,
 ) -> Any:
@@ -658,6 +660,16 @@ def execute(
         and files, and remote-input cache fingerprinting authenticates with it.
         For Google Cloud Storage these are usually left ``None`` so gcsfs picks
         up Application Default Credentials.
+    survey_cache_dir:
+        Root of the shared (curated) survey cache tier. When set, cache reads
+        probe ``[user, survey]`` in order (the user tier is ``output_dir``);
+        writes still go only to the user tier unless ``cache_write_tier`` says
+        otherwise. Requires ``output_dir``.
+    cache_write_tier:
+        ``"user"`` (default) or ``"survey"``. ``"survey"`` marks this a
+        *curated* run: it reads and writes only the survey tier (side-effect
+        markers still go to the user tier) and rejects pickle-format
+        artifacts. Access control is enforced by bucket IAM, not this client.
     save_provenance:
         If provided, write the captured provenance as YAML at this path. When
         ``output_dir`` is set and this is None, a default sidecar named
@@ -671,6 +683,11 @@ def execute(
         raise ValueError(
             "no_checkpoints=True cannot be combined with checkpoint_mode or "
             "checkpoint_steps; pick one."
+        )
+    if no_checkpoints and (survey_cache_dir or cache_write_tier != "user"):
+        raise ValueError(
+            "no_checkpoints=True cannot be combined with survey_cache_dir or "
+            "cache_write_tier; the tiered cache requires checkpointing."
         )
     if output_dir is None and not no_checkpoints and (
         checkpoint_steps
@@ -711,6 +728,8 @@ def execute(
         checkpoint_steps=checkpoint_steps,
         checkpoint_format=checkpoint_format,
         storage_options=storage_options,
+        survey_cache_dir=survey_cache_dir,
+        cache_write_tier=cache_write_tier,
         progress=progress,
     )
 
@@ -770,3 +789,34 @@ def clean(
         storage_options=storage_options,
     )
     return manager.clean(dag, mode=mode, dry_run=dry_run)  # type: ignore[arg-type]
+
+
+def explain_cache(
+    recipe: str | Path | Recipe,
+    *,
+    inputs: dict[str, Any] | None = None,
+    output_dir: str | Path,
+    survey_cache_dir: str | Path | None = None,
+    storage_options: dict[str, Any] | None = None,
+) -> Any:
+    """Explain, per step, why the recipe would hit or miss the cache tiers.
+
+    Recomputes the recipe's current step fingerprints, probes the user (and
+    optional survey) cache roots for each hash, and — for misses — locates the
+    nearest stored entry with the same step id and reports exactly which
+    fingerprint field(s) diverged (a param value, an input checksum, the
+    cache epoch, an upstream change, ...).
+
+    Returns a :class:`aa_recipe_manager.explain.CacheExplanation` with a
+    ``format_text()`` human rendering and a ``to_dict()`` JSON form.
+    """
+    from aa_recipe_manager.explain import explain_cache as _explain
+
+    dag = _load_dag(recipe, input_values=inputs, check_versions=False)
+    return _explain(
+        dag,
+        inputs=inputs,
+        output_dir=output_dir,
+        survey_cache_dir=survey_cache_dir,
+        storage_options=storage_options,
+    )

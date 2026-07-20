@@ -1,4 +1,5 @@
 op: ep_add_splitbeam_angle
+cache_key: ep_add_splitbeam_angle  # pinned cache identity - keep stable across op renames
 description: >
   Add split-beam alongship and athwartship angle variables to an Sv Dataset
   using echopype's ``consolidate.add_splitbeam_angle``. The result preserves

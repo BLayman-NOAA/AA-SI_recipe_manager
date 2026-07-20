@@ -7,13 +7,18 @@ from aa_recipe_manager.executor.base import (
     NullProgressCallback,
     PipelineExecutor,
     ProgressCallback,
+    StepRecord,
 )
 from aa_recipe_manager.executor.checkpoint import (
     CheckpointManager,
     ExecutionPlan,
+    StepFingerprints,
     classify_steps,
+    compute_step_fingerprints,
     compute_step_hashes,
+    entry_dir_parts,
     explicit_checkpoint_steps,
+    generate_run_id,
     plan_execution,
     resolve_checkpoint_policy,
 )
@@ -29,17 +34,28 @@ from aa_recipe_manager.executor.runtime_context import (
     get_execution_context,
 )
 from aa_recipe_manager.executor.sequential import SequentialExecutor
+from aa_recipe_manager.executor.tiered import (
+    CheckpointStore,
+    TieredCheckpointStore,
+)
 
 __all__ = [
     "ExecutionResult",
     "NullProgressCallback",
     "PipelineExecutor",
     "ProgressCallback",
+    "StepRecord",
     "CheckpointManager",
+    "CheckpointStore",
+    "TieredCheckpointStore",
     "ExecutionPlan",
+    "StepFingerprints",
     "classify_steps",
+    "compute_step_fingerprints",
     "compute_step_hashes",
+    "entry_dir_parts",
     "explicit_checkpoint_steps",
+    "generate_run_id",
     "plan_execution",
     "resolve_checkpoint_policy",
     "RuntimeContext",

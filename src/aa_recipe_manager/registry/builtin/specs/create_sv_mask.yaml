@@ -1,4 +1,5 @@
 op: create_sv_mask
+cache_key: create_sv_mask  # pinned cache identity - keep stable across op renames
 description: >
   Optional convenience op that wraps the modular mask chain
   (detect_seafloor, create_surface_mask, create_frequency_mask, combine_masks).

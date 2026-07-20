@@ -1,4 +1,5 @@
 op: mask_sparse_bins
+cache_key: mask_sparse_bins  # pinned cache identity - keep stable across op renames
 description: >
   Remove spatiotemporal bins with fewer valid samples than a threshold,
   reducing noise in MVBS computation.

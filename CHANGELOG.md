@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — tiered content-addressed cache (Stage 7)
+
+**BREAKING (cache layout): all existing checkpoint caches are invalidated.**
+Checkpoint addressing flipped from a flat `step_id` scheme to content
+addressing keyed on the per-step Merkle hash, and the hash policy changed (see
+below). The on-disk/GCS layout is `<root>/<step_id>/<hash[:8]>/meta.json`
+with artifacts under `<hash[:8]>/<run_id>/<zarr|json|other>/<out_name>.<ext>`.
+The path components are kept deliberately short (an 8-hex hash key, a compact
+`run_id`, `zarr`/`json` format subdirs, and an output-name-only artifact
+filename) so deeply-nested Zarr stores with long internal variable names stay
+under Windows' 260-char `MAX_PATH` limit; use a short local cache root, or
+enable Windows long-path support, if you still hit the limit under a very deep
+directory. Old per-`step_id` entries are ignored — run `aa-recipe clean --all`
+once to sweep them, or start a fresh cache prefix.
+The step id sits at the **top level** so the cache stays browsable by step
+name (`ls` shows `combine_raw/`, `compute_sv/`, …); the short hash component
+disambiguates different computations of the same step and keeps deeply-nested
+Zarr stores under Windows' 260-char `MAX_PATH` limit. The *full* step hash is
+the authoritative identity in each entry's sidecar and is validated on every
+read, so content is still addressed by the full hash and a (astronomically
+unlikely) short-hash collision degrades to a cache miss, never a wrong result.
+Trade-off: two *differently named* steps with an identical computation no
+longer share one entry (forks keep step ids, so shared subgraphs still dedupe).
+Point your config's `output_dir` at a **per-user** cache root (e.g.
+`gs://…/users/<you>/cache`) rather than a per-run directory so your own runs
+and forked recipes dedupe against each other.
+
+- **Hash policy hardening:**
+  - Remote input fingerprints prefer content checksums (`md5Hash`/`crc32c`/
+    `ETag` from the same fsspec HEAD/LIST) over size+mtime — re-uploading an
+    identical raw file no longer invalidates downstream checkpoints (on GCS,
+    mtime is upload time). Unverifiable remote inputs now degrade to a
+    guaranteed *miss* (unique nonce) instead of a possible stale hit.
+  - Op identity uses a new spec `cache_key` (pinned to the current op name in
+    every builtin spec) plus explicit `version` fields on specs and
+    implementations — renaming an op or moving its callable is now
+    cache-neutral; bump `version` when behavior changes. `CustomSpec` gains
+    the same fields.
+  - New recipe-level `execution.cache_epoch` salt: bumping it deliberately
+    invalidates every cached result for the recipe.
+  - Fingerprint payloads are persisted in each sidecar (schema v2, with
+    `run_id`/`created_at`/recipe identity), powering `explain-cache`.
+- **Tiered `[user, survey]` cache:** new `survey_cache_dir` config key /
+  `--survey-cache-dir` flag adds a shared read tier; first hit wins. Writes go
+  to the user tier unless `--cache-write-tier survey` marks a *curated* run
+  (reads+writes only the survey tier; rejects pickle artifacts; bucket IAM is
+  the enforcement). Side-effect markers stay user-tier unconditionally. A
+  fork of a curated recipe automatically reuses the unchanged upstream steps
+  from the survey tier and stores only its changes in the user tier.
+- **Run manifest:** every run writes `<outputs>/manifest.json` — per-step
+  disposition (`computed` / `hit-user-cache` / `hit-survey-cache` / `pruned`
+  / `marker`), absolute artifact URIs, timings, tier roots, and status
+  (written on failures too).
+- **`explain-cache`** (new CLI command + `api.explain_cache`): reports, per
+  step, which tier hits — and on a miss, diffs the nearest stored entry's
+  fingerprint payload against the recomputed one to name the exact divergent
+  field (param value, input checksum, epoch, upstream change).
+- **Curated provenance + warn-only environment check:** curated runs publish
+  their provenance to `<survey_cache_dir>/provenance/{recipe}@{run_id}.json`
+  and stamp every sidecar with the ref; user runs that hit the survey tier
+  compare their environment against it and *warn* on version mismatches
+  (prominently for op-implementing packages) — never blocking the hit.
+  Mismatches are recorded in the result and manifest.
+- `aa-recipe clean` now honors the run config (`--config` / auto-discovery)
+  for `output_dir` and `storage_options`; `--stale` only removes entries
+  belonging to the given recipe (a content-addressed root can host many);
+  `--all` also sweeps legacy (pre-content-addressing) cache directories.
+- Curated partial runs should use `--checkpoint-mode eager` (or per-step
+  `checkpoint:` marks) so intermediate levels are actually persisted to the
+  survey tier.
+
 ### Fixed
 - EchoData checkpoints to a remote (`gs://`) cache were silently written to a
   local relative directory instead of the bucket (echopype 0.11.1's

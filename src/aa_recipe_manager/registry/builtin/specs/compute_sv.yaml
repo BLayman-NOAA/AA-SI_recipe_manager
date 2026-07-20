@@ -1,4 +1,5 @@
 op: compute_sv
+cache_key: compute_sv  # pinned cache identity - keep stable across op renames
 description: >
   Compute volume backscattering strength (Sv) from raw EchoData.
   When cal_params and env_params are supplied they are applied to the

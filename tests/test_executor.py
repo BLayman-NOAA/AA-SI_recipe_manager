@@ -85,15 +85,35 @@ class EchoData:
         return cls(p.read_text(encoding="utf-8"))
 
 
-def _meta_path(root: Path, step_id: str) -> Path:
-    return root / CACHE_METADATA_DIR / f"{step_id}__cache_meta.json"
+def _iter_meta(root: Path) -> list[dict[str, Any]]:
+    """All parsed sidecars under a content-addressed cache root."""
+    if not root.exists():
+        return []
+    return [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted(root.glob("*/*/meta.json"))
+    ]
+
+
+def _meta_for_step(root: Path, step_id: str) -> dict[str, Any] | None:
+    """Sidecar dict for a step id (scans entry dirs — test convenience)."""
+    for meta in _iter_meta(root):
+        if meta.get("step_id") == step_id:
+            return meta
+    return None
+
+
+def _artifact_path(root: Path, meta: dict[str, Any], out_name: str) -> Path:
+    """Absolute path of a sidecar artifact entry (relative to its hash dir)."""
+    from aa_recipe_manager.executor import entry_dir_parts
+
+    step_dir, key = entry_dir_parts(meta["step_id"], meta["step_hash"])
+    return root / step_dir / key / meta["outputs"][out_name]["path"]
 
 
 def _meta_names(root: Path) -> set[str]:
-    meta_dir = root / CACHE_METADATA_DIR
-    if not meta_dir.exists():
-        return set()
-    return {p.name for p in meta_dir.glob("*__cache_meta.json")}
+    """Step ids that have sidecars under the content-addressed root."""
+    return {meta["step_id"] for meta in _iter_meta(root)}
 
 
 def _install_helper_module() -> types.ModuleType:
@@ -1152,7 +1172,7 @@ class TestCheckpointing:
         out = tmp_path / "ckpt"
         manager = CheckpointManager(out, {"open_raw": "hash"}, preferred_format="netcdf")
         manager.save("open_raw", {"echodata": EchoData("vendor-specific")})
-        meta = json.loads(_meta_path(out, "open_raw").read_text(encoding="utf-8"))
+        meta = _meta_for_step(out, "open_raw")
 
         loaded = manager.load("open_raw")
 
@@ -1175,12 +1195,15 @@ class TestCheckpointing:
         out = tmp_path / "ckpt"
         manager = CheckpointManager(out, {"open_raw": "hash"})  # default = zarr
         manager.save("open_raw", {"echodata": EchoData("zarr-payload")})
-        meta = json.loads(_meta_path(out, "open_raw").read_text(encoding="utf-8"))
+        meta = _meta_for_step(out, "open_raw")
 
         assert meta["outputs"]["echodata"]["format"] == "echodata_zarr"
-        # Meta paths are stored relative to the cache root (POSIX separators).
-        assert Path(meta["outputs"]["echodata"]["path"]).parent == Path(ZARR_DATA_DIR)
-        assert (out / meta["outputs"]["echodata"]["path"]).exists()
+        # Meta paths are stored relative to the entry's <hash> dir and start
+        # with the writing run's run_id segment: <run_id>/<category>/<file>.
+        entry_path = Path(meta["outputs"]["echodata"]["path"])
+        assert entry_path.parent.name == ZARR_DATA_DIR
+        assert entry_path.parts[0] == meta["run_id"]
+        assert _artifact_path(out, meta, "echodata").exists()
         assert EchoData.last_zarr_kwargs["zarr_format"] == 2
         assert manager.has_checkpoint("open_raw")
 
@@ -1194,10 +1217,10 @@ class TestCheckpointing:
         ds = xr.Dataset({"value": ("x", [1, 2, 3])})
         manager.save("dataset_step", {"ds": ds})
 
-        meta = json.loads(_meta_path(out, "dataset_step").read_text(encoding="utf-8"))
+        meta = _meta_for_step(out, "dataset_step")
         assert meta["outputs"]["ds"]["format"] == "netcdf"
-        assert Path(meta["outputs"]["ds"]["path"]).parent == Path(OTHER_DATA_DIR)
-        assert (out / meta["outputs"]["ds"]["path"]).exists()
+        assert Path(meta["outputs"]["ds"]["path"]).parent.name == OTHER_DATA_DIR
+        assert _artifact_path(out, meta, "ds").exists()
 
         loaded = manager.load("dataset_step")
         assert list(loaded["ds"]["value"].values) == [1, 2, 3]
@@ -1209,10 +1232,10 @@ class TestCheckpointing:
         ds = xr.Dataset({"value": ("x", [10, 20, 30])})
         manager.save("sv_step", {"ds_Sv": ds})
 
-        meta = json.loads(_meta_path(out, "sv_step").read_text(encoding="utf-8"))
+        meta = _meta_for_step(out, "sv_step")
         assert meta["outputs"]["ds_Sv"]["format"] == "zarr"
-        assert Path(meta["outputs"]["ds_Sv"]["path"]).parent == Path(ZARR_DATA_DIR)
-        store = out / meta["outputs"]["ds_Sv"]["path"]
+        assert Path(meta["outputs"]["ds_Sv"]["path"]).parent.name == ZARR_DATA_DIR
+        store = _artifact_path(out, meta, "ds_Sv")
         zgroup = json.loads((store / ".zgroup").read_text(encoding="utf-8"))
         assert zgroup["zarr_format"] == 2
         assert manager.has_checkpoint("sv_step")
@@ -1227,10 +1250,10 @@ class TestCheckpointing:
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["x"], name="sig")
         manager.save("da_step", {"arr": da})
 
-        meta = json.loads(_meta_path(out, "da_step").read_text(encoding="utf-8"))
+        meta = _meta_for_step(out, "da_step")
         assert meta["outputs"]["arr"]["format"] == "zarr_da"
-        assert Path(meta["outputs"]["arr"]["path"]).parent == Path(ZARR_DATA_DIR)
-        store = out / meta["outputs"]["arr"]["path"]
+        assert Path(meta["outputs"]["arr"]["path"]).parent.name == ZARR_DATA_DIR
+        store = _artifact_path(out, meta, "arr")
         zgroup = json.loads((store / ".zgroup").read_text(encoding="utf-8"))
         assert zgroup["zarr_format"] == 2
 
@@ -1239,12 +1262,10 @@ class TestCheckpointing:
         assert isinstance(loaded["arr"], xr2.DataArray)
         assert list(loaded["arr"].values) == [1.0, 2.0, 3.0]
 
-    def test_checkpoint_artifact_stem_uses_original_names(self):
-        stem = _checkpoint_artifact_stem(
-            "add_aux_features",
-            "ds_ml_ready",
-        )
-        assert stem == "add_aux_features_ds_ml_ready"
+    def test_checkpoint_artifact_stem_is_output_name(self):
+        # The enclosing <step_id>/<hash>/<run_id>/ path identifies the step, so
+        # the artifact filename is just the output name (keeps paths short).
+        assert _checkpoint_artifact_stem("ds_ml_ready") == "ds_ml_ready"
 
 
 # ---------------------------------------------------------------------------
@@ -1267,14 +1288,19 @@ class TestCleanAndClassification:
         SequentialExecutor().execute(
             dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
         )
+        from aa_recipe_manager.executor import entry_dir_parts
+
         manager = CheckpointManager(out, compute_step_hashes(dag))
         removed = manager.clean(dag)
+        # Removal unit is the whole entry dir for each intermediate step
+        # (addressed by the truncated-hash key; hashes as written by the run,
+        # i.e. with its inputs).
+        hashes = compute_step_hashes(dag, {"seed": 1})
         removed_names = {p.name for p in removed}
-        assert "start__cache_meta.json" in removed_names
-        assert "first__cache_meta.json" in removed_names
-        assert "second__cache_meta.json" not in removed_names
-        assert _meta_path(out, "second").exists()
-        assert not _meta_path(out, "start").exists()
+        assert entry_dir_parts("start", hashes["start"])[1] in removed_names
+        assert entry_dir_parts("first", hashes["first"])[1] in removed_names
+        assert entry_dir_parts("second", hashes["second"])[1] not in removed_names
+        assert _meta_names(out) == {"second"}
 
     def test_clean_all_removes_everything(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
@@ -1567,7 +1593,7 @@ class TestExecutorCheckpointModes:
             checkpoint_mode="explicit",
         )
         meta_files = _meta_names(out)
-        assert meta_files == {"first__cache_meta.json"}
+        assert meta_files == {"first"}
 
     def test_terminal_mode_only_writes_leaf(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
@@ -1579,7 +1605,7 @@ class TestExecutorCheckpointModes:
             checkpoint_mode="terminal",
         )
         meta_files = _meta_names(out)
-        assert meta_files == {"second__cache_meta.json"}
+        assert meta_files == {"second"}
 
     def test_ad_hoc_checkpoint_steps_pin_resume_point(
         self, helper_module, tmp_path
@@ -1594,7 +1620,7 @@ class TestExecutorCheckpointModes:
             checkpoint_steps=["start"],
         )
         meta_files = _meta_names(out)
-        assert meta_files == {"start__cache_meta.json"}
+        assert meta_files == {"start"}
 
     def test_save_writes_under_explicit_mode(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
@@ -1607,7 +1633,7 @@ class TestExecutorCheckpointModes:
             checkpoint_mode="explicit",
         )
         meta_files = _meta_names(out)
-        assert meta_files == {"first__cache_meta.json"}
+        assert meta_files == {"first"}
 
     def test_save_respects_none_mode_integration(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
@@ -1622,7 +1648,7 @@ class TestExecutorCheckpointModes:
         )
         meta_files = _meta_names(out)
         # "always" forces save, "save" respects none
-        assert meta_files == {"start__cache_meta.json"}
+        assert meta_files == {"start"}
 
     def test_explicit_mode_resume_from_marked_step(
         self, helper_module, tmp_path
@@ -1661,7 +1687,7 @@ class TestExecutorCheckpointModes:
             dag, inputs={"seed": 1}, output_dir=out
         )
         meta_files = _meta_names(out)
-        assert meta_files == {"second__cache_meta.json"}
+        assert meta_files == {"second"}
 
 
 class TestCleanRespectsExplicitMarks:
@@ -1679,10 +1705,7 @@ class TestCleanRespectsExplicitMarks:
         manager.clean(dag, mode="intermediate")
         remaining = _meta_names(out)
         # "second" (terminal) and "first" (explicitly marked) both survive.
-        assert remaining == {
-            "first__cache_meta.json",
-            "second__cache_meta.json",
-        }
+        assert remaining == {"first", "second"}
 
     def test_all_mode_still_removes_explicit_checkpoints(
         self, helper_module, tmp_path

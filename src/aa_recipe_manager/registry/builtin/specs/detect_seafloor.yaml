@@ -1,4 +1,5 @@
 op: detect_seafloor
+cache_key: detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
   Detect seafloor depth across pings, returning a 1-D (ping_time,) DataArray.
   Multiple implementations are supported (.bot-based, algorithmic Sv-based,

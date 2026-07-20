@@ -121,7 +121,7 @@ def test_parse_remote_is_not_local():
 def test_truediv_joins_scheme_safely():
     loc = StorageLocation.parse("memory://cache/recipe_cache")
     child = loc / ZARR_DATA_DIR / "step_out.zarr"
-    assert child.url == "memory://cache/recipe_cache/zarr_data/step_out.zarr"
+    assert child.url == f"memory://cache/recipe_cache/{ZARR_DATA_DIR}/step_out.zarr"
     assert not child.is_local
 
 
@@ -203,12 +203,16 @@ def test_remote_checkpoint_zarr_dataset_round_trip():
     ds = xr.Dataset({"value": ("x", [10, 20, 30])})
     manager.save("sv", {"ds_Sv": ds})
 
+    # Content-addressed layout: <root>/<step_id>/<hash[:16]>/meta.json
     meta = json.loads(
-        StorageLocation.parse("memory://cache/recipe_cache/cache_metadata/sv__cache_meta.json").read_text()
+        StorageLocation.parse(
+            "memory://cache/recipe_cache/sv/h/meta.json"
+        ).read_text()
     )
     assert meta["outputs"]["ds_Sv"]["format"] == "zarr"
-    # Stored relative to the cache root (POSIX separators).
-    assert meta["outputs"]["ds_Sv"]["path"].startswith(f"{ZARR_DATA_DIR}/")
+    # Stored relative to the entry dir: <run_id>/<category>/<file>.
+    assert meta["outputs"]["ds_Sv"]["path"].startswith(f"{manager.run_id}/")
+    assert f"/{ZARR_DATA_DIR}/" in meta["outputs"]["ds_Sv"]["path"]
     assert manager.has_checkpoint("sv")
 
     loaded = manager.load("sv")
@@ -229,17 +233,19 @@ def test_remote_netcdf_checkpoint_format_rejected():
         )
 
 
-def test_legacy_absolute_path_meta_still_loads(tmp_path):
-    """A meta sidecar with an absolute artifact path (pre-relative-path caches)
-    must still resolve on load."""
+def test_absolute_path_meta_entry_still_loads(tmp_path):
+    """A sidecar with an absolute artifact path (external reference) must
+    still resolve on load — relative entries join onto the hash dir, but
+    absolute paths and URLs are honored as-is."""
     manager = CheckpointManager(tmp_path / "ckpt", {"s": "h"})
-    # Write a real json artifact, then a legacy meta pointing at its absolute path.
-    artifact = tmp_path / "ckpt" / "json_data" / "s_val.json"
+    # Write a real json artifact outside the entry dir, then a sidecar at the
+    # content address pointing at its absolute path.
+    artifact = tmp_path / "external" / "s_val.json"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text('{"legacy": true}', encoding="utf-8")
-    meta_dir = tmp_path / "ckpt" / CACHE_METADATA_DIR
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    (meta_dir / "s__cache_meta.json").write_text(
+    entry_dir = tmp_path / "ckpt" / "s" / "h"  # <step_id>/<hash[:16]>
+    entry_dir.mkdir(parents=True, exist_ok=True)
+    (entry_dir / "meta.json").write_text(
         json.dumps(
             {
                 "step_id": "s",

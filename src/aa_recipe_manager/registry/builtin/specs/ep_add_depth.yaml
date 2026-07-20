@@ -1,4 +1,5 @@
 op: ep_add_depth
+cache_key: ep_add_depth  # pinned cache identity - keep stable across op renames
 description: >
   Add a surface-referenced ``depth`` data variable to an Sv Dataset using
   echopype's ``consolidate.add_depth``. The result preserves all existing

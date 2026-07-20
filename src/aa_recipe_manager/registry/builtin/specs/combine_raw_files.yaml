@@ -1,4 +1,5 @@
 op: combine_raw_files
+cache_key: combine_raw_files  # pinned cache identity - keep stable across op renames
 description: >
   Lazily open per-file intermediate stores (zarr or netcdf paths) produced by
   read_raw_files, or combine in-memory EchoData objects (none mode), into a

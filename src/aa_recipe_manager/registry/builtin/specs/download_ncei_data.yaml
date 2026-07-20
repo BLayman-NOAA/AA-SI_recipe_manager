@@ -1,4 +1,5 @@
 op: download_ncei_data
+cache_key: download_ncei_data  # pinned cache identity - keep stable across op renames
 description: >
   Download raw acoustic files identified by an NCEI query result,
   along with any specified companion file extensions (.bot, .idx, etc.).
