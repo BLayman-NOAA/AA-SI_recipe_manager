@@ -96,10 +96,31 @@ class CustomSpec(BaseModel):
 
 
 class SweepDeclaration(BaseModel):
-    """Parameter-parallel execution for a step."""
+    """Parameter-parallel execution for a step.
+
+    Recipes may declare a sweep in the flat form documented in design.md §1.7
+    (param names directly under ``sweep:`` alongside an optional ``mode``)::
+
+        sweep:
+          min_cluster_size: [500, 1000, 1400, 2000]
+          mode: zip
+
+    or the explicit nested form (``param_lists:``). The validator below
+    normalizes the flat form into ``param_lists``.
+    """
 
     param_lists: dict[str, list[Any]]
     mode: Literal["zip", "grid"] = "zip"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_flat_form(cls, data: Any) -> Any:
+        """Fold flat ``sweep: {param: [...], mode: ...}`` into ``param_lists``."""
+        if not isinstance(data, dict) or "param_lists" in data:
+            return data
+        mode = data.get("mode", "zip")
+        param_lists = {k: v for k, v in data.items() if k != "mode"}
+        return {"param_lists": param_lists, "mode": mode}
 
 
 class StepExecutionHints(BaseModel):

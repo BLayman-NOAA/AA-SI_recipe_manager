@@ -41,11 +41,20 @@ from aa_recipe_manager.executor.tiered import (
 )
 from aa_recipe_manager.executor.invocation import (
     RuntimeContext,
+    _ElementContext,
     build_kwargs,
     extract_outputs,
     import_callable,
 )
 from aa_recipe_manager.executor.runtime_context import execution_context
+from aa_recipe_manager.parallel import (
+    MappedChain,
+    derive_instance_hash,
+    expand_sweep,
+    group_mapped_chains,
+    instance_discriminator,
+)
+from aa_recipe_manager.resolver.params import parse_ref
 from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
@@ -57,6 +66,24 @@ STANDARD_OUT_FILENAME = "standard_out.txt"
 MANIFEST_FILENAME = "manifest.json"
 _DEFAULT_OUTPUTS_DIRNAME = "outputs"
 _LOG_DESTINATIONS = ("file", "console", "both")
+
+
+def _fold_instance_outputs(
+    spec_outputs: dict[str, Any],
+    per_instance: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Collapse a mapped member's per-instance output dicts into lists.
+
+    Produces ``{output_name: [instance_0_value, instance_1_value, ...]}`` for
+    each declared output so a downstream ``collect`` step receives the fan-in
+    list (design.md §1.6). Members with no declared outputs fold to ``{}``.
+    """
+    if not spec_outputs:
+        return {}
+    return {
+        out_name: [inst.get(out_name) for inst in per_instance]
+        for out_name in spec_outputs
+    }
 
 
 class _Tee:
@@ -566,8 +593,43 @@ class SequentialExecutor:
                 f"{', '.join(blocking)}"
             )
 
+        # Mapped/swept steps fan out into per-instance chains (Stage 8). Group
+        # them so the whole chain runs at its first member; later members are
+        # covered there and skipped by the main loop.
+        chains = group_mapped_chains(dag)
+        chain_by_first = {c.member_ids[0]: c for c in chains}
+        chain_followers = {
+            mid for c in chains for mid in c.member_ids[1:]
+        }
+        step_index = {sid: i for i, sid in enumerate(step_ids, start=1)}
+
         for index, step_id in enumerate(step_ids, start=1):
             node = dag.nodes[step_id]
+            if step_id in chain_followers:
+                # Handled as part of its chain's first member.
+                continue
+            if step_id in chain_by_first:
+                self._run_mapped_chain(
+                    chain_by_first[step_id],
+                    dag=dag,
+                    result=result,
+                    runtime=runtime,
+                    pipeline_inputs=pipeline_inputs,
+                    checkpoints=checkpoints,
+                    policy=policy,
+                    step_hashes=step_hashes,
+                    execution_plan=execution_plan,
+                    resolved_output_dir=resolved_output_dir,
+                    resolved_outputs_dir=resolved_outputs_dir,
+                    resolved_temp_dir=resolved_temp_dir,
+                    storage_options=storage_options,
+                    force=force,
+                    progress=progress,
+                    log_sink=log_sink,
+                    step_index=step_index,
+                    total=total,
+                )
+                continue
             if skip_sinks and node.spec.sink:
                 result.logs.append(f"skip sink: {step_id}")
                 runtime.record(step_id, {})
@@ -713,11 +775,223 @@ class SequentialExecutor:
             log_sink.flush()
             progress.on_step_end(step_id, index, total, elapsed=elapsed)
 
+    def _run_mapped_chain(
+        self,
+        chain: MappedChain,
+        *,
+        dag: PipelineDAG,
+        result: ExecutionResult,
+        runtime: RuntimeContext,
+        pipeline_inputs: dict[str, Any],
+        checkpoints: TieredCheckpointStore | None,
+        policy: set[str],
+        step_hashes: dict[str, str],
+        execution_plan: Any,
+        resolved_output_dir: StorageLocation | None,
+        resolved_outputs_dir: StorageLocation | None,
+        resolved_temp_dir: StorageLocation | None,
+        storage_options: dict[str, Any] | None,
+        force: bool,
+        progress: ProgressCallback,
+        log_sink: _Tee,
+        step_index: dict[str, int],
+        total: int,
+    ) -> None:
+        """Fan out a mapped/swept chain: run every member once per instance.
+
+        Instances are the outer product of the ``map_over`` source elements and
+        the ``sweep`` combinations. Each instance runs in an ``_ElementContext``
+        so within-chain references resolve to *this* element (design.md §1.6);
+        each (member, instance) pair is checkpointed as its own content-
+        addressed entry. After all instances, each member's per-instance outputs
+        are folded into the global runtime as lists for the collector to read.
+        """
+        members = [dag.nodes[mid] for mid in chain.member_ids]
+        member_ids = chain.member_ids
+
+        swept_members = [m for m in members if m.is_swept]
+        if len(members) > 1 and swept_members:
+            raise PipelineExecutionError(
+                member_ids[0],
+                "sweep within a multi-step mapped chain is not supported; keep "
+                "the sweep on a single step (map_over + sweep on one step is "
+                "allowed).",
+            )
+
+        # A downstream cached terminal pruned this chain: skip all members.
+        if any(mid in execution_plan.pruned for mid in member_ids):
+            for mid in member_ids:
+                idx = step_index.get(mid, 0)
+                progress.on_step_start(mid, idx, total)
+                result.pruned_steps.append(mid)
+                result.step_dispositions[mid] = StepRecord(
+                    disposition="pruned", step_hash=step_hashes.get(mid)
+                )
+                result.logs.append(f"pruned: {mid} (mapped chain)")
+                progress.on_step_end(mid, idx, total, skipped=True, elapsed=0.0)
+            return
+
+        for mid in member_ids:
+            progress.on_step_start(mid, step_index.get(mid, 0), total)
+        chain_start = time.perf_counter()
+
+        # Resolve the fan-out source (single-item transparency: a non-list
+        # source runs the chain exactly once).
+        has_item = chain.source_ref is not None
+        if has_item:
+            parsed = parse_ref(chain.source_ref)
+            if parsed is None:
+                raise PipelineExecutionError(
+                    member_ids[0],
+                    f"map_over source {chain.source_ref!r} is not a "
+                    "${step.output} reference",
+                )
+            src_id, src_out = parsed
+            try:
+                source_val = runtime.get(src_id, src_out)
+            except KeyError as exc:
+                raise PipelineExecutionError(
+                    member_ids[0],
+                    f"map_over source {chain.source_ref!r} is unavailable: {exc}",
+                    original=exc,
+                ) from exc
+            source_list = source_val if isinstance(source_val, list) else [source_val]
+        else:
+            source_list = [None]
+
+        swept_member = swept_members[0] if swept_members else None
+        combos: list[dict[str, Any] | None] = (
+            list(expand_sweep(swept_member.sweep_declaration))
+            if swept_member is not None
+            else [None]
+        )
+
+        instances: list[tuple[int, Any, dict[str, Any] | None]] = []
+        flat = 0
+        for item in source_list:
+            for combo in combos:
+                instances.append((flat, item, combo))
+                flat += 1
+
+        member_outputs: dict[str, list[dict[str, Any]]] = {m: [] for m in member_ids}
+        member_stats: dict[str, list[int]] = {m: [0, 0] for m in member_ids}
+
+        log_sink.write(
+            f"\n=== mapped chain {member_ids} x {len(instances)} instance(s) ===\n"
+        )
+        log_sink.flush()
+
+        try:
+            for inst_index, item, combo in instances:
+                elem_ctx = _ElementContext(runtime, item=item)
+                for member in members:
+                    mid = member.step.id
+                    base_hash = step_hashes.get(mid)
+                    is_side_effect = member.spec.sink or not member.spec.outputs
+                    disc_kwargs: dict[str, Any] = {
+                        "index": inst_index,
+                        "param_overrides": combo,
+                    }
+                    if has_item:
+                        disc_kwargs["item"] = item
+                    inst_hash: str | None = None
+                    if (
+                        checkpoints is not None
+                        and base_hash
+                        and mid in policy
+                        and not is_side_effect
+                    ):
+                        inst_hash = derive_instance_hash(
+                            base_hash, instance_discriminator(**disc_kwargs)
+                        )
+
+                    if (
+                        inst_hash is not None
+                        and not force
+                        and checkpoints.has_checkpoint(mid, instance_hash=inst_hash)
+                    ):
+                        out = checkpoints.load(mid, instance_hash=inst_hash)
+                        member_stats[mid][1] += 1
+                    else:
+                        artifact_paths: list[str] = []
+                        with execution_context(
+                            mode="direct",
+                            output_dir=resolved_output_dir,
+                            step_id=mid,
+                            artifacts_dir=resolved_outputs_dir,
+                            temp_dir=resolved_temp_dir,
+                            storage_options=storage_options,
+                            artifact_sink=artifact_paths,
+                        ), redirect_stdout(log_sink), redirect_stderr(log_sink):
+                            out = self._execute_step(
+                                member, elem_ctx, pipeline_inputs,
+                                param_overrides=combo,
+                            )
+                        if inst_hash is not None and out:
+                            checkpoints.save(
+                                mid,
+                                out,
+                                artifacts=artifact_paths,
+                                instance_hash=inst_hash,
+                                instance_index=inst_index,
+                                instance_discriminator=instance_discriminator(
+                                    **disc_kwargs
+                                ),
+                            )
+                            out = checkpoints.load(mid, instance_hash=inst_hash)
+                        member_stats[mid][0] += 1
+                    elem_ctx.record(mid, out or {})
+                    member_outputs[mid].append(out or {})
+        except PipelineExecutionError as exc:
+            progress.on_step_end(
+                exc.step_id, step_index.get(exc.step_id, 0), total,
+                elapsed=time.perf_counter() - chain_start, error=exc,
+            )
+            raise
+
+        # Fold per-instance outputs into the global runtime as lists so a
+        # ``collect`` step reads the accumulated results (design.md §1.6).
+        elapsed = time.perf_counter() - chain_start
+        for member in members:
+            mid = member.step.id
+            folded = _fold_instance_outputs(member.spec.outputs, member_outputs[mid])
+            runtime.record(mid, folded)
+            result.outputs[mid] = folded
+            computed, hits = member_stats[mid]
+            if computed:
+                result.executed_steps.append(mid)
+            else:
+                result.skipped_steps.append(mid)
+            if computed == 0 and hits:
+                tier = (checkpoints.hit_tier(mid) if checkpoints else None) or "user"
+                disposition = f"hit-{tier}-cache"
+                write_tier = None
+            else:
+                disposition = "computed"
+                write_tier = (
+                    checkpoints.write_tier if (checkpoints and computed) else None
+                )
+            result.step_dispositions[mid] = StepRecord(
+                disposition=disposition,
+                step_hash=step_hashes.get(mid),
+                tier=write_tier,
+                elapsed_seconds=elapsed,
+            )
+            result.logs.append(
+                f"mapped {mid}: {computed + hits} instance(s) "
+                f"({computed} computed, {hits} cached)"
+            )
+            progress.on_step_end(
+                mid, step_index.get(mid, 0), total,
+                skipped=(computed == 0), elapsed=elapsed,
+            )
+
     def _execute_step(
         self,
         node: DAGNode,
-        runtime: RuntimeContext,
+        runtime: RuntimeContext | _ElementContext,
         pipeline_inputs: dict[str, Any],
+        param_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         step_id = node.step.id
         if node.implementation is None:
@@ -752,7 +1026,9 @@ class SequentialExecutor:
             setup_fn()
 
         try:
-            kwargs = build_kwargs(node, runtime, pipeline_inputs)
+            kwargs = build_kwargs(
+                node, runtime, pipeline_inputs, param_overrides=param_overrides
+            )
         except (KeyError, ValueError) as exc:
             raise PipelineExecutionError(
                 step_id,

@@ -16,6 +16,12 @@ from aa_recipe_manager.executor.checkpoint import (
     DEFAULT_OUTPUT_ROOT,
     OTHER_DATA_DIR,
 )
+from aa_recipe_manager.parallel import (
+    MappedChain,
+    expand_sweep,
+    group_mapped_chains,
+)
+from aa_recipe_manager.resolver.params import parse_ref
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import DAGNode, PipelineDAG
@@ -56,6 +62,8 @@ def _render_input_value(raw: Any, var_name_map: dict[tuple[str, str], str]) -> s
 def _render_single_ref(raw: Any, var_name_map: dict[tuple[str, str], str]) -> str:
     if not isinstance(raw, str):
         return repr(raw)
+    if raw.strip() == "${_item}":
+        return "_item"
     m_input = _INPUT_REF.fullmatch(raw)
     if m_input:
         return m_input.group(1)
@@ -70,6 +78,8 @@ def _render_param_value(raw: Any, var_name_map: dict[tuple[str, str], str]) -> s
     """Render a param value, resolving ${inputs.x} and ${step.output} refs."""
     if not isinstance(raw, str):
         return repr(raw)
+    if raw.strip() == "${_item}":
+        return "_item"
     # Full-match ${inputs.x}
     m = _INPUT_REF.fullmatch(raw)
     if m:
@@ -370,6 +380,7 @@ def _build_step_body_lines(
     var_name_map: dict[tuple[str, str], str],
     callable_aliases: dict[str, str],
     param_var_names: dict[str, str] | None = None,
+    extra_kwargs: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     if node.implementation is None:
         return [f"# TODO: no implementation found for op '{node.spec.op}'"]
@@ -403,6 +414,25 @@ def _build_step_body_lines(
             else:
                 value_expr = _render_param_value(raw_value, var_name_map)
             kwargs.append((callable_arg, value_expr))
+
+    # Collect auto-bind: mirror the executor (invocation.build_kwargs) — supply
+    # the accumulated fan-in list to the collector's port named after the
+    # collected output when the recipe does not wire it explicitly.
+    if step.collect is not None:
+        m_collect = _STEP_REF.fullmatch(step.collect)
+        if m_collect and m_collect.group(1) != "inputs":
+            s_id, out_name = m_collect.group(1), m_collect.group(2)
+            if out_name in node.spec.inputs and out_name not in step.inputs:
+                callable_arg = param_map.get(out_name, out_name)
+                if callable_arg not in {k for k, _ in kwargs}:
+                    kwargs.append(
+                        (callable_arg, var_name_map.get((s_id, out_name), f"{s_id}_{out_name}"))
+                    )
+
+    # Swept params (rendered as _sweep['<param>'] inside a sweep loop) and any
+    # other caller-supplied extra kwargs.
+    if extra_kwargs:
+        kwargs.extend(extra_kwargs)
 
     if len(kwargs) <= 2:
         args_str = ", ".join(f"{k}={v}" for k, v in kwargs)
@@ -713,6 +743,98 @@ def _build_cache_aware_step_lines(
     return code_lines
 
 
+def _mapped_chain_code_lines(
+    chain: MappedChain,
+    members: list[DAGNode],
+    var_name_map: dict[tuple[str, str], str],
+    callable_aliases: dict[str, str],
+) -> list[str]:
+    """Render a mapped/swept chain as a ``for`` loop that accumulates outputs.
+
+    Each member output gets a list accumulator (the name a downstream
+    ``collect`` step reads); inside the loop, references to a chain member
+    resolve to that iteration's local value, and ``${_item}`` becomes the loop
+    variable. Swept params render as ``_sweep['<param>']``.
+    """
+    lines: list[str] = []
+    accum: dict[tuple[str, str], str] = {}
+    for member in members:
+        mid = member.step.id
+        for out in member.spec.outputs:
+            av = var_name_map.get((mid, out), f"{mid}_{out}")
+            accum[(mid, out)] = av
+            lines.append(f"{av} = []")
+
+    # Within the loop, a chain member's output is a per-iteration local, not the
+    # accumulated list a collector reads.
+    local_map = dict(var_name_map)
+    for (mid, out), av in accum.items():
+        local_map[(mid, out)] = f"_iter_{av}"
+
+    swept_member = next((m for m in members if m.is_swept), None)
+
+    header_lines: list[str] = []
+    indent = ""
+    if chain.source_ref is not None:
+        parsed = parse_ref(chain.source_ref)
+        source_var = (
+            var_name_map.get(parsed, f"{parsed[0]}_{parsed[1]}")
+            if parsed is not None
+            else "None"
+        )
+        header_lines.append(f"for _item in {source_var}:")
+        indent = "    "
+    if swept_member is not None and swept_member.sweep_declaration is not None:
+        combos = expand_sweep(swept_member.sweep_declaration)
+        header_lines.append(f"{indent}for _sweep in {combos!r}:")
+        indent += "    "
+
+    body: list[str] = []
+    for member in members:
+        mid = member.step.id
+        extra: list[tuple[str, str]] | None = None
+        if member.is_swept and member.sweep_declaration is not None:
+            pmap = (member.implementation.param_map or {}) if member.implementation else {}
+            extra = [
+                (pmap.get(p, p), f"_sweep[{p!r}]")
+                for p in member.sweep_declaration.param_lists
+            ]
+        body.extend(
+            _build_step_body_lines(
+                mid, member, local_map, callable_aliases, extra_kwargs=extra
+            )
+        )
+        for out in member.spec.outputs:
+            body.append(f"{accum[(mid, out)]}.append({local_map[(mid, out)]})")
+
+    lines.extend(header_lines)
+    lines.extend(_indent_lines(body, prefix=indent))
+    return lines
+
+
+def _build_mapped_chain_cells(
+    chain: MappedChain,
+    dag: PipelineDAG,
+    var_name_map: dict[tuple[str, str], str],
+    callable_aliases: dict[str, str],
+    sources_by_step: dict[str, str],
+) -> list[nbformat.NotebookNode]:
+    """Markdown (per member) + one ``for``-loop code cell for a fan-out chain."""
+    members = [dag.nodes[mid] for mid in chain.member_ids]
+    kind = "map_over" if chain.source_ref is not None else "sweep"
+    cells: list[nbformat.NotebookNode] = []
+    for member in members:
+        mid = member.step.id
+        md = _build_step_markdown_source(
+            mid, member, source=sources_by_step.get(mid)
+        )
+        md += f"\n\n*Runs once per `{kind}` instance (fan-out loop).*"
+        cells.append(_md_cell(md))
+    code = _mapped_chain_code_lines(chain, members, var_name_map, callable_aliases)
+    cells.append(_code_cell("\n".join(code)))
+    return cells
+
+
 def _build_step_cells(
     step_id: str,
     node: DAGNode,
@@ -894,6 +1016,11 @@ def _build_notebook_cells(
     include_starts, include_ends, sources_by_step = _build_include_render_maps(
         dag, step_order
     )
+    # Mapped / swept steps render as a single fan-out loop cell at the chain's
+    # first member; later members are covered there and skipped.
+    chains = group_mapped_chains(dag)
+    chain_by_first = {c.member_ids[0]: c for c in chains}
+    chain_followers = {mid for c in chains for mid in c.member_ids[1:]}
     cells: list[nbformat.NotebookNode] = []
 
     cells.append(_build_title_cell(dag))
@@ -915,20 +1042,35 @@ def _build_notebook_cells(
     cells.append(_build_inputs_cell(dag, cache_aware=cache_aware))
 
     for step_id in step_order:
-        node = dag.nodes[step_id]
         for source, step_ids in include_starts.get(step_id, []):
             cells.append(_build_include_header_cell(source, step_ids))
-        cells.extend(
-            _build_step_cells(
-                step_id,
-                node,
-                var_name_map,
-                callable_aliases,
-                cache_aware=cache_aware,
-                include_tracker=include_tracker,
-                source=sources_by_step.get(step_id),
+        if step_id in chain_followers:
+            # Rendered as part of the chain's first member above.
+            for source in reversed(include_ends.get(step_id, [])):
+                cells.append(_build_include_footer_cell(source))
+            continue
+        if step_id in chain_by_first:
+            cells.extend(
+                _build_mapped_chain_cells(
+                    chain_by_first[step_id],
+                    dag,
+                    var_name_map,
+                    callable_aliases,
+                    sources_by_step,
+                )
             )
-        )
+        else:
+            cells.extend(
+                _build_step_cells(
+                    step_id,
+                    dag.nodes[step_id],
+                    var_name_map,
+                    callable_aliases,
+                    cache_aware=cache_aware,
+                    include_tracker=include_tracker,
+                    source=sources_by_step.get(step_id),
+                )
+            )
         for source in reversed(include_ends.get(step_id, [])):
             cells.append(_build_include_footer_cell(source))
 

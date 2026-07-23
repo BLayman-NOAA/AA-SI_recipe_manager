@@ -135,6 +135,8 @@ class DryRunEngine:
             param_specs = dict(node.spec.params) if node.spec.params else {}
             params = resolve_input_refs(node.step.params, input_values)
 
+            self._check_sweep_purity(step_id, node, report_warnings)
+
             if impl is None:
                 step_info = DryRunStepInfo(
                     step_id=step_id,
@@ -222,19 +224,66 @@ class DryRunEngine:
 
         return "ok", installed
 
+    def _check_sweep_purity(
+        self, step_id: str, node: Any, report_warnings: list[str]
+    ) -> None:
+        """Warn if a swept step looks impure (FR-18.7).
+
+        A swept step declaring the same type name for both an input and an
+        output suggests in-place mutation rather than a pure ``data in ->
+        results out`` function. This is a heuristic, so it warns (never errors);
+        the system cannot know for certain whether the callable mutates.
+        """
+        if node.step.sweep is None:
+            return
+        input_types = {
+            port.type for port in node.spec.inputs.values() if port.type
+        }
+        for out_name, out_port in node.spec.outputs.items():
+            if out_port.type and out_port.type in input_types:
+                report_warnings.append(
+                    f"Step '{step_id}': swept step declares type "
+                    f"'{out_port.type}' as both an input and output "
+                    f"('{out_name}'), suggesting in-place mutation; swept steps "
+                    "should be pure (data in -> results out) (FR-18.7)."
+                )
+                return
+
     def _build_mermaid(self, dag: PipelineDAG) -> str:
-        """Build a Mermaid graph TD string from the DAG."""
+        """Build a Mermaid graph TD string from the DAG.
+
+        Mapped / swept / collector nodes are tagged, and the synthetic
+        ``map_over`` / ``collect`` fan-out edges are drawn dotted so the
+        parallelism is visible in ``dry-run --visualize``.
+        """
         lines = ["graph TD"]
 
         for step_id, node in dag.nodes.items():
-            label = f"{step_id}\\n({node.spec.op})"
+            tags = []
+            if node.is_mapped:
+                tags.append("map")
+            if node.is_swept:
+                tags.append("sweep")
+            if node.is_collector:
+                tags.append("collect")
+            suffix = f"\\n[{' + '.join(tags)}]" if tags else ""
+            label = f"{step_id}\\n({node.spec.op}){suffix}"
             lines.append(f'    {step_id}["{label}"]')
 
         for edge in dag.edges:
             src = edge.source_step_id
             tgt = edge.target_step_id
             output = edge.source_output
-            if output:
+            # Synthetic fan-out edges (see dag_builder ``_MAP_OVER_TARGET`` /
+            # ``_COLLECT_TARGET``) are rendered dotted and labeled by directive.
+            if edge.target_input in ("__map_over__", "__collect__"):
+                kind = (
+                    "map_over"
+                    if edge.target_input == "__map_over__"
+                    else "collect"
+                )
+                lines.append(f'    {src} -. "{kind}: {output}" .-> {tgt}')
+            elif output:
                 lines.append(f'    {src} -->|"{output}"| {tgt}')
             else:
                 lines.append(f"    {src} --> {tgt}")

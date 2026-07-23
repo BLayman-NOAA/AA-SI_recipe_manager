@@ -123,6 +123,16 @@ def _resolve_includes(
             )
             child_raw = _apply_input_overrides(child_resolved.raw, overrides)
             child_steps = child_raw.get("steps") or []
+            # map_over on an include entry fans the *whole* sub-workflow out
+            # once per segment (FR-14.4): every included step becomes mapped
+            # over the same source so they form one mapped chain, and the
+            # sub-recipe's entry input is bound to ${_item} via input_overrides
+            # (e.g. ``input_overrides: {store_path: ${_item}}``).
+            map_over = step.get("map_over")
+            if map_over is not None:
+                for child in child_steps:
+                    if isinstance(child, dict) and not child.get("map_over"):
+                        child["map_over"] = map_over
             child_ids = _collect_step_ids(child_steps)
 
             for child_id in child_ids:

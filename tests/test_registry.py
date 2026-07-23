@@ -194,6 +194,7 @@ EXPECTED_BUILTIN_OPS = {
     "compute_per_cell_statistics",
     "filter_normalized_by_cluster",
     "merge_clustering_passes",
+    "merge_datasets",
 }
 
 

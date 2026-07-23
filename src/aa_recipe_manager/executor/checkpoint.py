@@ -1270,6 +1270,13 @@ class _StepCacheMeta:
     #: means the step ran and emitted nothing (verifiably present). Stored
     #: relative so the list stays portable across users/machines/tiers.
     artifacts: list[str] | None = None
+    #: Per-instance addressing (Stage 8 map_over/sweep). ``instance_index`` is
+    #: the ordinal within the fan-out; ``instance_discriminator`` records the
+    #: content (sweep params / mapped item) folded into ``step_hash`` so
+    #: ``explain-cache`` can show which instance an entry belongs to. ``None``
+    #: on ordinary (non-fanned-out) step entries.
+    instance_index: int | None = None
+    instance_discriminator: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _StepCacheMeta:
@@ -1289,6 +1296,8 @@ class _StepCacheMeta:
             fingerprint_payload=data.get("fingerprint_payload"),
             provenance_ref=data.get("provenance_ref"),
             artifacts=list(artifacts) if artifacts is not None else None,
+            instance_index=data.get("instance_index"),
+            instance_discriminator=data.get("instance_discriminator"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1304,6 +1313,8 @@ class _StepCacheMeta:
             "fingerprint_payload": self.fingerprint_payload,
             "provenance_ref": self.provenance_ref,
             "artifacts": self.artifacts,
+            "instance_index": self.instance_index,
+            "instance_discriminator": self.instance_discriminator,
         }
 
 
@@ -1387,8 +1398,10 @@ class CheckpointManager:
             )
         return step_hash
 
-    def _meta_path(self, step_id: str) -> StorageLocation | None:
-        step_hash = self._hashes.get(step_id)
+    def _meta_path(
+        self, step_id: str, step_hash: str | None = None
+    ) -> StorageLocation | None:
+        step_hash = step_hash or self._hashes.get(step_id)
         if not step_hash:
             return None
         return self._entry_dir(step_id, step_hash) / META_FILENAME
@@ -1410,8 +1423,10 @@ class CheckpointManager:
             return StorageLocation.parse(entry_path, self.location.storage_options)
         return self._entry_dir(meta.step_id, meta.step_hash) / entry_path
 
-    def _read_meta(self, step_id: str) -> _StepCacheMeta | None:
-        loc = self._meta_path(step_id)
+    def _read_meta(
+        self, step_id: str, step_hash: str | None = None
+    ) -> _StepCacheMeta | None:
+        loc = self._meta_path(step_id, step_hash)
         if loc is None or not loc.exists():
             return None
         try:
@@ -1422,11 +1437,11 @@ class CheckpointManager:
 
     # -- reads --------------------------------------------------------------
 
-    def has_checkpoint(self, step_id: str) -> bool:
-        meta = self._read_meta(step_id)
+    def has_checkpoint(self, step_id: str, *, instance_hash: str | None = None) -> bool:
+        expected = instance_hash or self._hashes.get(step_id)
+        meta = self._read_meta(step_id, expected)
         if meta is None or meta.marker:
             return False
-        expected = self._hashes.get(step_id)
         # The entry was found *at* the hash address; the sidecar comparison
         # stays as a corruption guard.
         if expected is None or meta.step_hash != expected:
@@ -1451,11 +1466,13 @@ class CheckpointManager:
         expected = self._hashes.get(step_id)
         return expected is not None and meta.step_hash == expected
 
-    def load(self, step_id: str) -> dict[str, Any]:
-        meta = self._read_meta(step_id)
+    def load(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> dict[str, Any]:
+        expected = instance_hash or self._hashes.get(step_id)
+        meta = self._read_meta(step_id, expected)
         if meta is None:
             raise FileNotFoundError(f"no checkpoint metadata for step {step_id!r}")
-        expected = self._hashes.get(step_id)
         if expected is None or meta.step_hash != expected:
             raise ValueError(
                 f"checkpoint for step {step_id!r} was written from a "
@@ -1525,6 +1542,8 @@ class CheckpointManager:
         *,
         marker: bool = False,
         artifacts: list[str] | None = None,
+        instance_index: int | None = None,
+        instance_discriminator: dict[str, Any] | None = None,
     ) -> _StepCacheMeta:
         return _StepCacheMeta(
             step_id=step_id,
@@ -1537,6 +1556,8 @@ class CheckpointManager:
             fingerprint_payload=self._payloads.get(step_id),
             provenance_ref=self.provenance_ref,
             artifacts=list(artifacts) if artifacts is not None else None,
+            instance_index=instance_index,
+            instance_discriminator=instance_discriminator,
         )
 
     def _write_meta(self, meta: _StepCacheMeta) -> None:
@@ -1564,6 +1585,9 @@ class CheckpointManager:
         outputs: dict[str, Any],
         *,
         artifacts: list[str] | None = None,
+        instance_hash: str | None = None,
+        instance_index: int | None = None,
+        instance_discriminator: dict[str, Any] | None = None,
     ) -> None:
         """Persist a step's outputs, committing with a sidecar-last write.
 
@@ -1571,8 +1595,13 @@ class CheckpointManager:
         sidecar is written last, making the entry visible atomically.
         ``artifacts`` records any user-facing files the step wrote (relative to
         the outputs dir), separate from the cached data ``outputs``.
+
+        When ``instance_hash`` is given (Stage 8 map_over/sweep fan-out), the
+        entry is addressed at that hash instead of the step's base hash, so each
+        mapped/swept instance is its own content-addressed entry under
+        ``<step_id>/<instance_hash[:8]>/``.
         """
-        step_hash = self._require_hash(step_id)
+        step_hash = instance_hash or self._require_hash(step_id)
         run_dir = self._entry_dir(step_id, step_hash) / self.run_id
         out_meta: dict[str, dict[str, str]] = {}
         for out_name, value in outputs.items():
@@ -1588,7 +1617,14 @@ class CheckpointManager:
                 "format": fmt,
             }
         self._write_meta(
-            self._build_meta(step_id, step_hash, out_meta, artifacts=artifacts)
+            self._build_meta(
+                step_id,
+                step_hash,
+                out_meta,
+                artifacts=artifacts,
+                instance_index=instance_index,
+                instance_discriminator=instance_discriminator,
+            )
         )
 
     def clean(
@@ -1639,6 +1675,12 @@ class CheckpointManager:
             if mode == "stale":
                 if step_id not in dag_step_ids:
                     continue  # another recipe's entry — keep
+                # Per-instance (map_over/sweep) entries are addressed by a
+                # runtime-derived instance hash, not the step's base hash, so
+                # they never match here; keep them rather than nuke valid
+                # instance caches. Use ``all`` / ``intermediate`` to clear them.
+                if meta.instance_index is not None:
+                    continue
                 expected = self._hashes.get(step_id)
                 if expected is not None and meta.step_hash == expected:
                     continue

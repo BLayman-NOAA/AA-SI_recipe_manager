@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 _EDGE_REF = re.compile(r"^\$\{(\w+)\.(\w+)\}$")
 _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
+# The current-element token available inside a mapped (map_over) step.
+_ITEM_TOKEN = "${_item}"
+
 
 # ---------------------------------------------------------------------------
 # Runtime context
@@ -73,6 +76,49 @@ class RuntimeContext:
 
     def as_dict(self) -> dict[str, dict[str, Any]]:
         return {sid: dict(outs) for sid, outs in self._data.items()}
+
+
+class _ElementContext:
+    """Per-element view over a ``RuntimeContext`` for one mapped/swept instance.
+
+    Implements the design.md §1.6 element-isolation rule: within-chain step
+    outputs and the ``${_item}`` current element come from this element's own
+    store, while upstream (non-chain) outputs read through to the parent
+    ``RuntimeContext``. A reference to a chain member resolves to *this*
+    element's output because the chain records each member into ``_store`` as
+    it executes; a reference to an upstream step is absent from ``_store`` and
+    falls through to the parent's full-list-free scalar value.
+    """
+
+    def __init__(self, parent: RuntimeContext, item: Any = None) -> None:
+        self._parent = parent
+        self._item = item
+        self._store: dict[str, dict[str, Any]] = {}
+
+    @property
+    def current_item(self) -> Any:
+        return self._item
+
+    def record(self, step_id: str, outputs: dict[str, Any]) -> None:
+        self._store[step_id] = dict(outputs)
+
+    def has_step(self, step_id: str) -> bool:
+        return step_id in self._store or self._parent.has_step(step_id)
+
+    def get(self, step_id: str, output_name: str) -> Any:
+        if step_id in self._store:
+            outputs = self._store[step_id]
+            if output_name not in outputs:
+                raise KeyError(
+                    f"step {step_id!r} did not produce output {output_name!r}"
+                )
+            return outputs[output_name]
+        return self._parent.get(step_id, output_name)
+
+    def step_outputs(self, step_id: str) -> dict[str, Any]:
+        if step_id in self._store:
+            return dict(self._store[step_id])
+        return self._parent.step_outputs(step_id)
 
 
 # ---------------------------------------------------------------------------
@@ -127,17 +173,23 @@ _SENTINEL_MISSING = object()
 
 def _resolve_single_ref(
     raw: Any,
-    runtime: RuntimeContext,
+    runtime: RuntimeContext | _ElementContext,
     pipeline_inputs: dict[str, Any],
 ) -> Any:
     """Resolve a single value (not a fan-in list).
 
     Returns ``_SENTINEL_MISSING`` if a ``${inputs.x}`` reference cannot be
     satisfied; callers decide whether to skip the argument (optional) or
-    raise.
+    raise. The ``${_item}`` token resolves to the current mapped element when
+    ``runtime`` is an ``_ElementContext``.
     """
     if not isinstance(raw, str):
         return raw
+    if raw.strip() == _ITEM_TOKEN:
+        item = getattr(runtime, "current_item", _SENTINEL_MISSING)
+        if item is _SENTINEL_MISSING:
+            raise KeyError("${_item} referenced outside of a mapped step")
+        return item
     m_edge = _EDGE_REF.match(raw)
     if m_edge:
         step_id, output_name = m_edge.group(1), m_edge.group(2)
@@ -162,7 +214,7 @@ def _resolve_single_ref(
 
 def _resolve_value(
     raw: Any,
-    runtime: RuntimeContext,
+    runtime: RuntimeContext | _ElementContext,
     pipeline_inputs: dict[str, Any],
 ) -> Any:
     """Resolve an input/param value, expanding fan-in lists element-wise."""
@@ -181,8 +233,9 @@ def _resolve_value(
 
 def build_kwargs(
     node: DAGNode,
-    runtime: RuntimeContext,
+    runtime: RuntimeContext | _ElementContext,
     pipeline_inputs: dict[str, Any] | None = None,
+    param_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge resolved inputs and params into the callable's keyword arguments.
 
@@ -191,6 +244,10 @@ def build_kwargs(
     callable's actual argument names. Pipeline-level ``${inputs.x}``
     references that have no value in ``pipeline_inputs`` are skipped so the
     callable's own default is preserved.
+
+    ``param_overrides`` carries a swept instance's per-invocation param values
+    (one combination from ``sweep.param_lists``); they take priority over the
+    step's static params and then flow through ``param_map`` like any param.
     """
     if node.implementation is None:
         raise ValueError(
@@ -214,10 +271,12 @@ def build_kwargs(
             )
         kwargs[callable_arg] = value
 
-    # resolved_params takes priority; step.params fills in any unreplaced keys.
+    # resolved_params takes priority; step.params fills in any unreplaced keys;
+    # sweep overrides win over both.
     merged_params = {
         **{k: v for k, v in node.step.params.items() if k not in node.resolved_params},
         **node.resolved_params,
+        **(param_overrides or {}),
     }
     for param_name, raw_value in merged_params.items():
         callable_arg = param_map.get(param_name, param_name)
@@ -231,6 +290,21 @@ def build_kwargs(
                 f"unknown pipeline input"
             )
         kwargs[callable_arg] = value
+
+    # Collect auto-bind: ``collect: ${S.out}`` supplies the accumulated fan-in
+    # list to the collector's input port named ``out`` when the recipe does not
+    # wire it explicitly (the mapped step's folded list lives in the runtime
+    # under ``S.out``). Recipes may instead wire ``${S.out}`` into any input
+    # directly, in which case the normal input loop above already handled it.
+    collect = node.step.collect
+    if collect is not None:
+        m_collect = _EDGE_REF.match(collect)
+        if m_collect and m_collect.group(1) != "inputs":
+            s_id, out_name = m_collect.group(1), m_collect.group(2)
+            if out_name in node.spec.inputs and out_name not in node.step.inputs:
+                callable_arg = param_map.get(out_name, out_name)
+                if callable_arg not in kwargs:
+                    kwargs[callable_arg] = runtime.get(s_id, out_name)
 
     return kwargs
 

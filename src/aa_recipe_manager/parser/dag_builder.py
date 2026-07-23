@@ -28,8 +28,22 @@ from aa_recipe_manager.model.types import (
     Step,
 )
 from aa_recipe_manager.registry.registry import Registry
-from aa_recipe_manager.resolver.params import extract_edge_refs, resolve_input_refs
+from aa_recipe_manager.resolver.params import (
+    contains_item_ref,
+    extract_edge_refs,
+    parse_ref,
+    resolve_input_refs,
+)
 from aa_recipe_manager.storage import is_remote_url
+
+# Synthetic edge target-input sentinels for the map_over / collect directives.
+# These live on dedicated Step fields (not inputs/params), so extract_edge_refs
+# never sees them; we materialize them as ordering edges so the topological sort
+# runs the segment producer before a mapped step and a mapped step before its
+# collector, and so dangling-reference validation covers them.
+_MAP_OVER_TARGET = "__map_over__"
+_COLLECT_TARGET = "__collect__"
+_SYNTHETIC_TARGETS = frozenset({_MAP_OVER_TARGET, _COLLECT_TARGET})
 
 
 _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
@@ -112,10 +126,28 @@ def build_dag(
                 )
             )
 
+        # map_over / collect sources are dependency edges too.
+        for source_ref, target in (
+            (step.map_over, _MAP_OVER_TARGET),
+            (step.collect, _COLLECT_TARGET),
+        ):
+            parsed = parse_ref(source_ref)
+            if parsed is not None:
+                src_step, src_output = parsed
+                edges.append(
+                    DAGEdge(
+                        source_step_id=src_step,
+                        source_output=src_output,
+                        target_step_id=step.id,
+                        target_input=target,
+                    )
+                )
+
     valid_step_ids = {s.id for s in recipe.steps}
     _validate_pipeline_input_refs(recipe, nodes, errors)
     _validate_edges(edges, nodes, valid_step_ids, errors, warn_msgs)
     _validate_required_inputs(nodes, errors)
+    _validate_map_collect_sweep(nodes, errors, warn_msgs)
 
     if errors:
         raise RecipeValidationError(errors, warn_msgs)
@@ -255,7 +287,12 @@ def _validate_params(
     warn_msgs: list[str],
 ) -> None:
     """Check required params are present and emit type-mismatch warnings."""
+    swept = set(step.sweep.param_lists) if step.sweep is not None else set()
     for param_name, param_decl in spec.params.items():
+        # Swept params are supplied per-instance by the sweep block, not the
+        # step's static params, so they are neither missing nor mismatched here.
+        if param_name in swept:
+            continue
         value = resolved_params.get(param_name)
         if value is None and param_name not in resolved_params:
             value = param_decl.default
@@ -418,11 +455,129 @@ def _validate_required_inputs(
 ) -> None:
     """Check that all required spec inputs are wired in each step."""
     for node in nodes.values():
+        collect_port = _collect_bind_port(node)
         for input_name, port_decl in node.spec.inputs.items():
-            if port_decl.required and input_name not in node.step.inputs:
+            if not port_decl.required or input_name in node.step.inputs:
+                continue
+            # A collector auto-binds the accumulated list to the input port
+            # named after the collected output, so that port counts as wired.
+            if input_name == collect_port:
+                continue
+            errors.append(
+                f"Step '{node.step.id}': required input '{input_name}' is not wired."
+            )
+
+
+def _collect_bind_port(node: DAGNode) -> str | None:
+    """Return the input-port name a ``collect`` directive auto-binds to, if any.
+
+    ``collect: ${S.out}`` binds the accumulated list to the collector's input
+    port named ``out`` when the recipe does not wire it explicitly.
+    """
+    if not node.is_collector or node.collect_source is None:
+        return None
+    parsed = parse_ref(node.collect_source)
+    if parsed is None:
+        return None
+    _, output_name = parsed
+    return output_name if output_name in node.spec.inputs else None
+
+
+def _validate_map_collect_sweep(
+    nodes: dict[str, DAGNode],
+    errors: list[str],
+    warn_msgs: list[str],
+) -> None:
+    """Validate map_over / collect / sweep semantics (FR-14.6, FR-18.3)."""
+    for node in nodes.values():
+        step = node.step
+
+        if step.collect is not None:
+            parsed = parse_ref(step.collect)
+            if parsed is None:
                 errors.append(
-                    f"Step '{node.step.id}': required input '{input_name}' is not wired."
+                    f"Step '{step.id}': collect must be a ${{step.output}} "
+                    f"reference, got '{step.collect}'."
                 )
+            else:
+                src_id, _ = parsed
+                src = nodes.get(src_id)
+                if src is not None and not (src.is_mapped or src.is_swept):
+                    errors.append(
+                        f"Step '{step.id}': collect references step '{src_id}', "
+                        f"which is neither mapped (map_over) nor swept (sweep)."
+                    )
+
+        if step.map_over is not None:
+            parsed = parse_ref(step.map_over)
+            if parsed is None:
+                errors.append(
+                    f"Step '{step.id}': map_over must be a ${{step.output}} "
+                    f"reference, got '{step.map_over}'."
+                )
+            else:
+                src_id, src_out = parsed
+                src = nodes.get(src_id)
+                if src is not None:
+                    port = src.spec.outputs.get(src_out)
+                    if port is not None and port.type != "list" and not port.many:
+                        warn_msgs.append(
+                            f"Step '{step.id}': map_over source "
+                            f"'{src_id}.{src_out}' has declared type '{port.type}', "
+                            f"which is not a list; the step will run once unless the "
+                            f"value is a list at runtime (single-item transparency)."
+                        )
+
+        if step.sweep is not None:
+            _validate_sweep(step, node.spec, errors)
+
+        # ${_item} is only meaningful inside a mapped step.
+        if step.map_over is None:
+            for input_name, raw_value in step.inputs.items():
+                if contains_item_ref(raw_value):
+                    errors.append(
+                        f"Step '{step.id}': input '{input_name}' references "
+                        f"${{_item}} but the step has no map_over."
+                    )
+            for param_name, raw_value in step.params.items():
+                if contains_item_ref(raw_value):
+                    errors.append(
+                        f"Step '{step.id}': param '{param_name}' references "
+                        f"${{_item}} but the step has no map_over."
+                    )
+
+
+def _validate_sweep(step: Step, spec: Spec, errors: list[str]) -> None:
+    """Validate a step's sweep declaration (FR-18.3)."""
+    sweep = step.sweep
+    assert sweep is not None
+    if not sweep.param_lists:
+        errors.append(f"Step '{step.id}': sweep.param_lists is empty.")
+        return
+
+    for pname, values in sweep.param_lists.items():
+        if pname not in spec.params:
+            errors.append(
+                f"Step '{step.id}': sweep param '{pname}' is not a declared param "
+                f"of op '{step.op}'."
+            )
+        if pname in step.params:
+            errors.append(
+                f"Step '{step.id}': sweep param '{pname}' must not also appear in "
+                f"the step's params block."
+            )
+        if not isinstance(values, list) or len(values) == 0:
+            errors.append(
+                f"Step '{step.id}': sweep param '{pname}' must be a non-empty list."
+            )
+
+    if sweep.mode == "zip":
+        lengths = {len(v) for v in sweep.param_lists.values() if isinstance(v, list)}
+        if len(lengths) > 1:
+            errors.append(
+                f"Step '{step.id}': sweep mode 'zip' requires all param lists to have "
+                f"the same length; got lengths {sorted(lengths)}."
+            )
 
 
 def _validate_pipeline_input_refs(

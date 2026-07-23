@@ -16,6 +16,40 @@ _EDGE_REF = re.compile(r"^\$\{(\w+)\.(\w+)\}$")
 # Matches ${inputs.name} anywhere within a string
 _INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
+# The special current-element token available inside a mapped (map_over) step.
+_ITEM_TOKEN = "${_item}"
+
+
+def parse_ref(value: Any) -> tuple[str, str] | None:
+    """Return (step_id, output_name) if value is a single ${step.output} ref, else None.
+
+    ``${inputs.x}`` and the ``${_item}`` map token are not step-output
+    references and yield ``None``. Used to resolve the ``map_over`` / ``collect``
+    directives, which hold a single ``${step.output}`` string.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _EDGE_REF.match(value)
+    if match and match.group(1) != "inputs":
+        return match.group(1), match.group(2)
+    return None
+
+
+def is_item_ref(value: Any) -> bool:
+    """Return True if value is exactly the ``${_item}`` current-element token."""
+    return isinstance(value, str) and value.strip() == _ITEM_TOKEN
+
+
+def contains_item_ref(value: Any) -> bool:
+    """Return True if the ``${_item}`` token appears anywhere in a nested value."""
+    if isinstance(value, str):
+        return _ITEM_TOKEN in value
+    if isinstance(value, list):
+        return any(contains_item_ref(item) for item in value)
+    if isinstance(value, dict):
+        return any(contains_item_ref(item) for item in value.values())
+    return False
+
 
 def extract_edge_refs(step: Step) -> list[tuple[str, str, str, str]]:
     """Return DAG edge tuples from a step's input and param wiring.

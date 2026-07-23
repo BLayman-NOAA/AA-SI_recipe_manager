@@ -1,0 +1,90 @@
+# Segment-Parallel (per-file) MVBS Pipeline
+#
+# Stage 8 demonstration of the `map_over` + `collect` (segment-parallel)
+# pattern. `initial_setup` returns the list of raw file paths; the per-file
+# processing chain (read one file -> combine -> compute Sv -> compute MVBS)
+# is mapped over that list, so every file is processed independently and
+# checkpointed under its own content-addressed instance hash. `merge_mvbs`
+# then collects the per-file MVBS Datasets and concatenates them back into a
+# single survey MVBS along ping_time.
+#
+# This is the parallel analogue of processing_levels_pipeline.yaml's compute
+# path: instead of combining all raw files up front and processing the whole
+# survey at once, each file flows through the chain on its own.
+#
+# Usage: aa-recipe generate parallel_per_file_mvbs.yaml
+#        aa-recipe dry-run  parallel_per_file_mvbs.yaml --visualize
+
+recipe:
+  name: "parallel_per_file_mvbs"
+  description: "Per-file (map_over) Sv -> MVBS with a collect/merge fan-in."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  sonar_model:
+    type: str
+    default: "EK60"
+  range_bin:
+    type: str
+    default: "20m"
+  ping_time_bin:
+    type: str
+    default: "20s"
+
+steps:
+
+  # --- Survey-level: enumerate the raw files (runs once) ------------------
+  - id: setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+
+  # --- Per-file fan-out (map_over ${setup.raw_file_paths}) ----------------
+  # Every step below shares the same map_over source, so they form one mapped
+  # chain: for each raw file, read -> combine -> Sv -> MVBS run in order, and
+  # inter-step references resolve to that file's instance.
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${setup.raw_file_paths}
+    inputs:
+      raw_file_paths:
+        - ${_item}          # a single-element list: just this file
+    params:
+      sonar_model: ${inputs.sonar_model}
+      intermediate_format: "none"
+
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${setup.raw_file_paths}
+    inputs:
+      echodata: ${combine_raw.echodata}
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    map_over: ${setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  # --- Fan-in (collect): concatenate every file's MVBS --------------------
+  - id: merge_mvbs
+    op: merge_datasets
+    collect: ${compute_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${compute_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"

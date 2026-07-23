@@ -37,13 +37,17 @@ CACHE_WRITE_TIERS = (USER_TIER, SURVEY_TIER)
 class CheckpointStore(Protocol):
     """The narrow checkpoint interface consumed by the planner and executors."""
 
-    def has_checkpoint(self, step_id: str) -> bool: ...
+    def has_checkpoint(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> bool: ...
 
     def has_marker(self, step_id: str) -> bool: ...
 
     def recorded_artifacts(self, step_id: str) -> list[str] | None: ...
 
-    def load(self, step_id: str) -> dict[str, Any]: ...
+    def load(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> dict[str, Any]: ...
 
     def save(
         self,
@@ -51,6 +55,9 @@ class CheckpointStore(Protocol):
         outputs: dict[str, Any],
         *,
         artifacts: list[str] | None = None,
+        instance_hash: str | None = None,
+        instance_index: int | None = None,
+        instance_discriminator: dict[str, Any] | None = None,
     ) -> None: ...
 
     def save_marker(
@@ -96,6 +103,8 @@ class TieredCheckpointStore:
                 [SURVEY_TIER] if survey is not None else []
             )
         self._hit_tier: dict[str, str] = {}
+        # Per-instance (map_over/sweep) hit tier, keyed by (step_id, instance_hash).
+        self._instance_hit_tier: dict[tuple[str, str], str] = {}
 
     # -- introspection (manifest / logging) ----------------------------------
 
@@ -147,10 +156,22 @@ class TieredCheckpointStore:
 
     # -- CheckpointStore interface -------------------------------------------
 
-    def has_checkpoint(self, step_id: str) -> bool:
+    def has_checkpoint(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> bool:
         for tier in self._read_order:
-            if self._managers[tier].has_checkpoint(step_id):
+            manager = self._managers[tier]
+            # Keep the non-fanout call signature identical so plain test doubles
+            # and any narrow-interface callers stay compatible.
+            found = (
+                manager.has_checkpoint(step_id, instance_hash=instance_hash)
+                if instance_hash is not None
+                else manager.has_checkpoint(step_id)
+            )
+            if found:
                 self._hit_tier[step_id] = tier
+                if instance_hash is not None:
+                    self._instance_hit_tier[(step_id, instance_hash)] = tier
                 return True
         return False
 
@@ -172,7 +193,22 @@ class TieredCheckpointStore:
                 return manager.recorded_artifacts(step_id)
         return None
 
-    def load(self, step_id: str) -> dict[str, Any]:
+    def load(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> dict[str, Any]:
+        if instance_hash is not None:
+            key = (step_id, instance_hash)
+            tier = self._instance_hit_tier.get(key)
+            if tier is None and self.has_checkpoint(
+                step_id, instance_hash=instance_hash
+            ):
+                tier = self._instance_hit_tier[key]
+            if tier is None:
+                raise FileNotFoundError(
+                    f"no checkpoint for step {step_id!r} instance "
+                    f"{instance_hash!r} in tiers {self._read_order}"
+                )
+            return self._managers[tier].load(step_id, instance_hash=instance_hash)
         manager = self._manager_for(step_id)
         if manager is not None:
             return manager.load(step_id)
@@ -189,6 +225,9 @@ class TieredCheckpointStore:
         outputs: dict[str, Any],
         *,
         artifacts: list[str] | None = None,
+        instance_hash: str | None = None,
+        instance_index: int | None = None,
+        instance_discriminator: dict[str, Any] | None = None,
     ) -> None:
         writer = self._managers[self.write_tier]
         if self.write_tier == SURVEY_TIER:
@@ -206,10 +245,23 @@ class TieredCheckpointStore:
                         "environments; only zarr/json artifacts are shared). "
                         "Run with the user write tier instead."
                     )
-        writer.save(step_id, outputs, artifacts=artifacts)
+        # Keep the non-fanout call signature identical for plain test doubles.
+        if instance_hash is None:
+            writer.save(step_id, outputs, artifacts=artifacts)
+        else:
+            writer.save(
+                step_id,
+                outputs,
+                artifacts=artifacts,
+                instance_hash=instance_hash,
+                instance_index=instance_index,
+                instance_discriminator=instance_discriminator,
+            )
         # The immediate save-then-reload round trip (and the manifest) must
         # resolve against the tier that now holds the entry.
         self._hit_tier[step_id] = self.write_tier
+        if instance_hash is not None:
+            self._instance_hit_tier[(step_id, instance_hash)] = self.write_tier
 
     # -- markers: user tier only, unconditionally ----------------------------
 

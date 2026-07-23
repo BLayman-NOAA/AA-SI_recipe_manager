@@ -1,0 +1,41 @@
+op: merge_datasets
+cache_key: merge_datasets  # pinned cache identity - keep stable across op renames
+description: >
+  Reconsolidate a collected list of xarray Datasets into a single Dataset by
+  concatenating along a dimension. This is the recipe system's fan-in (collect)
+  target for segment-parallel work: a mapped step that produces one Dataset per
+  data segment (e.g. per-file MVBS) is gathered via ``collect`` and merged back
+  into one Dataset along ``dim`` (default ``ping_time``). A single Dataset
+  passes through unchanged (single-item transparency).
+category: processing
+inputs:
+  datasets:
+    type: Dataset
+    many: true
+    description: >
+      Collected list of Datasets (one per mapped/swept instance), supplied by a
+      ``collect: ${mapped_step.output}`` directive on the recipe step.
+outputs:
+  merged:
+    type: Dataset
+    description: Single concatenated Dataset.
+params:
+  dim:
+    type: str
+    required: false
+    default: ping_time
+    description: Dimension to concatenate the collected Datasets along.
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.concat_datasets
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    param_map:
+      datasets: datasets
+      dim: dim
+    output_map:
+      merged: __return__

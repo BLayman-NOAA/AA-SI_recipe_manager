@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — segment-parallel & parameter-parallel execution (Stage 8)
+
+Recipes can now express fan-out / fan-in with `map_over`, `sweep`, and
+`collect`. All three were already modeled and folded into the cache hash; this
+stage makes them execute, generate code, validate, and checkpoint.
+
+- **`map_over: ${step.output}`** runs a step once per element of an upstream
+  list output. Consecutive steps sharing the same source form a *mapped chain*:
+  within it, `${_item}` is the current element and inter-step references
+  resolve to that element's instance (a child element context over the runtime
+  context). A non-list source runs the chain once (single-item transparency).
+- **`sweep`** runs a step once per parameter combination — `zip` (positional)
+  or `grid` (cartesian) — declared in the documented flat form
+  (`sweep: {param: [...], mode: zip}`) or the explicit `param_lists:` form.
+  `map_over` + `sweep` on one step takes the outer product.
+- **`collect: ${step.output}`** gathers all instance outputs of a mapped/swept
+  step into a list for a downstream fan-in step (wired explicitly or auto-bound
+  to a `many: true` input port named after the collected output).
+- **Per-instance content-addressed checkpoints:** each instance is its own
+  `<step_id>/<instance_hash[:8]>/` entry, where the instance hash folds the
+  step's base hash with a discriminator (the sweep params, and the mapped item
+  value when JSON-serializable — e.g. a file path — else the ordinal index).
+  Identical items/params dedupe across runs; on resume only missing instances
+  recompute. Hashable-item map instances become independently survey-tier
+  addressable.
+- **Validation (FR-14.6 / FR-18.3):** `collect` must target a mapped/swept
+  step; `map_over` warns when its source is not list-typed; sweep params must
+  be declared and absent from `params`, and `zip` lists must be equal length;
+  `${_item}` requires `map_over`. Dry-run emits a **sweep-purity warning**
+  (FR-18.7) when a swept step declares the same type as both input and output.
+- **Code generation & dry-run:** the notebook backend emits `for` loops for
+  mapped/swept chains (accumulating each member's outputs into lists the
+  collector reads); `dry-run --visualize` tags mapped/swept/collector nodes and
+  draws the `map_over` / `collect` fan-out edges dotted.
+- **`map_over` on an `include` entry (FR-14.4):** fans an entire included
+  sub-workflow out once per segment — every included step inherits the source
+  and the sub-recipe's entry input binds to `${_item}` via `input_overrides`.
+- **New `merge_datasets` built-in op** (`aa_si_utils.utils.concat_datasets`):
+  the reconsolidation / fan-in target that concatenates a collected list of
+  Datasets along a dimension (default `ping_time`).
+- **New example recipes:** `machine_learning_sweep.yaml` (a `min_cluster_size`
+  sweep + `collect` ensemble over the existing HDBSCAN ops) and
+  `parallel_per_file_mvbs.yaml` (per-file `map_over` Sv→MVBS with a
+  `merge_datasets` fan-in — the segment-parallel analogue of
+  `processing_levels_pipeline.yaml`).
+
+Sequential executor only; distributed (Dask/Prefect) fan-out remains Stage 9.
+
 ### Added — regenerate missing outputs
 
 A step can now regenerate its user-facing artifacts (plots, logs, reports) when
