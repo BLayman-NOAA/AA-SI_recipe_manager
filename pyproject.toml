@@ -117,6 +117,7 @@ addopts = [
 ]
 markers = [
     "e2e: end-to-end tests using real recipe files and example data",
+    "slow: heavier tests (e.g. spawning Dask worker processes)",
 ]
 
 [tool.coverage.run]

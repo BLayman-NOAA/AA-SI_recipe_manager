@@ -10,6 +10,8 @@ outputs:
   raw_file_paths:
     type: list
     description: Ordered list of absolute paths to raw acoustic files
+    # Harvested into run provenance as the raw input file list (names + sizes).
+    provenance_role: raw_file_list
   calibration_output_dir:
     type: path
     description: >
@@ -24,6 +26,11 @@ params:
       (e.g. gs://bucket/survey/raw); remote folders are listed without
       downloading any data, and existence checks are skipped at validation
       time for remote URLs.
+    # Fold folder membership into the cache hash so adding/removing a raw file
+    # invalidates correctly, without the mtime churn of the old contents mode:
+    # "auto" = names+size locally, names+checksum on GCS. The folder path itself
+    # is excluded from the hash. Set to "off" to restore path-only keying.
+    fingerprint_mode: auto
     constraints:
       # Auto-create if missing: an upstream step (e.g. download_ncei_data)
       # may populate this folder, and at dry-run time it may not yet exist.

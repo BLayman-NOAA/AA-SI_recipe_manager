@@ -88,6 +88,29 @@ def test_param_declaration_full():
 
 
 # ---------------------------------------------------------------------------
+# unknown keys in declaration blocks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", [ParamDeclaration, InputDeclaration, PortDeclaration]
+)
+def test_declaration_rejects_removed_fingerprint_contents(model):
+    """The key pydantic used to ignore, which silently downgraded a recipe
+    asking for content fingerprinting to path-only cache keying."""
+    with pytest.raises(ValidationError, match="fingerprint_contents"):
+        model(type="path", fingerprint_contents=True)
+
+
+@pytest.mark.parametrize(
+    "model", [ParamDeclaration, InputDeclaration, PortDeclaration]
+)
+def test_declaration_rejects_typos(model):
+    with pytest.raises(ValidationError, match="fingerprint_mod"):
+        model(type="path", fingerprint_mod="auto")
+
+
+# ---------------------------------------------------------------------------
 # Dependency
 # ---------------------------------------------------------------------------
 
@@ -310,7 +333,7 @@ def test_recipe_full():
         schema_version="1",
         inputs={
             "raw_folder": InputDeclaration(type="path"),
-            "output_dir": InputDeclaration(type="path", default="./output"),
+            "user_cache_dir": InputDeclaration(type="path", default="./output"),
         },
         steps=[
             Step(id="open_raw", op="read_raw_files"),
@@ -327,7 +350,7 @@ def test_recipe_full():
     )
     assert len(recipe.steps) == 2
     assert "raw_folder" in recipe.inputs
-    assert recipe.inputs["output_dir"].required is False
+    assert recipe.inputs["user_cache_dir"].required is False
 
 
 def test_recipe_unsupported_schema_version():

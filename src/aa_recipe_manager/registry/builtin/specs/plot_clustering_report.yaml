@@ -42,6 +42,16 @@ params:
     description: "[min_depth, max_depth, ping_min, ping_max] for echogram display"
     required: false
     default: []
+  x_axis_units:
+    type: str
+    description: "Units for the clustering echogram x-axis ('seconds', 'pings', 'bins', or 'meters')"
+    required: false
+    default: "seconds"
+  y_axis_units:
+    type: str
+    description: "Units for the clustering echogram y-axis ('meters', 'range_sample', or 'bins')"
+    required: false
+    default: "meters"
   overlay_line_var:
     type: str
     description: Name of a variable in ds_normalized to draw as a line overlay
@@ -91,7 +101,7 @@ params:
     type: int
     description: Optional DPI override for raster image outputs
     required: false
-    default: null
+    default: 50
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.plot_clustering_report

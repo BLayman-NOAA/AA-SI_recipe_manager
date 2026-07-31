@@ -17,6 +17,9 @@ inputs:
       to a local scratch directory, converted, and the local copy deleted
       before the next file is fetched — the machine only ever holds ~1 raw
       file at a time; bucket objects are never modified or deleted.
+    # Harvested into run provenance for recipes that read raw files directly
+    # (no initial_setup step that materializes the list as an output).
+    provenance_role: raw_file_list
 outputs:
   raw_stores:
     type: list

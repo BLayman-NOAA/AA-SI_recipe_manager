@@ -5,38 +5,36 @@
 from __future__ import annotations
 
 import ast
-import json
 import sys
 import types
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import nbformat
+import pytest
 
 from aa_recipe_manager.exceptions import RecipeValidationError
 from aa_recipe_manager.executor import SequentialExecutor
 from aa_recipe_manager.generator.backends.notebook import NotebookBackend
-from aa_recipe_manager.resolver.dependencies import resolve_dependencies
 from aa_recipe_manager.model.types import (
     CustomSpec,
     Dependency,
-    PortDeclaration,
     ParamDeclaration,
+    PortDeclaration,
     Recipe,
     Step,
     SweepDeclaration,
 )
-from aa_recipe_manager.parser.dag_builder import build_dag
-from aa_recipe_manager.parser.yaml_reader import load_recipe
 from aa_recipe_manager.parallel import (
     derive_instance_hash,
     expand_sweep,
     group_mapped_chains,
     instance_discriminator,
 )
+from aa_recipe_manager.parser.dag_builder import build_dag
+from aa_recipe_manager.parser.yaml_reader import load_recipe
 from aa_recipe_manager.registry.registry import Registry
+from aa_recipe_manager.resolver.dependencies import resolve_dependencies
 
 MOD = "ar_stage8_test_helpers"
 
@@ -72,6 +70,14 @@ def helpers() -> types.ModuleType:
             _rec("offset", x=x, factor=factor, base=base)
             return x * factor + base
 
+        def split_two(x: int) -> dict[str, int]:
+            _rec("split_two", x=x)
+            return {"a": x + 1, "b": x + 2}
+
+        def collect_two(a: list[int], b: list[int]) -> int:
+            _rec("collect_two", a=list(a), b=list(b))
+            return sum(a) + sum(b)
+
         def collect_sum(values: list[int]) -> int:
             _rec("collect_sum", values=list(values))
             return sum(values)
@@ -81,7 +87,8 @@ def helpers() -> types.ModuleType:
             return sum(out)
 
         for fn in (
-            make_list, make_scalar, inc, scale, offset, collect_sum, collect_named
+            make_list, make_scalar, inc, scale, offset, split_two, collect_two,
+            collect_sum, collect_named
         ):
             setattr(module, fn.__name__, fn)
         sys.modules[MOD] = module
@@ -183,6 +190,48 @@ def test_map_over_fans_out_and_collects(helpers):
     assert len(inc_calls) == 3
 
 
+def test_mapped_step_records_per_instance_times(helpers):
+    """A fanned-out step reports its instance spread, not just a total.
+
+    The sum alone cannot distinguish "every instance was slow" from "one
+    dominated", and under a concurrent backend it exceeds wall clock.
+    """
+    collector = _step(
+        "merge", "collect_sum",
+        inputs={"values": "${proc.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"},
+        collect="${proc.out}",
+    )
+    result = _run(_map_pipeline(collector))
+
+    record = result.step_dispositions["proc"]
+    assert len(record.instance_seconds) == 3        # one per mapped element
+    assert record.elapsed_seconds == pytest.approx(sum(record.instance_seconds))
+
+    stats = record.to_dict()["instances"]
+    assert stats["count"] == 3
+    assert stats["min_seconds"] <= stats["mean_seconds"] <= stats["max_seconds"]
+
+    # Ordinary (non-fanned-out) steps keep their previous manifest shape.
+    assert "instances" not in result.step_dispositions["merge"].to_dict()
+
+
+def test_progress_reports_instance_spread_for_mapped_steps():
+    from aa_recipe_manager.cli import _format_step_time
+
+    # Plain steps render exactly as before.
+    assert _format_step_time(1.5) == "1.50s"
+    assert _format_step_time(1.5, (1.5,)) == "1.50s"
+
+    rendered = _format_step_time(6.0, (1.0, 2.0, 3.0))
+    assert "3 instances" in rendered
+    assert "sum 6.00s" in rendered
+    assert "avg 2.00s" in rendered
+    assert "min 1.00s" in rendered
+    assert "max 3.00s" in rendered
+
+
 def test_collect_auto_binds_to_matching_port(helpers):
     # Collector wires nothing explicitly; the collected output name `out`
     # auto-binds to the collector's `out` input port.
@@ -212,6 +261,35 @@ def test_single_item_transparency(helpers):
     result = _run([producer, mapped])
     assert result.outputs["proc"]["out"] == [8]  # inc(7), folded as a 1-list
     assert len([c for c in helpers.call_log if c[0] == "inc"]) == 1
+
+
+def test_map_over_empty_source_folds_to_empty(helpers):
+    # A map_over source that resolves to [] must not stall: the chain produces
+    # no instances and the members fold to empty lists (collector sees []).
+    producer = _step(
+        "seg", "make_list",
+        params={"n": 0},
+        param_decls={"n": ParamDeclaration(type="int")},
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    mapped = _step(
+        "proc", "inc",
+        inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"},
+        map_over="${seg.items}",
+    )
+    collector = _step(
+        "merge", "collect_sum",
+        inputs={"values": "${proc.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"},
+        collect="${proc.out}",
+    )
+    result = _run([producer, mapped, collector])
+    assert result.outputs["proc"]["out"] == []
+    assert result.outputs["merge"]["total"] == 0
+    assert not [c for c in helpers.call_log if c[0] == "inc"]  # never ran
 
 
 def test_mapped_chain_shares_element_context(helpers):
@@ -331,14 +409,14 @@ def test_per_instance_checkpoint_resume(helpers, tmp_path):
         )
     )
     ckpt = tmp_path / "cache"
-    r1 = _run(steps, output_dir=ckpt, checkpoint_mode="eager")
+    r1 = _run(steps, user_cache_dir=ckpt, checkpoint_mode="eager")
     assert r1.outputs["merge"]["total"] == 63
     first_inc = [c for c in helpers.call_log if c[0] == "inc"]
     assert len(first_inc) == 3
 
     # Second run: every mapped instance is a cache hit; inc is never called.
     helpers.call_log.clear()
-    r2 = _run(steps, output_dir=ckpt, checkpoint_mode="eager")
+    r2 = _run(steps, user_cache_dir=ckpt, checkpoint_mode="eager")
     assert r2.outputs["merge"]["total"] == 63
     assert [c for c in helpers.call_log if c[0] == "inc"] == []
 
@@ -356,6 +434,114 @@ def test_group_mapped_chains_partitions_by_source(helpers):
     assert len(chains) == 1
     assert chains[0].member_ids == ["proc"]
     assert chains[0].source_ref == "${seg.items}"
+
+
+# ---------------------------------------------------------------------------
+# memory eviction (Tier 2: mapped/swept chain member outputs)
+# ---------------------------------------------------------------------------
+
+
+def test_mapped_chain_output_evicted_after_collector_runs(helpers, tmp_path):
+    """A checkpointed chain member's folded output, once its only consumer
+    (the collector) finishes, is replaced by a FoldedCheckpointRef that
+    reloads and refolds each instance's entry — not just left resident."""
+    from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+    from aa_recipe_manager.executor.refs import FoldedCheckpointRef
+
+    steps = _map_pipeline(
+        _step(
+            "merge", "collect_sum", inputs={"values": "${proc.out}"},
+            in_ports={"values": _MANY}, out_ports={"total": _INT},
+            output_map={"total": "__return__"}, collect="${proc.out}",
+        )
+    )
+    result = _run(steps, user_cache_dir=tmp_path / "cache", checkpoint_mode="eager")
+    assert result.outputs["merge"]["total"] == 63
+    assert result.outputs["proc"]["out"] == [11, 21, 31]
+
+    outputs = result.outputs["proc"]
+    assert isinstance(outputs, LazyStepOutputs)
+    assert isinstance(outputs.raw("out"), FoldedCheckpointRef)
+    # resolves the same value again on a second access, from disk
+    assert result.outputs["proc"]["out"] == [11, 21, 31]
+
+
+def test_mapped_chain_evicts_every_output_port(helpers, tmp_path):
+    """A mapped member's instance hashes are shared by all of its output ports,
+    so a step declaring two outputs must evict both — not just whichever port
+    happened to be checked first."""
+    from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+    from aa_recipe_manager.executor.refs import FoldedCheckpointRef
+
+    steps = [
+        _step(
+            "seg", "make_list",
+            out_ports={"items": _LIST}, output_map={"items": "__return__"},
+        ),
+        _step(
+            "proc", "split_two", inputs={"x": "${_item}"},
+            in_ports={"x": _INT}, out_ports={"a": _INT, "b": _INT},
+            output_map={"a": "a", "b": "b"}, map_over="${seg.items}",
+        ),
+        _step(
+            "merge", "collect_two",
+            inputs={"a": "${proc.a}", "b": "${proc.b}"},
+            in_ports={"a": _MANY, "b": _MANY}, out_ports={"total": _INT},
+            output_map={"total": "__return__"}, collect="${proc.a}",
+        ),
+    ]
+    result = _run(steps, user_cache_dir=tmp_path / "cache", checkpoint_mode="eager")
+    assert result.outputs["merge"]["total"] == 63 + 66
+
+    outputs = result.outputs["proc"]
+    assert isinstance(outputs, LazyStepOutputs)
+    for port in ("a", "b"):
+        assert isinstance(outputs.raw(port), FoldedCheckpointRef), port
+    assert result.outputs["proc"]["a"] == [11, 21, 31]
+    assert result.outputs["proc"]["b"] == [12, 22, 32]
+
+
+def test_intra_chain_only_consumer_evicts_with_its_own_chain(helpers, tmp_path):
+    """A member consumed only by a later member of the *same* chain (no
+    out-of-chain edge at all) evicts as soon as that shared chain unit
+    finishes — it never needs to wait for the downstream collector."""
+    from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+    from aa_recipe_manager.executor.refs import FoldedCheckpointRef
+
+    producer = _step(
+        "seg", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    a = _step(
+        "a", "inc", inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    b = _step(
+        "b", "inc", inputs={"x": "${a.out}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    collector = _step(
+        "merge", "collect_sum", inputs={"values": "${b.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"}, collect="${b.out}",
+    )
+    dag = build_dag(
+        _recipe([producer, a, b, collector]), Registry(), check_versions=False
+    )
+    assert group_mapped_chains(dag)[0].member_ids == ["a", "b"]
+
+    result = SequentialExecutor().execute(
+        dag, user_cache_dir=tmp_path / "cache", checkpoint_mode="eager"
+    )
+    assert result.outputs["b"]["out"] == [12, 22, 32]
+    assert result.outputs["merge"]["total"] == 66
+
+    outputs = result.outputs["a"]
+    assert isinstance(outputs, LazyStepOutputs)
+    assert isinstance(outputs.raw("out"), FoldedCheckpointRef)
+    assert result.outputs["a"]["out"] == [11, 21, 31]
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +740,7 @@ def test_map_over_plus_include_fans_out_subworkflow(helpers, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-_EXAMPLES = Path(__file__).resolve().parent.parent / "example_recipes"
+_EXAMPLES = Path(__file__).resolve().parent.parent / "example_recipes" / "HB1603"
 
 
 def _dry_run_example(name: str):
@@ -584,6 +770,20 @@ def test_parallel_per_file_example_valid():
     assert chains[0].member_ids == [
         "read_raw", "combine_raw", "compute_sv", "compute_mvbs"
     ]
+    assert dag.nodes["merge_mvbs"].is_collector
+
+
+def test_parallel_per_file_dask_example_valid():
+    # The Stage 9 executor-selection demo: same structure as the plain
+    # per-file example, plus pipeline/per-step execution blocks.
+    dag, report = _dry_run_example("parallel_per_file_mvbs_dask.yaml")
+    assert report.is_valid, report.errors
+    assert dag.recipe.execution is not None
+    assert dag.recipe.execution.executor == "dask"
+    # The CPU-bound step escalates to worker processes.
+    assert dag.nodes["compute_mvbs"].step.execution.dask_config == {
+        "scheduler": "processes"
+    }
     assert dag.nodes["merge_mvbs"].is_collector
 
 

@@ -60,6 +60,23 @@ from aa_recipe_manager.model.types import (
 _HELPER_MODULE_NAME = "ar_stage6_test_helpers"
 
 
+class _WeakrefableValue:
+    """A simple picklable, weakref-able payload for eviction liveness tests.
+
+    Module-level (unlike ``_install_helper_module``'s local ``_Container``)
+    so pickle can resolve it by ``__module__``/``__qualname__``.
+    """
+
+    def __init__(self, payload: Any) -> None:
+        self.payload = payload
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _WeakrefableValue) and self.payload == other.payload
+
+    def __repr__(self) -> str:
+        return f"_WeakrefableValue({self.payload!r})"
+
+
 class EchoData:
     __module__ = "echopype.echodata.echodata"
     last_zarr_kwargs: dict[str, object] = {}
@@ -224,6 +241,10 @@ def _install_helper_module() -> types.ModuleType:
         _record("make_container", value=value)
         return _Container(value)
 
+    def make_weakrefable(value: int) -> _WeakrefableValue:
+        _record("make_weakrefable", value=value)
+        return _WeakrefableValue(value)
+
     def path_probe(raw_input_folder: str) -> str:
         _record("path_probe", raw_input_folder=raw_input_folder)
         return raw_input_folder
@@ -241,6 +262,7 @@ def _install_helper_module() -> types.ModuleType:
     module.data_with_artifact = data_with_artifact  # type: ignore[attr-defined]
     module.boom = boom  # type: ignore[attr-defined]
     module.make_container = make_container  # type: ignore[attr-defined]
+    module.make_weakrefable = make_weakrefable  # type: ignore[attr-defined]
     module.path_probe = path_probe  # type: ignore[attr-defined]
     module.Container = _Container  # type: ignore[attr-defined]
 
@@ -572,7 +594,7 @@ def _path_input_dag(path_value: str) -> PipelineDAG:
     recipe = Recipe(
         name="path_probe_pipeline",
         version="1.0.0",
-        inputs={"raw_dir": InputDeclaration(type="path", fingerprint_contents=True)},
+        inputs={"raw_dir": InputDeclaration(type="path", fingerprint_mode="auto")},
         steps=[node.step],
         schema_version="1",
     )
@@ -913,13 +935,13 @@ class TestSequentialExecutor:
         dag = _sink_after_chain_dag()
         out = tmp_path / "ckpt"
         first = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert "report" in first.executed_steps
         helper_module.call_log.clear()
 
         second = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         # The sink's side-effect marker matches, so it is skipped this run.
         assert "report" in second.skipped_steps
@@ -930,14 +952,14 @@ class TestSequentialExecutor:
         dag = _sink_after_chain_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             regenerate="sinks",
             checkpoint_mode="eager",
         )
@@ -951,7 +973,7 @@ class TestSequentialExecutor:
         dag = _sink_after_chain_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
@@ -962,7 +984,7 @@ class TestSequentialExecutor:
         result = SequentialExecutor().execute(
             modified,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="eager",
         )
         assert result.executed_steps == ["report"]
@@ -978,7 +1000,7 @@ class TestSequentialExecutor:
                 events.append(("start", step_id, index, total, False))
 
             def on_step_end(self, step_id, index, total, *, skipped=False,
-                             elapsed=0.0, error=None):
+                             elapsed=0.0, error=None, instance_seconds=()):
                 events.append(("end", step_id, index, total, skipped))
 
         SequentialExecutor().execute(
@@ -1014,7 +1036,7 @@ class TestSequentialExecutor:
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 0},
-            output_dir=tmp_path / "ckpt",
+            user_cache_dir=tmp_path / "ckpt",
             checkpoint_mode="eager",
         )
 
@@ -1080,7 +1102,7 @@ class TestSequentialExecutor:
 class TestRegenerate:
     @staticmethod
     def _images_dir(tmp_path: Path) -> Path:
-        # outputs_dir defaults to a sibling of output_dir named "outputs".
+        # outputs_dir defaults to a sibling of user_cache_dir named "outputs".
         return tmp_path / "outputs" / "images"
 
     def test_sink_if_missing_skips_when_present_regenerates_when_gone(
@@ -1091,14 +1113,14 @@ class TestRegenerate:
         img = self._images_dir(tmp_path) / "plot.png"
 
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert img.exists()
         helper_module.call_log.clear()
 
         # Image present -> the sink's marker hit stands (skipped).
         second = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert "plot" in second.skipped_steps
         assert helper_module.call_log == []
@@ -1107,7 +1129,7 @@ class TestRegenerate:
         # Delete the image -> the sink regenerates it; upstream loads from cache.
         img.unlink()
         third = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert third.executed_steps == ["plot"]
         assert "compute" in third.skipped_steps
@@ -1122,14 +1144,14 @@ class TestRegenerate:
         compute_img = self._images_dir(tmp_path) / "compute.png"
 
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert compute_img.exists()
         helper_module.call_log.clear()
 
         # Artifact present -> nothing re-runs (plot marker hit prunes compute).
         second = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert "compute" not in second.executed_steps
         assert helper_module.call_log == []
@@ -1139,7 +1161,7 @@ class TestRegenerate:
         # though its only consumer, the sink, is a cache hit).
         compute_img.unlink()
         third = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert "compute" in third.executed_steps
         assert compute_img.exists()
@@ -1151,14 +1173,14 @@ class TestRegenerate:
         dag = _regen_pipeline_dag()  # no per-step attributes
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             regenerate="all",
             checkpoint_mode="eager",
         )
@@ -1175,7 +1197,7 @@ class TestRegenerate:
         out = tmp_path / "ckpt"
         images = self._images_dir(tmp_path)
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         (images / "plot.png").unlink()
         (images / "compute.png").unlink()
@@ -1184,7 +1206,7 @@ class TestRegenerate:
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             regenerate="off",
             checkpoint_mode="eager",
         )
@@ -1205,13 +1227,13 @@ class TestRegenerate:
         )
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         # First run recorded an empty artifact list for the sink.
         helper_module.call_log.clear()
 
         second = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         # The sink re-runs rather than skipping on the empty record.
         assert "plot" in second.executed_steps
@@ -1223,7 +1245,7 @@ class TestRegenerate:
             SequentialExecutor().execute(
                 dag,
                 inputs={"seed": 1},
-                output_dir=tmp_path / "ckpt",
+                user_cache_dir=tmp_path / "ckpt",
                 regenerate="bogus",
             )
 
@@ -1239,14 +1261,14 @@ class TestCheckpointing:
         out = tmp_path / "ckpt"
         executor = SequentialExecutor()
         first = executor.execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert first.executed_steps == ["start", "first", "second"]
         assert first.skipped_steps == []
         helper_module.call_log.clear()
 
         second = executor.execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert second.pruned_steps == ["start", "first"]
         assert second.skipped_steps == ["second"]
@@ -1258,13 +1280,13 @@ class TestCheckpointing:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             force=True,
             checkpoint_mode="eager",
         )
@@ -1277,7 +1299,7 @@ class TestCheckpointing:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
@@ -1286,7 +1308,7 @@ class TestCheckpointing:
         result = SequentialExecutor().execute(
             modified,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="eager",
         )
         assert result.pruned_steps == ["start", "first"]
@@ -1300,7 +1322,7 @@ class TestCheckpointing:
         dag = _linear_multiply_dag(factor=2)
         out = tmp_path / "ckpt"
         first_run = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         assert first_run.executed_steps == ["start", "first", "scale"]
         helper_module.call_log.clear()
@@ -1313,7 +1335,7 @@ class TestCheckpointing:
         result = SequentialExecutor().execute(
             modified,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="eager",
         )
         assert result.pruned_steps == ["start"]
@@ -1331,7 +1353,7 @@ class TestCheckpointing:
         dag = _linear_multiply_dag(factor=2)
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
@@ -1342,7 +1364,7 @@ class TestCheckpointing:
         result = SequentialExecutor().execute(
             modified,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="eager",
         )
         assert result.skipped_steps == ["start"]
@@ -1357,7 +1379,7 @@ class TestCheckpointing:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         helper_module.call_log.clear()
@@ -1365,7 +1387,7 @@ class TestCheckpointing:
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         assert result.pruned_steps == ["start"]
@@ -1382,7 +1404,7 @@ class TestCheckpointing:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         helper_module.call_log.clear()
@@ -1394,7 +1416,7 @@ class TestCheckpointing:
         result = SequentialExecutor().execute(
             modified,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         assert result.pruned_steps == []
@@ -1420,7 +1442,9 @@ class TestCheckpointing:
 
         assert original["probe"] != changed["probe"]
 
-    def test_directory_input_hash_changes_when_entry_mtime_changes(self, tmp_path):
+    def test_directory_input_hash_stable_across_entry_mtime_change(self, tmp_path):
+        # fingerprint_mode "auto" folds names+size (never mtime), so re-touching
+        # a file with identical bytes must NOT invalidate the cache.
         raw_dir = tmp_path / "raw"
         raw_dir.mkdir()
         raw_file = raw_dir / "a.raw"
@@ -1431,20 +1455,38 @@ class TestCheckpointing:
         entry_stat = raw_file.stat()
         next_mtime = entry_stat.st_mtime_ns + 1_000_000_000
         os.utime(raw_file, ns=(next_mtime, next_mtime))
-        changed = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
+        unchanged = compute_step_hashes(dag, {"raw_dir": str(raw_dir)})
 
-        assert original["probe"] != changed["probe"]
+        assert original["probe"] == unchanged["probe"]
+
+    def test_directory_input_hash_independent_of_folder_path(self, tmp_path):
+        # Identical file sets under two different folder locations hash the same:
+        # the fingerprint carries names+size and the folder path is scrubbed.
+        dir_a = tmp_path / "loc_a"
+        dir_b = tmp_path / "loc_b"
+        for folder in (dir_a, dir_b):
+            folder.mkdir()
+            (folder / "a.raw").write_text("alpha", encoding="utf-8")
+
+        hash_a = compute_step_hashes(
+            _path_input_dag(str(dir_a)), {"raw_dir": str(dir_a)}
+        )
+        hash_b = compute_step_hashes(
+            _path_input_dag(str(dir_b)), {"raw_dir": str(dir_b)}
+        )
+
+        assert hash_a["probe"] == hash_b["probe"]
 
 
     def test_no_checkpoints_writes_no_files(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         result = SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, no_checkpoints=True
+            dag, inputs={"seed": 1}, user_cache_dir=out, no_checkpoints=True
         )
         assert result.outputs["second"]["out"] == 4
         assert not out.exists() or not any(out.iterdir())
-        assert result.output_dir is None
+        assert result.user_cache_dir is None
 
     def test_checkpoint_load_preserves_echodata_objects(self, tmp_path, monkeypatch):
         fake_echodata_pkg = types.ModuleType("echopype.echodata")
@@ -1553,6 +1595,261 @@ class TestCheckpointing:
 
 
 # ---------------------------------------------------------------------------
+# Memory eviction: checkpointed outputs with no remaining consumers
+# ---------------------------------------------------------------------------
+
+
+def _container_then_sink_dag() -> PipelineDAG:
+    """``make(make_container) -> touch(sink)`` — a single-consumer, checkpoint-
+    eligible producer feeding a terminal sink, for eviction tests."""
+    make_spec = Spec(
+        op="make_container",
+        description="",
+        inputs={"value": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    make_impl = Implementation(
+        op="make_container",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.make_weakrefable",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    sink_spec = Spec(
+        op="sink",
+        description="",
+        sink=True,
+        inputs={"value": PortDeclaration(type="int")},
+    )
+    sink_impl = Implementation(
+        op="sink",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.sink_step",
+        dependency=_dep(),
+    )
+    make = DAGNode(
+        step=Step(id="make", op="make_container", inputs={"value": "${inputs.seed}"}),
+        spec=make_spec,
+        implementation=make_impl,
+    )
+    touch = DAGNode(
+        step=Step(id="touch", op="sink", inputs={"value": "${make.out}"}),
+        spec=sink_spec,
+        implementation=sink_impl,
+    )
+    edges = [
+        DAGEdge(
+            source_step_id="make",
+            source_output="out",
+            target_step_id="touch",
+            target_input="value",
+        ),
+    ]
+    return _make_dag([make, touch], edges)
+
+
+def _fan_out_multi_output_dag() -> PipelineDAG:
+    """``split(make_pair)`` with two outputs; only ``negative`` has a
+    downstream consumer (``use``). ``positive`` has none."""
+    split_spec = Spec(
+        op="split",
+        description="",
+        inputs={"value": PortDeclaration(type="int")},
+        outputs={
+            "positive": PortDeclaration(type="int"),
+            "negative": PortDeclaration(type="int"),
+        },
+    )
+    split_impl = Implementation(
+        op="split",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.make_pair",
+        dependency=_dep(),
+        output_map={"positive": "[0]", "negative": "[1]"},
+    )
+    use_spec = Spec(
+        op="add_one",
+        description="",
+        inputs={"x": PortDeclaration(type="int")},
+        outputs={"out": PortDeclaration(type="int")},
+    )
+    use_impl = Implementation(
+        op="add_one",
+        key="default",
+        callable_path=f"{_HELPER_MODULE_NAME}.add_one",
+        dependency=_dep(),
+        output_map={"out": "__return__"},
+    )
+    split = DAGNode(
+        step=Step(id="split", op="split", inputs={"value": "${inputs.seed}"}),
+        spec=split_spec,
+        implementation=split_impl,
+    )
+    use = DAGNode(
+        step=Step(id="use", op="add_one", inputs={"x": "${split.negative}"}),
+        spec=use_spec,
+        implementation=use_impl,
+    )
+    edges = [
+        DAGEdge(
+            source_step_id="split",
+            source_output="negative",
+            target_step_id="use",
+            target_input="x",
+        ),
+    ]
+    return _make_dag([split, use], edges)
+
+
+class TestEviction:
+    """A checkpointed step's output, once its last consumer has run, is
+    replaced in RuntimeContext/result.outputs by a lazy CheckpointRef so the
+    live object can be freed — see engine/runner.py's _evict."""
+
+    def test_values_still_correct_after_eviction(self, helper_module, tmp_path):
+        dag = _linear_inc_dag()
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 10},
+            user_cache_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+        assert result.outputs["start"]["out"] == 11
+        assert result.outputs["first"]["out"] == 12
+        assert result.outputs["second"]["out"] == 13
+
+    def test_every_step_evicted_under_eager_checkpointing(
+        self, helper_module, tmp_path
+    ):
+        # start -> first -> second, every step checkpointed: each is evicted
+        # the moment its last consumer finishes (second, terminal, evicts
+        # immediately on its own completion).
+        from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+        from aa_recipe_manager.executor.refs import CheckpointRef
+
+        dag = _linear_inc_dag()
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 10},
+            user_cache_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+        for step_id in ("start", "first", "second"):
+            outputs = result.outputs[step_id]
+            assert isinstance(outputs, LazyStepOutputs)
+            assert isinstance(outputs.raw("out"), CheckpointRef)
+        # transparent resolution still returns the right values
+        assert result.outputs["start"]["out"] == 11
+        assert result.outputs["first"]["out"] == 12
+        assert result.outputs["second"]["out"] == 13
+
+    def test_no_checkpoints_disables_eviction(self, helper_module, tmp_path):
+        dag = _linear_inc_dag()
+        result = SequentialExecutor().execute(
+            dag, inputs={"seed": 10}, no_checkpoints=True
+        )
+        for step_id in ("start", "first", "second"):
+            assert isinstance(result.outputs[step_id], dict)
+            assert not hasattr(result.outputs[step_id], "raw")
+        assert result.outputs["second"]["out"] == 13
+
+    def test_evicted_container_is_actually_collected(
+        self, helper_module, tmp_path, monkeypatch
+    ):
+        """Not just that a lazy ref is stored, but that the reloaded live
+        object becomes unreachable once evicted (real memory is freed)."""
+        import gc
+        import weakref
+
+        captured: list[weakref.ReferenceType] = []
+        original_load = CheckpointManager.load
+
+        def spy_load(self, step_id, *, instance_hash=None):
+            out = original_load(self, step_id, instance_hash=instance_hash)
+            if step_id == "make" and isinstance(out.get("out"), _WeakrefableValue):
+                captured.append(weakref.ref(out["out"]))
+            return out
+
+        monkeypatch.setattr(CheckpointManager, "load", spy_load)
+
+        dag = _container_then_sink_dag()
+        SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 5},
+            user_cache_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+        assert captured, "expected the post-save reload to have happened"
+        # The sink's own call-log side channel (test scaffolding, unrelated to
+        # the executor) also holds the value passed to it — drop that too,
+        # or the weakref would look alive for a reason that has nothing to
+        # do with eviction.
+        helper_module.call_log.clear()
+        gc.collect()
+        assert captured[0]() is None
+
+    def test_multi_output_step_evicts_per_port(self, helper_module, tmp_path):
+        """One output port evicts once its own consumer finishes; a sibling
+        port with no consumer at all evicts immediately upon production —
+        independently, not gated on the whole step."""
+        from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+        from aa_recipe_manager.executor.refs import CheckpointRef
+
+        dag = _fan_out_multi_output_dag()
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 3},
+            user_cache_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+        assert result.outputs["split"]["positive"] == 3
+        assert result.outputs["split"]["negative"] == -3
+        assert result.outputs["use"]["out"] == -2
+
+        outputs = result.outputs["split"]
+        assert isinstance(outputs, LazyStepOutputs)
+        # both ports end up evicted by the end of the run (negative once its
+        # consumer "use" finishes; positive immediately, having no consumer).
+        assert isinstance(outputs.raw("positive"), CheckpointRef)
+        assert isinstance(outputs.raw("negative"), CheckpointRef)
+
+    def test_setitem_after_eviction_does_not_raise(self, helper_module, tmp_path):
+        dag = _linear_inc_dag()
+        result = SequentialExecutor().execute(
+            dag,
+            inputs={"seed": 10},
+            user_cache_dir=tmp_path / "ckpt",
+            checkpoint_mode="eager",
+        )
+        result.outputs["start"]["out"] = 999
+        assert result.outputs["start"]["out"] == 999
+
+    def test_runtime_context_evict_frees_the_live_object(self, tmp_path):
+        """Unit-level proof of the core mechanism: RuntimeContext.evict()
+        drops the only strong reference to the recorded value."""
+        import gc
+        import weakref
+
+        manager = CheckpointManager(tmp_path / "ckpt", {"s": "hash"})
+        heavy = _WeakrefableValue("large")
+        manager.save("s", {"out": heavy})
+        ref = weakref.ref(heavy)
+
+        runtime = RuntimeContext(store=manager)
+        runtime.record("s", {"out": heavy})
+        del heavy
+        gc.collect()
+        assert ref() is not None  # still referenced by RuntimeContext
+
+        from aa_recipe_manager.executor.refs import CheckpointRef
+
+        runtime.evict("s", "out", CheckpointRef("s", "out"))
+        gc.collect()
+        assert ref() is None  # freed once evicted
+        assert runtime.get("s", "out") == _WeakrefableValue("large")
+
+
+# ---------------------------------------------------------------------------
 # Step classification + clean
 # ---------------------------------------------------------------------------
 
@@ -1570,7 +1867,7 @@ class TestCleanAndClassification:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         from aa_recipe_manager.executor import entry_dir_parts
 
@@ -1590,7 +1887,7 @@ class TestCleanAndClassification:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="all")
@@ -1602,7 +1899,7 @@ class TestCleanAndClassification:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         # Trick the manager into thinking we're on a different step hash.
         manager = CheckpointManager(out, {s: "different-hash" for s in compute_step_hashes(dag)})
@@ -1618,7 +1915,7 @@ class TestCleanAndClassification:
         dag = _linear_inc_dag()
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         manager = CheckpointManager(out, compute_step_hashes(dag))
         planned = manager.clean(dag, mode="all", dry_run=True)
@@ -1637,7 +1934,7 @@ def test_provenance_sidecar_written(helper_module, tmp_path):
 
     dag = _linear_inc_dag()
     SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=tmp_path / "ckpt"
+        dag, inputs={"seed": 1}, user_cache_dir=tmp_path / "ckpt"
     )
     provenance = ProvenanceRecorder.capture(dag)
     sidecar = tmp_path / "provenance.yaml"
@@ -1660,7 +1957,7 @@ def test_api_execute_writes_provenance_to_outputs_dir(helper_module, tmp_path):
         result = api.execute(
             dag.recipe,
             inputs={"seed": 1},
-            output_dir=str(tmp_path / "ckpt"),
+            user_cache_dir=str(tmp_path / "ckpt"),
         )
     assert result.outputs_dir is not None
     prov_path = result.outputs_dir / "provenance" / "provenance.yaml"
@@ -1688,15 +1985,15 @@ def test_api_execute_rejects_no_checkpoints_with_checkpoint_steps():
         )
 
 
-def test_api_execute_rejects_checkpoint_options_without_output_dir():
+def test_api_execute_rejects_checkpoint_options_without_user_cache_dir():
     from aa_recipe_manager import api
 
     dag = _linear_inc_dag()
-    with pytest.raises(ValueError, match="require output_dir"):
+    with pytest.raises(ValueError, match="require user_cache_dir"):
         api.execute(
             dag.recipe,
             checkpoint_mode="eager",
-            output_dir=None,
+            user_cache_dir=None,
         )
 
 
@@ -1873,7 +2170,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         meta_files = _meta_names(out)
@@ -1885,7 +2182,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="terminal",
         )
         meta_files = _meta_names(out)
@@ -1899,7 +2196,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
             checkpoint_steps=["start"],
         )
@@ -1913,7 +2210,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         meta_files = _meta_names(out)
@@ -1927,7 +2224,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="none",
         )
         meta_files = _meta_names(out)
@@ -1943,7 +2240,7 @@ class TestExecutorCheckpointModes:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         helper_module.call_log.clear()
@@ -1952,7 +2249,7 @@ class TestExecutorCheckpointModes:
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=out,
+            user_cache_dir=out,
             checkpoint_mode="explicit",
         )
         assert "first" in result.skipped_steps
@@ -1968,7 +2265,7 @@ class TestExecutorCheckpointModes:
         _set_recipe_checkpoint_mode(dag, "terminal")
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out
+            dag, inputs={"seed": 1}, user_cache_dir=out
         )
         meta_files = _meta_names(out)
         assert meta_files == {"second"}
@@ -1983,7 +2280,7 @@ class TestCleanRespectsExplicitMarks:
         out = tmp_path / "ckpt"
         # Eager run writes all three; "first" is also explicitly marked.
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="intermediate")
@@ -1998,7 +2295,7 @@ class TestCleanRespectsExplicitMarks:
         _set_step_checkpoint(dag, "first", "always")
         out = tmp_path / "ckpt"
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
         )
         manager = CheckpointManager(out, compute_step_hashes(dag))
         manager.clean(dag, mode="all")

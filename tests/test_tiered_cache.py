@@ -102,7 +102,7 @@ class TestCuratedPreWarm:
         SequentialExecutor().execute(
             prefix,
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -119,7 +119,7 @@ class TestCuratedPreWarm:
         SequentialExecutor().execute(
             _prefix_inc_dag(),
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -131,7 +131,7 @@ class TestCuratedPreWarm:
         result = SequentialExecutor().execute(
             _linear_inc_dag(),
             inputs={"seed": 1},
-            output_dir=USER_ROOT,
+            user_cache_dir=USER_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             checkpoint_mode="eager",
         )
@@ -156,7 +156,7 @@ class TestCuratedPreWarm:
         SequentialExecutor().execute(
             _prefix_inc_dag(),
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -165,7 +165,7 @@ class TestCuratedPreWarm:
             result = SequentialExecutor().execute(
                 _linear_inc_dag(),
                 inputs={"seed": 1},
-                output_dir=USER_ROOT,
+                user_cache_dir=USER_ROOT,
                 survey_cache_dir=SURVEY_ROOT,
                 checkpoint_mode="eager",
             )
@@ -182,7 +182,7 @@ class TestCuratedPreWarm:
         SequentialExecutor().execute(
             _linear_multiply_dag(),
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -198,7 +198,7 @@ class TestCuratedPreWarm:
         result = SequentialExecutor().execute(
             forked,
             inputs={"seed": 1},
-            output_dir=USER_ROOT,
+            user_cache_dir=USER_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             checkpoint_mode="eager",
         )
@@ -225,7 +225,7 @@ class TestMarkers:
         SequentialExecutor().execute(
             _sink_after_chain_dag(),
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -243,7 +243,7 @@ class TestMarkers:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -255,7 +255,7 @@ class TestMarkers:
         result = SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=USER_ROOT,  # fresh user root: no marker here
+            user_cache_dir=USER_ROOT,  # fresh user root: no marker here
             survey_cache_dir=SURVEY_ROOT,
             checkpoint_mode="eager",
         )
@@ -269,7 +269,7 @@ class TestMarkers:
             result = SequentialExecutor().execute(
                 dag,
                 inputs={"seed": 1},
-                output_dir=USER_ROOT,
+                user_cache_dir=USER_ROOT,
                 survey_cache_dir=SURVEY_ROOT,
                 checkpoint_mode="eager",
             )
@@ -329,14 +329,14 @@ class TestCurationPolicy:
         dag = _prefix_inc_dag()
         # Curator has a fully warmed PRIVATE cache from a normal run.
         SequentialExecutor().execute(
-            dag, inputs={"seed": 1}, output_dir=CURATOR_ROOT, checkpoint_mode="eager"
+            dag, inputs={"seed": 1}, user_cache_dir=CURATOR_ROOT, checkpoint_mode="eager"
         )
         helper_module.call_log.clear()
 
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -353,7 +353,7 @@ class TestCurationPolicy:
             SequentialExecutor().execute(
                 _container_step_dag(),
                 inputs={"seed": 1},
-                output_dir=CURATOR_ROOT,
+                user_cache_dir=CURATOR_ROOT,
                 survey_cache_dir=SURVEY_ROOT,
                 cache_write_tier="survey",
                 checkpoint_mode="eager",
@@ -389,7 +389,7 @@ class TestCurationPolicy:
             SequentialExecutor().execute(
                 _linear_inc_dag(),
                 inputs={"seed": 1},
-                output_dir=USER_ROOT,
+                user_cache_dir=USER_ROOT,
                 survey_cache_dir=SURVEY_ROOT,
                 cache_write_tier="survey",
                 checkpoint_format="pickle",
@@ -400,12 +400,12 @@ class TestCurationPolicy:
             SequentialExecutor().execute(
                 _linear_inc_dag(),
                 inputs={"seed": 1},
-                output_dir=USER_ROOT,
+                user_cache_dir=USER_ROOT,
                 cache_write_tier="survey",
             )
 
-    def test_survey_dir_requires_user_output_dir(self):
-        with pytest.raises(ValueError, match="requires output_dir"):
+    def test_survey_dir_requires_user_user_cache_dir(self):
+        with pytest.raises(ValueError, match="requires user_cache_dir"):
             SequentialExecutor().execute(
                 _linear_inc_dag(),
                 inputs={"seed": 1},
@@ -417,7 +417,7 @@ class TestCurationPolicy:
             SequentialExecutor().execute(
                 _linear_inc_dag(),
                 inputs={"seed": 1},
-                output_dir=USER_ROOT,
+                user_cache_dir=USER_ROOT,
                 cache_write_tier="global",
             )
 
@@ -468,7 +468,7 @@ class TestManifest:
         SequentialExecutor().execute(
             _prefix_inc_dag(),
             inputs={"seed": 1},
-            output_dir=CURATOR_ROOT,
+            user_cache_dir=CURATOR_ROOT,
             survey_cache_dir=SURVEY_ROOT,
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -477,7 +477,7 @@ class TestManifest:
         result = SequentialExecutor().execute(
             _linear_inc_dag(),
             inputs={"seed": 1},
-            output_dir=user_cache,
+            user_cache_dir=user_cache,
             survey_cache_dir=SURVEY_ROOT,
             checkpoint_mode="eager",
         )
@@ -506,6 +506,63 @@ class TestManifest:
         for uri in steps["second"]["artifacts"].values():
             assert Path(uri).exists()
 
+        # Eviction (checkpointed + no remaining consumers) is purely an
+        # in-memory-retention change to RuntimeContext/result.outputs — it
+        # must not perturb the checkpoint subsystem's own bookkeeping. Both
+        # "first" (cache-hit) and "second" (computed, terminal) end up
+        # evicted here, yet the manifest above is exactly as a pre-eviction
+        # run would produce.
+        from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
+
+        assert isinstance(result.outputs["first"], LazyStepOutputs)
+        assert isinstance(result.outputs["second"], LazyStepOutputs)
+        assert result.outputs["second"]["out"] == 4
+
+    def test_manifest_and_result_record_total_run_time(
+        self, helper_module, tmp_path
+    ):
+        result = SequentialExecutor().execute(
+            _linear_inc_dag(),
+            inputs={"seed": 1},
+            user_cache_dir=tmp_path / "cache",
+            checkpoint_mode="eager",
+        )
+        assert result.elapsed_seconds > 0
+        manifest = json.loads(
+            (tmp_path / "outputs" / MANIFEST_FILENAME).read_text(encoding="utf-8")
+        )
+        assert manifest["elapsed_seconds"] == pytest.approx(
+            result.elapsed_seconds, abs=0.01
+        )
+        # The total covers cache setup and cleanup as well as the steps, so it is
+        # never *less* than the work it contains.
+        step_total = sum(
+            record.elapsed_seconds for record in result.step_dispositions.values()
+        )
+        assert result.elapsed_seconds >= step_total
+
+    def test_failed_run_records_total_time_in_manifest(self, helper_module, tmp_path):
+        from aa_recipe_manager.exceptions import PipelineExecutionError
+
+        dag = _linear_inc_dag()
+        boom_impl = dag.nodes["second"].implementation.model_copy(
+            update={"callable_path": f"{_HELPER_MODULE_NAME}.boom"}
+        )
+        dag.nodes["second"].implementation = boom_impl
+        dag.nodes["second"].step.inputs["value"] = "${first.out}"
+
+        with pytest.raises(PipelineExecutionError):
+            SequentialExecutor().execute(
+                dag,
+                inputs={"seed": 1},
+                user_cache_dir=tmp_path / "cache",
+                checkpoint_mode="eager",
+            )
+        manifest = json.loads(
+            (tmp_path / "outputs" / MANIFEST_FILENAME).read_text(encoding="utf-8")
+        )
+        assert manifest["elapsed_seconds"] > 0
+
     def test_failed_run_writes_manifest_with_status_failed(
         self, helper_module, tmp_path
     ):
@@ -522,7 +579,7 @@ class TestManifest:
             SequentialExecutor().execute(
                 dag,
                 inputs={"seed": 1},
-                output_dir=tmp_path / "cache",
+                user_cache_dir=tmp_path / "cache",
                 checkpoint_mode="eager",
             )
         manifest = json.loads(

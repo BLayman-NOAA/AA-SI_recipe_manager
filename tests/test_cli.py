@@ -11,8 +11,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aa_recipe_manager.cli import main
-
+from aa_recipe_manager.cli import (
+    _format_duration,
+    _resolve_executor_options,
+    main,
+)
+from aa_recipe_manager.config import RunConfig
 
 FOUR_STEP_RECIPE = """\
     recipe:
@@ -322,6 +326,28 @@ class TestSchemaCommand:
         assert isinstance(parsed, dict)
 
 
+class TestDurationFormatting:
+    """The run summary's total time (seconds / m+s / h+m+s)."""
+
+    @pytest.mark.parametrize(
+        "seconds,expected",
+        [
+            (0.0, "0.00s"),
+            (12.345, "12.35s"),
+            (59.994, "59.99s"),
+            (60.0, "1m 00s (60.0s)"),
+            (198.84, "3m 19s (198.8s)"),
+            (3852.31, "1h 04m 12s (3852.3s)"),
+        ],
+    )
+    def test_format_duration(self, seconds, expected):
+        assert _format_duration(seconds) == expected
+
+    def test_long_durations_keep_raw_seconds_for_comparison(self):
+        # Run-to-run comparison needs the unrounded value, so it stays in parens.
+        assert "(174.9s)" in _format_duration(174.89)
+
+
 class TestHelpOutput:
     def test_main_help_lists_subcommands(self):
         runner = CliRunner()
@@ -354,6 +380,62 @@ class TestHelpOutput:
         )
         assert result.exit_code != 0
         assert "bogus" in result.output
+
+
+class TestExecutorOptionResolution:
+    """Dask sizing from the run config is a standing default, not a stray flag.
+
+    Rejecting it the way an explicitly typed --dask-scheduler is rejected made
+    every non-Dask run fail for anyone whose config carried those keys.
+    """
+
+    def test_config_dask_keys_do_not_fail_a_sequential_run(self):
+        cfg = RunConfig(dask_scheduler="processes", dask_workers=4)
+        executor, options = _resolve_executor_options("sequential", None, None, cfg)
+        assert executor == "sequential"
+        assert options == {}
+
+    def test_config_dask_keys_apply_when_the_config_also_selects_dask(self):
+        cfg = RunConfig(executor="dask", dask_scheduler="processes", dask_workers=4)
+        executor, options = _resolve_executor_options("sequential", None, None, cfg)
+        assert executor == "dask"
+        assert options == {"scheduler": "processes", "n_workers": 4}
+
+    def test_explicit_flags_win_over_config(self):
+        cfg = RunConfig(executor="dask", dask_scheduler="processes", dask_workers=4)
+        executor, options = _resolve_executor_options("dask", "threads", 2, cfg)
+        assert options == {"scheduler": "threads", "n_workers": 2}
+
+    def test_explicit_flag_with_non_dask_executor_still_fails(self):
+        with pytest.raises(SystemExit):
+            _resolve_executor_options("sequential", "processes", None, RunConfig())
+
+    def test_cli_run_does_not_abort_on_config_supplied_dask_keys(
+        self, tmp_path, monkeypatch
+    ):
+        """End to end through run_cmd, with the pipeline itself stubbed out."""
+        import aa_recipe_manager.cli as cli
+        from aa_recipe_manager.executor.base import ExecutionResult
+
+        recipe_path = _write_recipe(tmp_path)
+        cfg = tmp_path / "run.config.yaml"
+        cfg.write_text("dask_scheduler: processes\ndask_workers: 4\n")
+
+        seen: dict[str, object] = {}
+
+        def fake_execute(recipe, **kwargs):
+            seen.update(kwargs)
+            return ExecutionResult()
+
+        monkeypatch.setattr(cli.api, "execute", fake_execute)
+        result = CliRunner().invoke(
+            main, ["run", str(recipe_path), "--config", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "require --executor dask" not in result.output
+        # Sequential run: the config's Dask sizing is simply not applied.
+        assert seen["executor"] == "sequential"
+        assert seen["executor_options"] is None
 
 
 class TestRunCommandValidation:
@@ -402,3 +484,36 @@ class TestRunCommandValidation:
             ],
         )
         assert result.exit_code != 0
+
+
+class TestKeepTemp:
+    """--keep-temp leaves the run scratch dir in place for post-run profiling."""
+
+    def test_keep_temp_flag_forwarded_to_api(self, tmp_path, monkeypatch):
+        import aa_recipe_manager.cli as cli
+        from aa_recipe_manager.executor.base import ExecutionResult
+
+        captured = {}
+
+        def fake_execute(recipe, **kwargs):
+            captured.update(kwargs)
+            return ExecutionResult()
+
+        monkeypatch.setattr(cli.api, "execute", fake_execute)
+        recipe_path = _write_recipe(tmp_path)
+        result = CliRunner().invoke(main, ["run", str(recipe_path), "--keep-temp"])
+        assert result.exit_code == 0, result.output
+        assert captured.get("keep_temp") is True
+
+    def test_default_does_not_keep_temp(self, tmp_path, monkeypatch):
+        import aa_recipe_manager.cli as cli
+        from aa_recipe_manager.executor.base import ExecutionResult
+
+        captured = {}
+        monkeypatch.setattr(
+            cli.api, "execute",
+            lambda recipe, **kw: captured.update(kw) or ExecutionResult(),
+        )
+        recipe_path = _write_recipe(tmp_path)
+        CliRunner().invoke(main, ["run", str(recipe_path)])
+        assert captured.get("keep_temp") is False

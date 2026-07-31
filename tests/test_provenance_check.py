@@ -33,7 +33,7 @@ def _curated_prewarm(dag, tmp_path):
     return SequentialExecutor().execute(
         dag,
         inputs={"seed": 1},
-        output_dir=tmp_path / "curator_cache",
+        user_cache_dir=tmp_path / "curator_cache",
         survey_cache_dir=tmp_path / "survey",
         cache_write_tier="survey",
         checkpoint_mode="eager",
@@ -44,7 +44,7 @@ def _user_run(dag, tmp_path, **kwargs):
     return SequentialExecutor().execute(
         dag,
         inputs={"seed": 1},
-        output_dir=tmp_path / "user_cache",
+        user_cache_dir=tmp_path / "user_cache",
         survey_cache_dir=tmp_path / "survey",
         checkpoint_mode="eager",
         **kwargs,

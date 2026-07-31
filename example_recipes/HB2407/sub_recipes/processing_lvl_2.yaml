@@ -1,0 +1,189 @@
+# Processing Level 2 - Sv Computation and Noise Removal
+#
+# Starts from the combined echodata plus extracted calibration parameters,
+# computes Sv, builds and applies the masking stack, and performs background
+# noise removal.
+
+recipe:
+  name: "processing_lvl_2"
+  description: "Compute Sv, build masks, and remove noise."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Combined EchoData object from the raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters extracted from the standardized mapping."
+  env_params:
+    type: dict
+    description: "Environmental parameters extracted from the standardized mapping."
+  datum_correction_m:
+    type: float
+    default: 0.0
+    description: >
+      Metres added to the file's recorded drop keel offset to reach depth below
+      the waterline. 0 takes the recorded offset as already waterline referenced.
+  use_heave:
+    type: bool
+    default: true
+    description: "Add the per-ping platform heave term to transducer depth."
+  heave_sign:
+    type: float
+    default: 1.0
+    description: >
+      Sign applied to platform heave. Determined empirically for this survey
+      by correlating raw heave against the hand-verified EVL seabed line
+      (0.14 m residual for +1.0 vs 0.75 m for -1.0).
+  seabed_line_path:
+    type: path
+    description: "Echoview .evl seabed line used as the seafloor for masking."
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth in meters above which the surface mask excludes samples."  
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Number of range samples per bin used for background noise estimation."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Number of pings per bin used for background noise estimation."
+  noise_chunk_ping_time:
+    type: int
+    default: 1000
+    description: >
+      Ping-time chunk size to apply before remove_noise, so its coarsen()-based
+      noise estimate can run in dask-parallel chunks instead of as one
+      in-memory block. Deliberately independent of combine_raw_files's own
+      ping_time_chunk (that one exists for zarr checkpoint-write efficiency,
+      not for this) -- a standalone rechunk step here means remove_noise's
+      parallelism doesn't depend on the raw-ingest stage's chunk choice.
+      Should stay a multiple of noise_ping_num so coarsen() dispatches across
+      chunks cleanly.
+
+steps:
+
+  - id: compute_sv
+    op: compute_sv
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+      waveform_mode: "CW" 
+      encode_mode: "power"
+
+  # Transducer depth comes from the file's own drop keel offset plus per-ping
+  # heave. Checkpointed because it is tiny and is the record of what vertical
+  # reference the run used, so it can be inspected without recomputing Sv.
+  - id: compute_transducer_depth
+    op: compute_transducer_depth
+    checkpoint: always
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      datum_correction_m: ${inputs.datum_correction_m}
+      use_heave: ${inputs.use_heave}
+      heave_sign: ${inputs.heave_sign}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      depth_offset: ${compute_transducer_depth.transducer_depth}
+
+  - id: ep_add_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  # The seafloor line comes from a hand-verified Echoview export rather than
+  # from detection. To go back to detecting it from the Sv data instead, swap
+  # the op and params below for the commented ep_detect_seafloor block — the
+  # step id and the seafloor_depth output port are the same either way, so
+  # create_seafloor_mask needs no edit.
+  #
+  # - id: detect_seafloor
+  #   op: ep_detect_seafloor
+  #   checkpoint: save
+  #   inputs:
+  #     ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+  #   params:
+  #     method: "basic"
+  #     method_params:
+  #       var_name: "Sv"
+  #       channel: "WBT 400503-15 ES70-7C_ES"
+
+  - id: detect_seafloor
+    op: read_seafloor_line
+    checkpoint: save
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+    params:
+      evl_path: ${inputs.seabed_line_path}
+      # The line covers 2024-10-12 00:51:44 to 12:48:18. Pings outside that
+      # span come back NaN and are masked away entirely, which the step reports
+      # as its ping coverage — raise min_coverage to fail the run instead.
+      edge_extend_s: 0.0
+      min_coverage: 0.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      # The seabed sits at 55-71 m in this line; a buffer anywhere near that
+      # depth keeps nothing at all.
+      seafloor_buffer_m: 0.5
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: rechunk_before_noise
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      ping_time_chunk: ${inputs.noise_chunk_ping_time}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_noise.ds_Sv}
+    params:
+      noise_range_sample_num: ${inputs.noise_range_sample_num}
+      noise_ping_num: ${inputs.noise_ping_num}

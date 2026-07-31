@@ -1,0 +1,136 @@
+# HB1603 Acoustic Survey - Parallel Pipeline, Recombined After Sv
+#
+# Parallel variant of recombine_after_sv.yaml. The survey is NOT combined into
+# a single EchoData before Sv is computed. Instead every raw file is opened,
+# calibrated, Sv-computed and masked independently (map_over), and the survey
+# is reassembled once, after Sv, by concatenating the per-file masked Sv
+# datasets along ping_time.
+#
+#   level 0    download raw files (unchanged)
+#   level 1    per file: read -> materialize -> select this file's calibration
+#   level 2    per file: Sv -> depth/angles -> seafloor -> masks -> apply
+#              FAN-IN: merge per-file Sv into one survey Sv
+#              survey:  rechunk -> remove background noise
+#   level 3    survey: sparse masking, MVBS, per-cell statistics (unchanged)
+#   level 4    survey: ML reshape, clustering, reporting (unchanged)
+#
+# Everything from remove_noise onward is survey-wide and produces the same
+# result as the non-parallel pipeline -- remove_noise is the first step whose
+# estimate spans a ping window, so the fan-in deliberately happens before it.
+# See processing_lvl_2_parallel.yaml for why the merge sits at apply_mask
+# rather than immediately after compute_sv.
+#
+# Run sequentially (one file at a time, same results, no extra setup):
+#   aa-recipe run recombine_after_sv_parallel.yaml
+#
+# Run with per-file instances distributed across worker processes:
+#   aa-recipe run recombine_after_sv_parallel.yaml --executor dask
+#
+# Usage: aa-recipe generate recombine_after_sv_parallel.yaml
+#        aa-recipe dry-run  recombine_after_sv_parallel.yaml --visualize
+
+recipe:
+  name: "processing_levels_pipeline_parallel"
+  description: "HB1603 processing-levels pipeline with per-file parallel Sv and a post-Sv fan-in."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  range_bin:
+    type: str
+    default: "20m"
+  ping_time_bin:
+    type: str
+    default: "20s"
+
+steps:
+
+  - include: sub_recipes/processing_lvl_0.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T23:45"
+      cruise_name: "HB1603"
+
+  - include: sub_recipes/processing_lvl_1_parallel.yaml
+    input_overrides:
+      raw_input_folder: ${download_raw.download_dir}
+      cal_input_folder: ${inputs.cal_input_folder}
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  # Must follow level 1 (parallel) directly: its steps continue the same
+  # per-file mapped chain, and its fan-in reassembles the survey.
+  - include: sub_recipes/processing_lvl_2_parallel.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: 0
+      max_depth: 1800
+      ping_min: 0
+      ping_max: 515
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  # No echodata is wired here: this pipeline never builds a survey-wide
+  # EchoData, and level 4 only needs it for the 'seafloor_depth'/'altitude'
+  # auxiliary features, which this configuration does not use (features:
+  # [cell_cv], which is served by cell_stats_sv).
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}

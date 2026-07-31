@@ -1,0 +1,90 @@
+op: compute_transducer_depth
+cache_key: compute_transducer_depth  # pinned cache identity - keep stable across op renames
+description: >
+  Compute per-ping transducer depth in metres below the water surface from the
+  EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.
+
+  Built from ``drop_keel_offset`` rather than from echopype's own platform
+  vertical offsets. On a drop keel vessel the transducers ride on a retractable
+  keel and ``drop_keel_offset`` records how far it was lowered, while the
+  ``transducer_offset_z`` and ``water_level`` fields that
+  ``ep_add_depth(use_platform_vertical_offsets=true)`` reads are often left at
+  zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.
+
+  The keel position is per file and heave is per ping, so the result is
+  ``drop_keel_offset + datum_correction_m + heave_sign * vertical_offset``.
+  Heave is interpolated onto ds_Sv's ping_time here, which also means
+  ``ep_add_depth`` passes the array straight through instead of resampling it
+  again with nearest neighbour.
+
+  The output is small (one value per ping) and is the record of what vertical
+  reference a run actually used, so checkpointing it is cheap and makes the
+  reference auditable without recomputing Sv.
+category: consolidate
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset supplying the target ``ping_time`` coordinate.
+  echodata:
+    type: EchoData
+    description: Source EchoData supplying the Platform group.
+outputs:
+  transducer_depth:
+    type: DataArray
+    description: >
+      Transducer depth in metres below the surface, shape (ping_time,), on
+      ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s
+      ``depth_offset``. Provenance (the raw drop keel offset, the correction
+      applied, the heave sign and coverage) is recorded in its attrs.
+params:
+  datum_correction_m:
+    type: float
+    units: m
+    description: >
+      Metres added to ``drop_keel_offset`` to reach depth below the water
+      surface, for when the recorded offset is measured from a hull datum
+      rather than the waterline. Positive pushes the transducer deeper. The
+      default 0.0 takes the recorded offset as already waterline referenced.
+    required: false
+    default: 0.0
+  use_heave:
+    type: bool
+    description: >
+      Add the per-ping ``vertical_offset`` (heave) term. False holds the static
+      keel depth on every ping. When the Platform group carries no usable
+      heave the step reports that and falls back to the static depth.
+    required: false
+    default: true
+  heave_sign:
+    type: float
+    description: >
+      Sign applied to ``vertical_offset``. The default 1.0 was determined
+      empirically on HB2407 (EK80, Henry B. Bigelow) by correlating raw
+      heave against the hand-verified EVL seabed line: the correct sign left
+      a 0.14 m residual against 0.75 m for the wrong one. The convention is
+      not recorded in the file attributes and is not the same sign echopype's
+      own platform-vertical-offsets formula uses (that formula is referenced
+      from a hull datum, not drop_keel_offset) - re-verify the same way on a
+      new vessel or instrument setup rather than assuming.
+    required: false
+    default: 1.0
+  interp_method:
+    type: str
+    description: >
+      Interpolation used to put heave on ping_time. Heave is typically sampled
+      several times coarser than the ping rate, so the default linear is
+      preferred over nearest.
+    required: false
+    default: "linear"
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.compute_transducer_depth
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      transducer_depth: __return__

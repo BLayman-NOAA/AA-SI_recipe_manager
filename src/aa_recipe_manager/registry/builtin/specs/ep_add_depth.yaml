@@ -28,11 +28,14 @@ outputs:
     description: Input Sv dataset with an added ``depth`` variable.
 params:
   depth_offset:
-    type: float
     units: m
     description: >
-      Constant vertical offset for the transducer position. When set, takes
-      precedence over Platform vertical offsets.
+      Vertical offset for the transducer position, in metres. Either a constant,
+      or a per-ping DataArray wired from a producer step such as
+      ``compute_transducer_depth`` (echopype accepts both on this argument; a
+      DataArray must have exactly one dimension and is aligned to ping_time).
+      When set, takes precedence over Platform vertical offsets. Left untyped
+      because the two accepted forms are a scalar and a DataArray.
     required: false
     default: null
   tilt:

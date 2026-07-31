@@ -13,81 +13,45 @@ import stat
 import time
 import warnings
 from collections.abc import Iterable
-from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aa_recipe_manager.exceptions import PipelineExecutionError
 from aa_recipe_manager.executor.base import (
     ExecutionResult,
     NullProgressCallback,
     ProgressCallback,
-    StepRecord,
 )
-from aa_recipe_manager.executor.checkpoint import (
-    PROVENANCE_DIR,
-    REGENERATE_MODES,
-    CheckpointManager,
-    compute_step_fingerprints,
-    generate_run_id,
-    plan_execution,
-    resolve_checkpoint_policy,
-)
-from aa_recipe_manager.executor.tiered import (
-    CACHE_WRITE_TIERS,
-    SURVEY_TIER,
-    TieredCheckpointStore,
-)
-from aa_recipe_manager.executor.invocation import (
-    RuntimeContext,
-    _ElementContext,
-    build_kwargs,
-    extract_outputs,
-    import_callable,
-)
-from aa_recipe_manager.executor.runtime_context import execution_context
-from aa_recipe_manager.parallel import (
-    MappedChain,
-    derive_instance_hash,
-    expand_sweep,
-    group_mapped_chains,
-    instance_discriminator,
-)
-from aa_recipe_manager.resolver.params import parse_ref
+from aa_recipe_manager.executor.engine.backends.inline import InlineBackend
+from aa_recipe_manager.executor.engine.context import build_run_context
+from aa_recipe_manager.executor.engine.logcapture import install_router
+from aa_recipe_manager.executor.engine.runner import PipelineRunner
+from aa_recipe_manager.executor.invocation import RuntimeContext
 from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import CheckpointFormat, CheckpointMode, DAGNode, PipelineDAG
+    from aa_recipe_manager.executor.tiered import TieredCheckpointStore
+    from aa_recipe_manager.model.types import (
+        CheckpointFormat,
+        CheckpointMode,
+        PipelineDAG,
+    )
 
 
 LOGS_DIR = "logs"
 STANDARD_OUT_FILENAME = "standard_out.txt"
 MANIFEST_FILENAME = "manifest.json"
-_DEFAULT_OUTPUTS_DIRNAME = "outputs"
 _LOG_DESTINATIONS = ("file", "console", "both")
 
 
-def _fold_instance_outputs(
-    spec_outputs: dict[str, Any],
-    per_instance: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Collapse a mapped member's per-instance output dicts into lists.
-
-    Produces ``{output_name: [instance_0_value, instance_1_value, ...]}`` for
-    each declared output so a downstream ``collect`` step receives the fan-in
-    list (design.md §1.6). Members with no declared outputs fold to ``{}``.
-    """
-    if not spec_outputs:
-        return {}
-    return {
-        out_name: [inst.get(out_name) for inst in per_instance]
-        for out_name in spec_outputs
-    }
-
-
 class _Tee:
-    """Write to several text streams at once (None streams are ignored)."""
+    """Write to several text streams at once (None streams are ignored).
+
+    Every write is flushed. A long run that is interrupted — Ctrl-C, an OOM
+    kill, a closed terminal — otherwise loses the last (up to 8 KB) buffered
+    block, which is exactly the part naming the step that was running when it
+    died. Step-level output is low-frequency, so the flush costs nothing.
+    """
 
     def __init__(self, *streams: Any) -> None:
         self._streams = [s for s in streams if s is not None]
@@ -95,14 +59,20 @@ class _Tee:
     def write(self, data: str) -> int:
         for stream in self._streams:
             stream.write(data)
+            try:
+                stream.flush()
+            except Exception:  # a closed/detached stream must not kill the run
+                pass
         return len(data)
 
     def flush(self) -> None:
         for stream in self._streams:
-            stream.flush()
+            try:
+                stream.flush()
+            except Exception:
+                pass
 
 
-_EXE_TEMP_DIRNAME = "exe_temp"
 _TEMP_DIR_CLEANUP_RETRIES = 5
 _TEMP_DIR_CLEANUP_BASE_DELAY = 0.25
 
@@ -119,52 +89,25 @@ def _is_transient_windows_lock(exc: OSError) -> bool:
     return isinstance(exc, PermissionError) and getattr(exc, "winerror", None) == 32
 
 
-def _resolve_temp_dir(
-    temp_dir: str | Path | StorageLocation | None,
-    cache_loc: StorageLocation | None,
-    storage_options: dict[str, Any] | None = None,
-) -> StorageLocation | None:
-    """Resolve the run-scoped scratch directory (``exe_temp``).
-
-    An explicit ``temp_dir`` wins (local path or fsspec URL). Otherwise it
-    follows the cache's scheme: a local cache yields a local ``exe_temp``, a
-    remote cache yields a remote ``exe_temp`` under the same prefix. Returns
-    ``None`` when neither is available.
-    """
-    if temp_dir is not None:
-        return StorageLocation.parse(temp_dir, storage_options)
-    if cache_loc is not None:
-        return cache_loc.parent / _EXE_TEMP_DIRNAME
-    return None
-
-
-def _resolve_outputs_dir(
-    outputs_dir: str | Path | StorageLocation | None,
-    cache_loc: StorageLocation | None,
-    storage_options: dict[str, Any] | None = None,
-) -> StorageLocation | None:
-    """Resolve the user-facing outputs directory.
-
-    Explicit ``outputs_dir`` wins. Otherwise it defaults to a sibling of the
-    checkpoint cache directory named ``outputs`` (e.g. ``recipe_cache`` ->
-    ``outputs``), following the cache's scheme. Returns ``None`` when neither
-    is available.
-    """
-    if outputs_dir is not None:
-        return StorageLocation.parse(outputs_dir, storage_options)
-    if cache_loc is not None:
-        return cache_loc.parent / _DEFAULT_OUTPUTS_DIRNAME
-    return None
-
-
 class SequentialExecutor:
-    """Run a PipelineDAG's steps one at a time in topological order."""
+    """Run a PipelineDAG's steps one at a time in topological order.
+
+    The run loop lives in :class:`~aa_recipe_manager.executor.engine.runner.
+    PipelineRunner`; this class supplies the default in-process scheduling
+    backend and the surrounding run scaffolding (logging, manifest, cleanup).
+    Distributed executors subclass it and override :meth:`_make_backend`, so
+    they inherit that scaffolding unchanged.
+    """
+
+    def _make_backend(self):
+        """Return the scheduling backend this executor drives."""
+        return InlineBackend()
 
     def execute(
         self,
         dag: PipelineDAG,
         inputs: dict[str, Any] | None = None,
-        output_dir: str | Path | None = None,
+        user_cache_dir: str | Path | None = None,
         *,
         force: bool = False,
         no_checkpoints: bool = False,
@@ -180,130 +123,54 @@ class SequentialExecutor:
         survey_cache_dir: str | Path | None = None,
         cache_write_tier: str = "user",
         progress: ProgressCallback | None = None,
+        keep_temp: bool = False,
     ) -> ExecutionResult:
-        from aa_recipe_manager.provenance.recorder import ProvenanceRecorder, to_json
+        from aa_recipe_manager.provenance.recorder import (
+            ProvenanceRecorder,
+            build_raw_inputs_record,
+            raw_file_list_step_ids,
+        )
 
         if log_destination not in _LOG_DESTINATIONS:
             raise ValueError(
                 f"log_destination must be one of {_LOG_DESTINATIONS}, "
                 f"got {log_destination!r}"
             )
-        if regenerate not in REGENERATE_MODES:
-            raise ValueError(
-                f"regenerate must be one of {REGENERATE_MODES}, "
-                f"got {regenerate!r}"
-            )
-        if cache_write_tier not in CACHE_WRITE_TIERS:
-            raise ValueError(
-                f"cache_write_tier must be one of {CACHE_WRITE_TIERS}, "
-                f"got {cache_write_tier!r}"
-            )
-        if cache_write_tier == SURVEY_TIER and survey_cache_dir is None:
-            raise ValueError(
-                "cache_write_tier='survey' requires a survey cache root "
-                "(config key survey_cache_dir or --survey-cache-dir)"
-            )
-        if survey_cache_dir is not None and output_dir is None:
-            raise ValueError(
-                "survey_cache_dir requires output_dir (the user cache root); "
-                "the user tier holds side-effect markers even for curated runs"
-            )
 
-        pipeline_inputs = dict(inputs or {})
-        runtime = RuntimeContext()
-        progress = progress or NullProgressCallback()
+        # Wall clock for the whole run, started before the cache/context setup so
+        # the reported total is what the user actually waited for.
+        run_start = time.perf_counter()
 
-        # Parse the cache location once; a local path stays local-behaving,
-        # an fsspec URL (gs://, ...) routes through StorageLocation.
-        cache_loc: StorageLocation | None = (
-            StorageLocation.parse(output_dir, storage_options)
-            if output_dir is not None
-            else None
+        ctx = build_run_context(
+            dag,
+            inputs=inputs,
+            user_cache_dir=user_cache_dir,
+            force=force,
+            no_checkpoints=no_checkpoints,
+            skip_sinks=skip_sinks,
+            regenerate=regenerate,
+            outputs_dir=outputs_dir,
+            temp_dir=temp_dir,
+            checkpoint_mode=checkpoint_mode,
+            checkpoint_steps=checkpoint_steps,
+            checkpoint_format=checkpoint_format,
+            storage_options=storage_options,
+            survey_cache_dir=survey_cache_dir,
+            cache_write_tier=cache_write_tier,
         )
 
-        run_id = generate_run_id()
-        step_hashes: dict[str, str] = {}
-        checkpoints: TieredCheckpointStore | None = None
-        resolved_output_dir: StorageLocation | None = None
-        if cache_loc is not None and not no_checkpoints:
-            resolved_output_dir = cache_loc
-            # Resolve effective format: call-site arg > recipe hint > default "zarr"
-            hints = dag.recipe.execution
-            effective_format: str = (
-                checkpoint_format
-                or (hints.checkpoint_format if hints is not None else None)
-                or "zarr"
-            )
-            if cache_write_tier == SURVEY_TIER and str(effective_format) == "pickle":
-                raise ValueError(
-                    "checkpoint_format='pickle' is not eligible for the shared "
-                    "survey cache (pickles are not portable across "
-                    "environments); use 'zarr' instead"
-                )
-            fingerprints = compute_step_fingerprints(
-                dag, pipeline_inputs, storage_options=storage_options
-            )
-            step_hashes = fingerprints.hashes
-            recipe_info = {
-                "name": dag.recipe.name,
-                "version": dag.recipe.version,
-            }
-            user_manager = CheckpointManager(
-                cache_loc,
-                fingerprints.hashes,
-                preferred_format=effective_format,
-                storage_options=storage_options,
-                payloads=fingerprints.payloads,
-                run_id=run_id,
-                recipe_info=recipe_info,
-            )
-            survey_manager: CheckpointManager | None = None
-            if survey_cache_dir is not None:
-                survey_loc = StorageLocation.parse(survey_cache_dir, storage_options)
-                # Curated runs publish their provenance (environment, deps,
-                # inputs) next to the survey cache at run START — the
-                # environment is fully known upfront, and writing it first
-                # means sidecars never reference a not-yet-written file. Every
-                # sidecar this run writes carries the ref.
-                provenance_ref: str | None = None
-                if cache_write_tier == SURVEY_TIER:
-                    provenance_ref = (
-                        f"{PROVENANCE_DIR}/{dag.recipe.name}@{run_id}.json"
-                    )
-                    prov = ProvenanceRecorder.capture(
-                        dag, inputs=pipeline_inputs or None
-                    )
-                    prov_loc = survey_loc / provenance_ref
-                    prov_loc.parent.mkdir()
-                    prov_loc.write_text(to_json(prov))
-                survey_manager = CheckpointManager(
-                    survey_loc,
-                    fingerprints.hashes,
-                    preferred_format=effective_format,
-                    storage_options=storage_options,
-                    payloads=fingerprints.payloads,
-                    run_id=run_id,
-                    recipe_info=recipe_info,
-                    provenance_ref=provenance_ref,
-                )
-            checkpoints = TieredCheckpointStore(
-                user=user_manager,
-                survey=survey_manager,
-                write_tier=cache_write_tier,
-            )
+        pipeline_inputs = ctx.pipeline_inputs
+        runtime = RuntimeContext(store=ctx.checkpoints)
+        progress = progress or NullProgressCallback()
 
-        policy: set[str] = set()
-        if checkpoints is not None:
-            policy = resolve_checkpoint_policy(
-                dag,
-                mode=checkpoint_mode,
-                extra_step_ids=set(checkpoint_steps or ()),
-            )
+        run_id = ctx.run_id
+        checkpoints = ctx.checkpoints
+        resolved_user_cache_dir = ctx.output_loc
 
         result = ExecutionResult(
-            output_dir=None
-            if resolved_output_dir is None
-            else resolved_output_dir.as_context_value()
+            user_cache_dir=None
+            if resolved_user_cache_dir is None
+            else resolved_user_cache_dir.as_context_value()
         )
         result.run_id = run_id
 
@@ -311,23 +178,13 @@ class SequentialExecutor:
         # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
         # execution context's ``artifacts_dir``) and per-step stdout/stderr to
         # ``<outputs>/logs/standard_out.txt``.
-        # Use the raw cache location (not the checkpoint-gated resolved_output_dir)
-        # so that outputs_dir resolves correctly even when no_checkpoints=True.
-        resolved_outputs_loc = _resolve_outputs_dir(
-            outputs_dir, cache_loc, storage_options
-        )
+        resolved_outputs_loc = ctx.outputs_loc
         result.outputs_dir = (
             None
             if resolved_outputs_loc is None
             else resolved_outputs_loc.as_context_value()
         )
-
-        # An explicit temp_dir is always honored; the sibling-of-cache default
-        # follows the checkpoint-gated location (so no_checkpoints keeps the
-        # legacy behavior of aa_si_utils falling back to a system temp dir).
-        resolved_temp_loc = _resolve_temp_dir(
-            temp_dir, resolved_output_dir, storage_options
-        )
+        resolved_temp_loc = ctx.temp_loc
 
         log_buffer = io.StringIO()
         log_file_handle = None
@@ -355,24 +212,17 @@ class SequentialExecutor:
         run_started_at = datetime.now(timezone.utc).isoformat()
         status = "completed"
         try:
-            self._run_steps(
-                dag=dag,
-                result=result,
-                runtime=runtime,
-                pipeline_inputs=pipeline_inputs,
-                checkpoints=checkpoints,
-                policy=policy,
-                step_hashes=step_hashes,
-                resolved_output_dir=resolved_output_dir,
-                resolved_outputs_dir=resolved_outputs_loc,
-                resolved_temp_dir=resolved_temp_loc,
-                force=force,
-                skip_sinks=skip_sinks,
-                regenerate=regenerate,
-                progress=progress,
-                log_sink=log_sink,
-                storage_options=storage_options,
-            )
+            # Thread-routed stdout/stderr for the whole run: concurrent tasks each
+            # capture their own output instead of fighting over the global stream
+            # (see engine/logcapture.py). A no-op for a single-threaded run.
+            with install_router():
+                PipelineRunner(self._make_backend()).run(
+                    ctx=ctx,
+                    result=result,
+                    runtime=runtime,
+                    progress=progress,
+                    log_sink=log_sink,
+                )
             # Warn-only: compare this environment to the curated provenance
             # of any survey-tier hits. Never blocks or downgrades a hit.
             self._check_curated_environment(
@@ -393,7 +243,15 @@ class SequentialExecutor:
                     remote_log_loc.write_text(log_buffer.getvalue())
                 except Exception:  # never mask the original error
                     pass
-            self._cleanup_temp_dir(resolved_temp_loc)
+            if keep_temp:
+                # Diagnostic: leave the run-scoped scratch (per-file zarr
+                # intermediates, etc.) in place so a slow step can be profiled
+                # against real inputs after the run.
+                if resolved_temp_loc is not None:
+                    result.logs.append(f"kept temp dir: {resolved_temp_loc}")
+            else:
+                self._cleanup_temp_dir(resolved_temp_loc)
+            result.elapsed_seconds = time.perf_counter() - run_start
             # Best-effort run manifest (written on failure too, status="failed").
             self._write_manifest(
                 dag=dag,
@@ -406,7 +264,29 @@ class SequentialExecutor:
             )
 
         result.console_log = log_buffer.getvalue()
-        result.provenance = ProvenanceRecorder.capture(dag, inputs=pipeline_inputs or None)
+        # Prefer the raw-file list stamped on checkpoints this run hit or wrote:
+        # authoritative {name,size} from the producing run, and the path that
+        # carries a survey run's raw files into a user run extending its cache.
+        # Fall back to a fresh harvest from this run's outputs when nothing was
+        # checkpointed (e.g. no_checkpoints).
+        raw_record: Any = None
+        if checkpoints is not None:
+            recovered = checkpoints.recovered_raw_inputs(raw_file_list_step_ids(dag))
+            if recovered is not None:
+                from aa_recipe_manager.model.types import RawInputsRecord
+
+                raw_record = RawInputsRecord.model_validate(recovered)
+        if raw_record is None:
+            raw_record = build_raw_inputs_record(
+                dag,
+                result.outputs,
+                pipeline_inputs,
+                storage_options,
+                run_id=run_id,
+            )
+        result.provenance = ProvenanceRecorder.capture(
+            dag, inputs=pipeline_inputs or None, raw_inputs=raw_record
+        )
         return result
 
     @staticmethod
@@ -499,6 +379,7 @@ class SequentialExecutor:
             "cache_epoch": hints.cache_epoch if hints is not None else None,
             "started_at": started_at,
             "finished_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": round(result.elapsed_seconds, 3),
             "status": status,
             "write_tier": write_tier if store is not None else None,
             "tiers": store.tier_roots() if store is not None else {},
@@ -555,524 +436,3 @@ class SequentialExecutor:
 
         raise last_error  # type: ignore[misc]
 
-    def _run_steps(
-        self,
-        *,
-        dag: PipelineDAG,
-        result: ExecutionResult,
-        runtime: RuntimeContext,
-        pipeline_inputs: dict[str, Any],
-        checkpoints: TieredCheckpointStore | None,
-        policy: set[str],
-        step_hashes: dict[str, str],
-        resolved_output_dir: StorageLocation | None,
-        resolved_outputs_dir: StorageLocation | None,
-        resolved_temp_dir: StorageLocation | None,
-        force: bool,
-        skip_sinks: bool,
-        regenerate: str,
-        progress: ProgressCallback,
-        log_sink: _Tee,
-        storage_options: dict[str, Any] | None = None,
-    ) -> None:
-        step_ids = list(dag.topological_order)
-        total = len(step_ids)
-        execution_plan = plan_execution(
-            dag,
-            checkpoints,
-            force=force,
-            regenerate=regenerate,
-            outputs_loc=resolved_outputs_dir,
-        )
-        # Filter blockers by policy: only flag steps that aren't already
-        # checkpointed (those in policy get saved, so they aren't really blockers).
-        blocking = [s for s in execution_plan.blockers if s not in policy]
-        if blocking:
-            result.logs.append(
-                "resume frontier limited by uncheckpointed step(s): "
-                f"{', '.join(blocking)}"
-            )
-
-        # Mapped/swept steps fan out into per-instance chains (Stage 8). Group
-        # them so the whole chain runs at its first member; later members are
-        # covered there and skipped by the main loop.
-        chains = group_mapped_chains(dag)
-        chain_by_first = {c.member_ids[0]: c for c in chains}
-        chain_followers = {
-            mid for c in chains for mid in c.member_ids[1:]
-        }
-        step_index = {sid: i for i, sid in enumerate(step_ids, start=1)}
-
-        for index, step_id in enumerate(step_ids, start=1):
-            node = dag.nodes[step_id]
-            if step_id in chain_followers:
-                # Handled as part of its chain's first member.
-                continue
-            if step_id in chain_by_first:
-                self._run_mapped_chain(
-                    chain_by_first[step_id],
-                    dag=dag,
-                    result=result,
-                    runtime=runtime,
-                    pipeline_inputs=pipeline_inputs,
-                    checkpoints=checkpoints,
-                    policy=policy,
-                    step_hashes=step_hashes,
-                    execution_plan=execution_plan,
-                    resolved_output_dir=resolved_output_dir,
-                    resolved_outputs_dir=resolved_outputs_dir,
-                    resolved_temp_dir=resolved_temp_dir,
-                    storage_options=storage_options,
-                    force=force,
-                    progress=progress,
-                    log_sink=log_sink,
-                    step_index=step_index,
-                    total=total,
-                )
-                continue
-            if skip_sinks and node.spec.sink:
-                result.logs.append(f"skip sink: {step_id}")
-                runtime.record(step_id, {})
-                result.step_dispositions[step_id] = StepRecord(
-                    disposition="skipped",
-                    step_hash=step_hashes.get(step_id),
-                )
-                continue
-
-            # Side-effect steps (sinks / no declared outputs) produce on-disk
-            # artifacts (plots, logs) rather than cacheable return values, so
-            # they cannot be loaded from a checkpoint. They are skipped only
-            # via a hash-matching marker (see below).
-            is_side_effect = node.spec.sink or not node.spec.outputs
-
-            progress.on_step_start(step_id, index, total)
-            start = time.perf_counter()
-
-            try:
-                if step_id in execution_plan.pruned:
-                    elapsed = time.perf_counter() - start
-                    result.pruned_steps.append(step_id)
-                    result.logs.append(
-                        f"pruned: {step_id} ({elapsed:.3f}s)"
-                    )
-                    result.step_dispositions[step_id] = StepRecord(
-                        disposition="pruned",
-                        step_hash=step_hashes.get(step_id),
-                        elapsed_seconds=elapsed,
-                    )
-                    progress.on_step_end(
-                        step_id, index, total, skipped=True, elapsed=elapsed
-                    )
-                    continue
-
-                if step_id in execution_plan.loadable:
-                    outputs = checkpoints.load(step_id)
-                    tier = checkpoints.hit_tier(step_id) or "user"
-                    runtime.record(step_id, outputs)
-                    result.outputs[step_id] = outputs
-                    result.skipped_steps.append(step_id)
-                    elapsed = time.perf_counter() - start
-                    result.logs.append(
-                        f"cache hit: {step_id} [{tier}] ({elapsed:.3f}s)"
-                    )
-                    result.step_dispositions[step_id] = StepRecord(
-                        disposition=f"hit-{tier}-cache",
-                        step_hash=step_hashes.get(step_id),
-                        tier=tier,
-                        elapsed_seconds=elapsed,
-                        artifacts=checkpoints.artifact_urls(step_id),
-                    )
-                    progress.on_step_end(
-                        step_id, index, total, skipped=True, elapsed=elapsed
-                    )
-                    continue
-
-                if step_id in execution_plan.marker_hits:
-                    runtime.record(step_id, {})
-                    result.outputs[step_id] = {}
-                    result.skipped_steps.append(step_id)
-                    elapsed = time.perf_counter() - start
-                    result.logs.append(
-                        f"sink cache hit: {step_id} ({elapsed:.3f}s)"
-                    )
-                    result.step_dispositions[step_id] = StepRecord(
-                        disposition="marker",
-                        step_hash=step_hashes.get(step_id),
-                        tier="user",
-                        elapsed_seconds=elapsed,
-                    )
-                    progress.on_step_end(
-                        step_id, index, total, skipped=True, elapsed=elapsed
-                    )
-                    continue
-
-                if step_id not in execution_plan.must_run:
-                    raise PipelineExecutionError(
-                        step_id,
-                        f"internal execution planner error for step {step_id!r}",
-                    )
-
-                log_sink.write(f"\n=== step {step_id} ({index}/{total}) ===\n")
-                log_sink.flush()
-                # Collector for user-facing artifact paths (relative to the
-                # outputs dir) that ops write via render_figure; recorded in the
-                # step's sidecar so a later run can verify they still exist.
-                artifact_paths: list[str] = []
-                with execution_context(
-                    mode="direct",
-                    output_dir=resolved_output_dir,
-                    step_id=step_id,
-                    artifacts_dir=resolved_outputs_dir,
-                    temp_dir=resolved_temp_dir,
-                    storage_options=storage_options,
-                    artifact_sink=artifact_paths,
-                ), redirect_stdout(log_sink), redirect_stderr(log_sink):
-                    outputs = self._execute_step(node, runtime, pipeline_inputs)
-            except PipelineExecutionError as exc:
-                elapsed = time.perf_counter() - start
-                progress.on_step_end(
-                    step_id, index, total, elapsed=elapsed, error=exc
-                )
-                raise
-            except Exception as exc:
-                elapsed = time.perf_counter() - start
-                wrapped = PipelineExecutionError(
-                    step_id,
-                    f"step {step_id!r} failed during execution: {exc}",
-                    original=exc,
-                )
-                progress.on_step_end(
-                    step_id, index, total, elapsed=elapsed, error=wrapped
-                )
-                raise wrapped from exc
-
-            saved = False
-            if checkpoints is not None and outputs and step_id in policy:
-                checkpoints.save(step_id, outputs, artifacts=artifact_paths)
-                # Replace temp-backed in-memory outputs with their persisted form
-                # immediately so downstream steps and final cleanup do not keep
-                # Windows NetCDF handles alive under exe_temp.
-                outputs = checkpoints.load(step_id)
-                saved = True
-            runtime.record(step_id, outputs)
-            result.outputs[step_id] = outputs
-            result.executed_steps.append(step_id)
-            if checkpoints is not None and is_side_effect:
-                # Record a marker so an unchanged future run can skip
-                # regenerating this side-effect step's on-disk artifacts. The
-                # recorded artifact paths let a later run verify they still exist.
-                checkpoints.save_marker(step_id, artifacts=artifact_paths)
-            elapsed = time.perf_counter() - start
-            result.step_dispositions[step_id] = StepRecord(
-                disposition="computed",
-                step_hash=step_hashes.get(step_id),
-                tier=checkpoints.write_tier if saved else None,
-                elapsed_seconds=elapsed,
-                artifacts=checkpoints.artifact_urls(step_id) if saved else {},
-            )
-            result.logs.append(f"ran: {step_id} ({elapsed:.3f}s)")
-            log_sink.write(f"--- {step_id}: done ({elapsed:.3f}s) ---\n")
-            log_sink.flush()
-            progress.on_step_end(step_id, index, total, elapsed=elapsed)
-
-    def _run_mapped_chain(
-        self,
-        chain: MappedChain,
-        *,
-        dag: PipelineDAG,
-        result: ExecutionResult,
-        runtime: RuntimeContext,
-        pipeline_inputs: dict[str, Any],
-        checkpoints: TieredCheckpointStore | None,
-        policy: set[str],
-        step_hashes: dict[str, str],
-        execution_plan: Any,
-        resolved_output_dir: StorageLocation | None,
-        resolved_outputs_dir: StorageLocation | None,
-        resolved_temp_dir: StorageLocation | None,
-        storage_options: dict[str, Any] | None,
-        force: bool,
-        progress: ProgressCallback,
-        log_sink: _Tee,
-        step_index: dict[str, int],
-        total: int,
-    ) -> None:
-        """Fan out a mapped/swept chain: run every member once per instance.
-
-        Instances are the outer product of the ``map_over`` source elements and
-        the ``sweep`` combinations. Each instance runs in an ``_ElementContext``
-        so within-chain references resolve to *this* element (design.md §1.6);
-        each (member, instance) pair is checkpointed as its own content-
-        addressed entry. After all instances, each member's per-instance outputs
-        are folded into the global runtime as lists for the collector to read.
-        """
-        members = [dag.nodes[mid] for mid in chain.member_ids]
-        member_ids = chain.member_ids
-
-        swept_members = [m for m in members if m.is_swept]
-        if len(members) > 1 and swept_members:
-            raise PipelineExecutionError(
-                member_ids[0],
-                "sweep within a multi-step mapped chain is not supported; keep "
-                "the sweep on a single step (map_over + sweep on one step is "
-                "allowed).",
-            )
-
-        # A downstream cached terminal pruned this chain: skip all members.
-        if any(mid in execution_plan.pruned for mid in member_ids):
-            for mid in member_ids:
-                idx = step_index.get(mid, 0)
-                progress.on_step_start(mid, idx, total)
-                result.pruned_steps.append(mid)
-                result.step_dispositions[mid] = StepRecord(
-                    disposition="pruned", step_hash=step_hashes.get(mid)
-                )
-                result.logs.append(f"pruned: {mid} (mapped chain)")
-                progress.on_step_end(mid, idx, total, skipped=True, elapsed=0.0)
-            return
-
-        for mid in member_ids:
-            progress.on_step_start(mid, step_index.get(mid, 0), total)
-        chain_start = time.perf_counter()
-
-        # Resolve the fan-out source (single-item transparency: a non-list
-        # source runs the chain exactly once).
-        has_item = chain.source_ref is not None
-        if has_item:
-            parsed = parse_ref(chain.source_ref)
-            if parsed is None:
-                raise PipelineExecutionError(
-                    member_ids[0],
-                    f"map_over source {chain.source_ref!r} is not a "
-                    "${step.output} reference",
-                )
-            src_id, src_out = parsed
-            try:
-                source_val = runtime.get(src_id, src_out)
-            except KeyError as exc:
-                raise PipelineExecutionError(
-                    member_ids[0],
-                    f"map_over source {chain.source_ref!r} is unavailable: {exc}",
-                    original=exc,
-                ) from exc
-            source_list = source_val if isinstance(source_val, list) else [source_val]
-        else:
-            source_list = [None]
-
-        swept_member = swept_members[0] if swept_members else None
-        combos: list[dict[str, Any] | None] = (
-            list(expand_sweep(swept_member.sweep_declaration))
-            if swept_member is not None
-            else [None]
-        )
-
-        instances: list[tuple[int, Any, dict[str, Any] | None]] = []
-        flat = 0
-        for item in source_list:
-            for combo in combos:
-                instances.append((flat, item, combo))
-                flat += 1
-
-        member_outputs: dict[str, list[dict[str, Any]]] = {m: [] for m in member_ids}
-        member_stats: dict[str, list[int]] = {m: [0, 0] for m in member_ids}
-
-        log_sink.write(
-            f"\n=== mapped chain {member_ids} x {len(instances)} instance(s) ===\n"
-        )
-        log_sink.flush()
-
-        try:
-            for inst_index, item, combo in instances:
-                elem_ctx = _ElementContext(runtime, item=item)
-                for member in members:
-                    mid = member.step.id
-                    base_hash = step_hashes.get(mid)
-                    is_side_effect = member.spec.sink or not member.spec.outputs
-                    disc_kwargs: dict[str, Any] = {
-                        "index": inst_index,
-                        "param_overrides": combo,
-                    }
-                    if has_item:
-                        disc_kwargs["item"] = item
-                    inst_hash: str | None = None
-                    if (
-                        checkpoints is not None
-                        and base_hash
-                        and mid in policy
-                        and not is_side_effect
-                    ):
-                        inst_hash = derive_instance_hash(
-                            base_hash, instance_discriminator(**disc_kwargs)
-                        )
-
-                    if (
-                        inst_hash is not None
-                        and not force
-                        and checkpoints.has_checkpoint(mid, instance_hash=inst_hash)
-                    ):
-                        out = checkpoints.load(mid, instance_hash=inst_hash)
-                        member_stats[mid][1] += 1
-                    else:
-                        artifact_paths: list[str] = []
-                        with execution_context(
-                            mode="direct",
-                            output_dir=resolved_output_dir,
-                            step_id=mid,
-                            artifacts_dir=resolved_outputs_dir,
-                            temp_dir=resolved_temp_dir,
-                            storage_options=storage_options,
-                            artifact_sink=artifact_paths,
-                        ), redirect_stdout(log_sink), redirect_stderr(log_sink):
-                            out = self._execute_step(
-                                member, elem_ctx, pipeline_inputs,
-                                param_overrides=combo,
-                            )
-                        if inst_hash is not None and out:
-                            checkpoints.save(
-                                mid,
-                                out,
-                                artifacts=artifact_paths,
-                                instance_hash=inst_hash,
-                                instance_index=inst_index,
-                                instance_discriminator=instance_discriminator(
-                                    **disc_kwargs
-                                ),
-                            )
-                            out = checkpoints.load(mid, instance_hash=inst_hash)
-                        member_stats[mid][0] += 1
-                    elem_ctx.record(mid, out or {})
-                    member_outputs[mid].append(out or {})
-        except PipelineExecutionError as exc:
-            progress.on_step_end(
-                exc.step_id, step_index.get(exc.step_id, 0), total,
-                elapsed=time.perf_counter() - chain_start, error=exc,
-            )
-            raise
-
-        # Fold per-instance outputs into the global runtime as lists so a
-        # ``collect`` step reads the accumulated results (design.md §1.6).
-        elapsed = time.perf_counter() - chain_start
-        for member in members:
-            mid = member.step.id
-            folded = _fold_instance_outputs(member.spec.outputs, member_outputs[mid])
-            runtime.record(mid, folded)
-            result.outputs[mid] = folded
-            computed, hits = member_stats[mid]
-            if computed:
-                result.executed_steps.append(mid)
-            else:
-                result.skipped_steps.append(mid)
-            if computed == 0 and hits:
-                tier = (checkpoints.hit_tier(mid) if checkpoints else None) or "user"
-                disposition = f"hit-{tier}-cache"
-                write_tier = None
-            else:
-                disposition = "computed"
-                write_tier = (
-                    checkpoints.write_tier if (checkpoints and computed) else None
-                )
-            result.step_dispositions[mid] = StepRecord(
-                disposition=disposition,
-                step_hash=step_hashes.get(mid),
-                tier=write_tier,
-                elapsed_seconds=elapsed,
-            )
-            result.logs.append(
-                f"mapped {mid}: {computed + hits} instance(s) "
-                f"({computed} computed, {hits} cached)"
-            )
-            progress.on_step_end(
-                mid, step_index.get(mid, 0), total,
-                skipped=(computed == 0), elapsed=elapsed,
-            )
-
-    def _execute_step(
-        self,
-        node: DAGNode,
-        runtime: RuntimeContext | _ElementContext,
-        pipeline_inputs: dict[str, Any],
-        param_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        step_id = node.step.id
-        if node.implementation is None:
-            raise PipelineExecutionError(
-                step_id,
-                f"step {step_id!r} has no resolved implementation",
-            )
-
-        impl = node.implementation
-        try:
-            callable_obj = import_callable(impl.callable_path)
-        except (ImportError, AttributeError, TypeError) as exc:
-            raise PipelineExecutionError(
-                step_id,
-                f"failed to import callable {impl.callable_path!r} for step "
-                f"{step_id!r}: {exc}",
-                callable_path=impl.callable_path,
-                original=exc,
-            ) from exc
-
-        if impl.setup:
-            try:
-                setup_fn = import_callable(impl.setup)
-            except (ImportError, AttributeError, TypeError) as exc:
-                raise PipelineExecutionError(
-                    step_id,
-                    f"failed to import setup callable {impl.setup!r} for "
-                    f"step {step_id!r}: {exc}",
-                    callable_path=impl.setup,
-                    original=exc,
-                ) from exc
-            setup_fn()
-
-        try:
-            kwargs = build_kwargs(
-                node, runtime, pipeline_inputs, param_overrides=param_overrides
-            )
-        except (KeyError, ValueError) as exc:
-            raise PipelineExecutionError(
-                step_id,
-                f"failed to build kwargs for step {step_id!r}: {exc}",
-                callable_path=impl.callable_path,
-                original=exc,
-            ) from exc
-
-        try:
-            return_value = callable_obj(**kwargs)
-        except Exception as exc:
-            raise PipelineExecutionError(
-                step_id,
-                (
-                    f"callable {impl.callable_path!r} raised {type(exc).__name__} "
-                    f"for step {step_id!r}: {exc}"
-                ),
-                callable_path=impl.callable_path,
-                original=exc,
-            ) from exc
-
-        try:
-            outputs = extract_outputs(node, return_value)
-        except Exception as exc:
-            raise PipelineExecutionError(
-                step_id,
-                (
-                    f"output_map extraction failed for step {step_id!r}: {exc}"
-                ),
-                callable_path=impl.callable_path,
-                original=exc,
-            ) from exc
-
-        if impl.teardown:
-            try:
-                teardown_fn = import_callable(impl.teardown)
-            except (ImportError, AttributeError, TypeError) as exc:
-                raise PipelineExecutionError(
-                    step_id,
-                    f"failed to import teardown callable {impl.teardown!r} for "
-                    f"step {step_id!r}: {exc}",
-                    callable_path=impl.teardown,
-                    original=exc,
-                ) from exc
-            teardown_fn()
-
-        return outputs

@@ -1,0 +1,91 @@
+# BYO Folder Example - Modular Pipeline Recipe
+#
+# Companion to hb1603_survey_pipeline_modular.yaml that demonstrates the
+# "bring your own folder" mode: no NCEI query or download is performed.
+# The user points raw_input_folder at a directory that already contains
+# .raw files (e.g. files copied from a vessel or a previous download)
+# and the processing sub-recipe globs that folder directly.
+#
+# To restrict processing to a subset of files in the folder, set
+# raw_file_names to a list of filenames within raw_input_folder. Leave it
+# as an empty list to process every .raw file in the folder.
+#
+# To restrict processing to a datetime window instead, set file_time_start
+# and/or file_time_end (ISO datetimes). Files are matched on the
+# D{YYYYMMDD}-T{HHMMSS} stamp in their names; leave both unset to disable.
+# Example: --input file_time_start=2016-07-25T20:58 --input file_time_end=2016-07-25T21:45
+#
+# Usage: aa-recipe generate byo_folder_example.yaml
+
+recipe:
+  name: "byo_folder_example"
+  description: >
+    BYO-folder variant of the modular pipeline; no NCEI download, just
+    process a directory the user already has on disk.
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs/HB1603_local"
+    # Fold folder membership into the cache key (names+size locally); the folder
+    # path is excluded so the same files under a moved folder still hit.
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  # Optional subset of files within raw_input_folder. Leave empty to use
+  # every .raw file in the folder.
+  raw_file_names:
+    type: list
+    default: []
+  # Optional filename-datetime window. Unset means "no time filtering", so the
+  # default behavior of this recipe is unchanged.
+  file_time_start:
+    type: str
+    required: false
+  file_time_end:
+    type: str
+    required: false
+
+steps:
+
+  # Generic processing pipeline. No query/download step - the parent's
+  # raw_input_folder is used directly. The optional raw_file_names input
+  # is forwarded so users can restrict processing to a subset.
+  - include: processing_lvls_1_to_3.yaml
+    input_overrides:
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  # Dataset-specific line overlay applied by the parent recipe.
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  # Visualization wired to processing outputs.
+  - include: visualization.yaml
+    input_overrides:
+      sv_clean: ${mask_sparse.ds_Sv}
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile_fit"
+
+  # ML wired to processing outputs. echodata comes from combine_raw and the
+  # pre-sparse-mask Sv (sv_clean_unmasked) from remove_noise; machine_learning
+  # computes its own per-cell statistics internally.
+  - include: machine_learning.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"

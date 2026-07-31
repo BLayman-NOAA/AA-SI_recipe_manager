@@ -331,12 +331,14 @@ def test_remote_fingerprint_checksum_change_invalidates(
     assert second["checksum"] == ["crc32c", "bbb=="]
 
 
-def test_remote_fingerprint_falls_back_to_size_mtime(memory_file: str) -> None:
+def test_remote_fingerprint_falls_back_to_size(memory_file: str) -> None:
+    # No backend checksum -> fall back to size only. mtime is never used (it is
+    # upload time on object stores and would false-miss on re-upload).
     fingerprint = _remote_path_fingerprint(memory_file)
     assert fingerprint["kind"] == "file"
     assert fingerprint["size"] == len(b"payload")
     assert "checksum" not in fingerprint
-    assert "mtime_ns" in fingerprint
+    assert "mtime_ns" not in fingerprint
 
 
 def test_remote_dir_entries_carry_checksums(

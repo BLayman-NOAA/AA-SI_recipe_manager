@@ -12,10 +12,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Recipe format versions that this package can parse.
 SUPPORTED_SCHEMA_VERSIONS = {"1"}
+
+#: How a path-typed input/param folds its target into the step cache hash.
+#: ``off`` (default) keeps only the path string; the other modes fold a
+#: location-independent listing of the folder's entries and *drop the path*, so
+#: the same files under a moved/renamed folder hash identically. Signals:
+#: ``names`` (basenames only), ``size`` (names + per-file size, identical local
+#: and remote), ``checksum`` (names + content hash: object-store metadata
+#: remotely, a byte read locally), ``auto`` (names + size locally, names +
+#: checksum remotely — the best cheap signal per backend). All non-``off`` modes
+#: exclude mtime.
+FingerprintMode = Literal["off", "auto", "names", "size", "checksum"]
+
+#: Declaration blocks reject unknown keys. A key pydantic merely ignored would
+#: read as accepted while doing nothing, which is how a recipe still using the
+#: removed ``fingerprint_contents`` would silently fall back to path-only cache
+#: keying instead of the content fingerprinting it asked for.
+_STRICT_DECLARATION = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +43,8 @@ SUPPORTED_SCHEMA_VERSIONS = {"1"}
 class PortDeclaration(BaseModel):
     """A single input or output port on a spec."""
 
+    model_config = _STRICT_DECLARATION
+
     type: str
     description: str | None = None
     required: bool = True
@@ -33,10 +52,17 @@ class PortDeclaration(BaseModel):
     many: bool = False
     expected_variables: list[str] | None = None
     expected_coords: list[str] | None = None
+    provenance_role: str | None = None
+    """Marks a port whose runtime value carries a named provenance signal.
+    ``"raw_file_list"`` tags the list of raw input files a run read, so the
+    executor can harvest it into provenance (see ``build_raw_inputs_record``).
+    """
 
 
 class ParamDeclaration(BaseModel):
     """A parameter accepted by a spec."""
+
+    model_config = _STRICT_DECLARATION
 
     type: str | None = None
     units: str | None = None
@@ -44,11 +70,11 @@ class ParamDeclaration(BaseModel):
     default: Any | None = None
     required: bool = True
     constraints: dict[str, Any] | None = None
-    fingerprint_contents: bool = False
-    """When True and type=='path', the directory/file contents are hashed as
-    part of the step's cache key. Opt-in only: defaults to False so that
-    output/download directories don't invalidate caches between runs.
-    Set to True on read-only input paths (e.g. calibration folders).
+    fingerprint_mode: FingerprintMode = "off"
+    """How a ``type=='path'`` param folds its target into the step cache key.
+    ``off`` (default) hashes only the path string. Non-``off`` modes fold a
+    location-independent folder listing and drop the path — see
+    :data:`FingerprintMode`. Use on stable read-only inputs (e.g. a raw folder).
     """
 
 
@@ -218,15 +244,22 @@ class IncludeBlock(BaseModel):
 class InputDeclaration(BaseModel):
     """A pipeline-level input slot."""
 
+    model_config = _STRICT_DECLARATION
+
     type: str
     description: str | None = None
     default: Any | None = None
     required: bool = True
-    fingerprint_contents: bool = False
-    """When True and type=='path', the directory/file contents are hashed as
-    part of every step that references this input. Opt-in only: defaults to
-    False so that download/output directories don't invalidate caches between
-    runs. Set to True on stable read-only inputs (e.g. calibration folders).
+    fingerprint_mode: FingerprintMode = "off"
+    """How a ``type=='path'`` pipeline input folds its target into the cache key
+    of every step that references it. ``off`` (default) hashes only the path
+    string. Non-``off`` modes fold a location-independent folder listing and
+    drop the path — see :data:`FingerprintMode`.
+    """
+    provenance_role: str | None = None
+    """Marks a pipeline input carrying a named provenance signal.
+    ``"raw_file_list"`` tags a directly-supplied raw file list so a recipe that
+    skips the reader step still records what it read.
     """
 
     @model_validator(mode="after")
@@ -375,6 +408,35 @@ class ResolvedStepInfo(BaseModel):
     params_used: dict[str, Any] = {}
 
 
+class RawFileEntry(BaseModel):
+    """One raw input file recorded for provenance: basename + size (bytes).
+
+    Deliberately carries no directory path — identity is the file and its data,
+    not where it lived. ``size`` is ``None`` when it could not be determined.
+    """
+
+    name: str
+    size: int | None = None
+
+
+class RawInputsRecord(BaseModel):
+    """The set of raw input files a run read, recorded for data provenance.
+
+    Populated from the reader step's resolved output (``source="resolved"``) or,
+    when the reader was a cache hit / pruned on resume, inherited from the
+    producing run's checkpoint sidecar (``source="inherited"``, with
+    ``origin_run_id`` naming that run — e.g. a curated survey run whose cache a
+    user extended).
+    """
+
+    files: list[RawFileEntry] = []
+    count: int = 0
+    digest: str = ""  # sha256 over the sorted (name, size) pairs
+    source: Literal["resolved", "inherited"] = "resolved"
+    producing_step: str | None = None  # "<step_id>.<port>" or "pipeline_input:<name>"
+    origin_run_id: str | None = None  # set only when inherited
+
+
 class Provenance(BaseModel):
     """Captured runtime environment and execution details for a pipeline run."""
 
@@ -388,3 +450,4 @@ class Provenance(BaseModel):
     inputs: dict[str, Any] = {}  # pipeline-level inputs supplied at runtime
     resolved_steps: dict[str, ResolvedStepInfo] = {}
     resolved_dependencies: dict[str, Any] = {}  # package -> {installed_version, source, url}
+    raw_inputs: RawInputsRecord | None = None  # raw files this run read

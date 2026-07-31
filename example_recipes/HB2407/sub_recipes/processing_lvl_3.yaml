@@ -1,0 +1,76 @@
+# Processing Level 3 - Sparse Masking, MVBS, and Per-Cell Statistics
+#
+# Applies sparse-bin masking to the clean Sv dataset, computes MVBS, and also
+# computes per-cell statistics from the pre-sparse-mask Sv dataset for ML use.
+
+recipe:
+  name: "processing_lvl_3"
+  description: "Sparse masking, MVBS generation, and per-cell statistics."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  sv_clean_unmasked:
+    type: dataset
+    description: "Clean Sv dataset after noise removal and before sparse-bin masking."
+  range_bin:
+    type: str
+    default: "20m"
+    description: "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+  ping_time_bin:
+    type: str
+    default: "20s"
+    description: "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+  nan_threshold:
+    type: float
+    default: 0.6
+    description: "Fraction of NaN samples in a bin above which the sparse-bin mask excludes it."
+  mvbs_chunk_ping_time:
+    type: int
+    default: 1000
+    description: >
+      Ping-time chunk size to apply before compute_mvbs, so it can process
+      the survey in dask-parallel chunks instead of as one in-memory block.
+      mask_sparse_bins always materializes Sv eagerly internally (its
+      NaN-fraction computation is plain numpy), so chunking has to be
+      re-established after it via a standalone rechunk step rather than as
+      a side effect of masking -- that way it survives mask_sparse_bins
+      being removed, reordered, or replaced by an echopype-native equivalent.
+
+steps:
+
+  - id: mask_sparse
+    op: mask_sparse_bins
+    inputs:
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      nan_threshold: ${inputs.nan_threshold}
+
+  - id: rechunk_before_mvbs
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      ping_time_chunk: ${inputs.mvbs_chunk_ping_time}
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_mvbs.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  - id: compute_cell_stats
+    op: compute_per_cell_statistics
+    inputs:
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      statistics:
+        - cv

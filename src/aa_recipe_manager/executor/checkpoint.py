@@ -20,13 +20,14 @@ import stat
 import time
 import uuid
 import warnings
-from contextlib import contextmanager
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from aa_recipe_manager.executor.runtime_context import get_execution_context
 from aa_recipe_manager.storage import StorageLocation, is_remote_url
 
 if TYPE_CHECKING:
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
         CheckpointMode,
         DAGNode,
         PipelineDAG,
-        Step,
     )
 
 # Matches ${inputs.name} anywhere within a string (mirrors resolver.params).
@@ -178,17 +178,41 @@ def _info_checksum(info: dict[str, Any]) -> list[str] | None:
     return None
 
 
+def _remote_entry_signal(
+    entry: dict[str, Any], kind: str, effective_mode: str
+) -> dict[str, Any]:
+    """Per-entry data signal for a remote listing, by resolved fingerprint mode.
+
+    ``names`` adds nothing; ``size`` adds the byte size; ``checksum`` adds the
+    object store's content hash (md5/crc32c/etag) when present, falling back to
+    size for entries the backend reports no checksum for (subdirs, composite
+    objects). ``mtime`` is never included — on object stores it is upload time.
+    """
+    signal: dict[str, Any] = {}
+    if effective_mode == "size":
+        signal["size"] = entry.get("size")
+    elif effective_mode == "checksum":
+        checksum = _info_checksum(entry) if kind == "file" else None
+        if checksum is not None:
+            signal["checksum"] = checksum
+        else:
+            signal["size"] = entry.get("size")
+    return signal
+
+
 def _remote_path_fingerprint(
     path_value: str,
     storage_options: dict[str, Any] | None = None,
+    *,
+    mode: str = "auto",
 ) -> dict[str, Any]:
-    """Content fingerprint for an fsspec URL (gs://, s3://, ...).
+    """Location-independent fingerprint for an fsspec URL (gs://, s3://, ...).
 
-    Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes,
-    preferring backend-reported content checksums (md5/crc32c/etag) over
-    modification time — on GCS, mtime is *upload* time, so re-uploading an
-    identical file would otherwise invalidate every downstream checkpoint.
-    Size + mtime remain the fallback when the backend reports no checksum.
+    Uses ``fs.info`` for objects and a sorted top-level ``fs.ls`` for prefixes.
+    The returned dict carries **no path and no mtime** — only per-entry
+    basenames plus the data signal selected by ``mode`` (see
+    :data:`~aa_recipe_manager.model.types.FingerprintMode`); ``auto`` resolves to
+    ``checksum`` remotely, which rides the single LIST response for free on GCS.
     Costs one HEAD/LIST per fingerprinted input per run.
 
     Credential or network failures degrade to a ``remote-unverified``
@@ -201,36 +225,30 @@ def _remote_path_fingerprint(
     never enters the returned fingerprint (credentials must not change cache
     keys).
     """
+    effective_mode = "checksum" if mode == "auto" else mode
     try:
         fs, fs_path = __import__("fsspec.core", fromlist=["url_to_fs"]).url_to_fs(
             path_value, **(storage_options or {})
         )
         if not fs.exists(fs_path):
-            return {"path": path_value, "kind": "missing"}
+            return {"kind": "missing"}
         info = fs.info(fs_path)
         if info.get("type") == "directory":
             entries: list[dict[str, Any]] = []
             for entry in sorted(fs.ls(fs_path, detail=True), key=lambda e: e["name"]):
+                kind = "dir" if entry.get("type") == "directory" else "file"
                 entry_fp: dict[str, Any] = {
                     "name": entry["name"].rstrip("/").rsplit("/", 1)[-1],
-                    "kind": "dir" if entry.get("type") == "directory" else "file",
-                    "size": entry.get("size"),
+                    "kind": kind,
                 }
-                checksum = _info_checksum(entry)
-                if checksum is not None:
-                    entry_fp["checksum"] = checksum
+                entry_fp.update(_remote_entry_signal(entry, kind, effective_mode))
                 entries.append(entry_fp)
-            return {"path": path_value, "kind": "dir", "entries": entries}
+            return {"kind": "dir", "entries": entries}
         fingerprint: dict[str, Any] = {
-            "path": path_value,
             "kind": "file",
-            "size": info.get("size"),
+            "name": fs_path.rstrip("/").rsplit("/", 1)[-1],
         }
-        checksum = _info_checksum(info)
-        if checksum is not None:
-            fingerprint["checksum"] = checksum
-        else:
-            fingerprint["mtime_ns"] = _info_mtime(info)
+        fingerprint.update(_remote_entry_signal(info, "file", effective_mode))
         return fingerprint
     except Exception as exc:  # missing creds, transient network, driver absent
         warnings.warn(
@@ -241,30 +259,54 @@ def _remote_path_fingerprint(
             stacklevel=2,
         )
         return {
-            "path": path_value,
             "kind": "remote-unverified",
             "nonce": uuid.uuid4().hex,
         }
 
 
-def _info_mtime(info: dict[str, Any]) -> Any:
-    """Best-effort modification marker from an fsspec info dict."""
-    for key in ("mtime", "LastModified", "last_modified", "updated"):
-        if info.get(key) is not None:
-            return str(info[key])
-    return None
+def _local_checksum(path: Path) -> list[str]:
+    """Streaming sha256 of a local file, returned as ``["sha256", hexdigest]``.
+
+    Matches the ``[algorithm, value]`` shape of remote checksums. Reads the whole
+    file, so ``checksum`` mode is opt-in and costly for large local inputs.
+    """
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return ["sha256", hasher.hexdigest()]
+
+
+def _local_entry_signal(
+    path: Path, is_file: bool, effective_mode: str
+) -> dict[str, Any]:
+    """Per-entry data signal for a local path, by resolved fingerprint mode.
+
+    ``names`` adds nothing; ``size`` adds the byte size (``None`` for dirs);
+    ``checksum`` adds a content hash of files (``None`` for dirs). ``mtime`` is
+    never included — re-copying identical bytes changes it and would false-miss.
+    """
+    signal: dict[str, Any] = {}
+    if effective_mode == "size":
+        signal["size"] = path.stat().st_size if is_file else None
+    elif effective_mode == "checksum":
+        signal["checksum"] = _local_checksum(path) if is_file else None
+    return signal
 
 
 def _path_fingerprint(
     path_value: Any,
     storage_options: dict[str, Any] | None = None,
+    *,
+    mode: str = "auto",
 ) -> dict[str, Any] | None:
-    """Return a deterministic, stat-only fingerprint for a path-like value.
+    """Return a location-independent fingerprint for a path-like value.
 
-    Files are fingerprinted by size and nanosecond mtime. Directories are
-    fingerprinted by a sorted top-level listing containing each entry's name,
-    kind, size, and nanosecond mtime. This catches common local-input changes
-    (added/removed/replaced files) without reading large file contents.
+    Directories fingerprint to a sorted top-level listing of basenames plus the
+    per-entry data signal selected by ``mode`` (see
+    :data:`~aa_recipe_manager.model.types.FingerprintMode`); ``auto`` resolves to
+    ``size`` locally. The result carries **no path and no mtime**, so the same
+    files under a moved/renamed folder fingerprint identically.
 
     fsspec URLs are fingerprinted remotely via :func:`_remote_path_fingerprint`;
     ``storage_options`` authenticates those calls but never enters the result.
@@ -274,40 +316,49 @@ def _path_fingerprint(
     if not isinstance(path_value, (str, Path)):
         path_value = str(path_value)
     if is_remote_url(path_value):
-        return _remote_path_fingerprint(str(path_value), storage_options)
+        return _remote_path_fingerprint(str(path_value), storage_options, mode=mode)
+    effective_mode = "size" if mode == "auto" else mode
     path = Path(path_value)
     if not path.exists():
-        return {"path": str(path), "kind": "missing"}
-    stat_result = path.stat()
+        return {"kind": "missing"}
     if path.is_file():
-        return {
-            "path": str(path),
-            "kind": "file",
-            "size": stat_result.st_size,
-            "mtime_ns": stat_result.st_mtime_ns,
-        }
+        fingerprint: dict[str, Any] = {"kind": "file", "name": path.name}
+        fingerprint.update(_local_entry_signal(path, True, effective_mode))
+        return fingerprint
     if path.is_dir():
         entries: list[dict[str, Any]] = []
         for entry in sorted(path.iterdir(), key=lambda item: item.name):
-            entry_stat = entry.stat()
-            entries.append(
-                {
-                    "name": entry.name,
-                    "kind": "dir" if entry.is_dir() else "file",
-                    "size": entry_stat.st_size if entry.is_file() else None,
-                    "mtime_ns": entry_stat.st_mtime_ns,
-                }
-            )
-        return {
-            "path": str(path),
-            "kind": "dir",
-            "mtime_ns": stat_result.st_mtime_ns,
-            "entries": entries,
-        }
+            is_file = entry.is_file()
+            entry_fp: dict[str, Any] = {
+                "name": entry.name,
+                "kind": "file" if is_file else "dir",
+            }
+            entry_fp.update(_local_entry_signal(entry, is_file, effective_mode))
+            entries.append(entry_fp)
+        return {"kind": "dir", "entries": entries}
+    return {"kind": "other", "name": path.name}
+
+
+#: Placeholder that replaces a fingerprinted path's literal value in the emitted
+#: step fingerprint, so a folder's *location* never contributes to the hash (its
+#: content identity travels via ``pipeline_input_paths`` / ``param_paths``).
+_FINGERPRINTED_PATH_SENTINEL = "<fingerprinted-path>"
+
+
+def _scrub_paths(
+    mapping: dict[str, Any] | None, paths: set[str]
+) -> dict[str, Any] | None:
+    """Return ``mapping`` with any top-level value equal to a fingerprinted path
+    replaced by the sentinel. A no-op when nothing is fingerprinted."""
+    if not paths or not mapping:
+        return mapping
     return {
-        "path": str(path),
-        "kind": "other",
-        "mtime_ns": stat_result.st_mtime_ns,
+        key: (
+            _FINGERPRINTED_PATH_SENTINEL
+            if isinstance(value, (str, Path)) and str(value) in paths
+            else value
+        )
+        for key, value in mapping.items()
     }
 
 
@@ -332,16 +383,31 @@ def _step_fingerprint(
     custom = step.custom_spec
     referenced = _referenced_pipeline_inputs(node)
     resolved_inputs = {name: pipeline_inputs.get(name) for name in sorted(referenced)}
-    pipeline_input_paths = {
-        name: _path_fingerprint(resolved_inputs[name], storage_options)
-        for name in sorted(referenced)
-        if getattr(input_declarations.get(name), "fingerprint_contents", False)
-    }
-    param_paths = {
-        name: _path_fingerprint(node.resolved_params.get(name), storage_options)
-        for name, declaration in sorted(node.spec.params.items())
-        if getattr(declaration, "fingerprint_contents", False)
-    }
+
+    # Fingerprinted path inputs/params fold a location-independent listing into
+    # the hash and, so the folder *location* never enters the key, have their
+    # literal path scrubbed from every emitted value dict (see _scrub_paths).
+    fingerprinted_paths: set[str] = set()
+    pipeline_input_paths: dict[str, Any] = {}
+    for name in sorted(referenced):
+        fp_mode = getattr(input_declarations.get(name), "fingerprint_mode", "off")
+        if fp_mode != "off":
+            value = resolved_inputs[name]
+            pipeline_input_paths[name] = _path_fingerprint(
+                value, storage_options, mode=fp_mode
+            )
+            if isinstance(value, (str, Path)):
+                fingerprinted_paths.add(str(value))
+    param_paths: dict[str, Any] = {}
+    for name, declaration in sorted(node.spec.params.items()):
+        fp_mode = getattr(declaration, "fingerprint_mode", "off")
+        if fp_mode != "off":
+            value = node.resolved_params.get(name)
+            param_paths[name] = _path_fingerprint(
+                value, storage_options, mode=fp_mode
+            )
+            if isinstance(value, (str, Path)):
+                fingerprinted_paths.add(str(value))
     if custom is None:
         custom_dump = None
     elif custom.cache_key is not None:
@@ -360,16 +426,16 @@ def _step_fingerprint(
             (custom.version if custom is not None else None) or node.spec.version
         ),
         "impl_version": impl.version if impl is not None else None,
-        "inputs": step.inputs,
-        "params": step.params,
-        "resolved_params": node.resolved_params,
+        "inputs": _scrub_paths(step.inputs, fingerprinted_paths),
+        "params": _scrub_paths(step.params, fingerprinted_paths),
+        "resolved_params": _scrub_paths(node.resolved_params, fingerprinted_paths),
         "map_over": step.map_over,
         "collect": step.collect,
         "sweep": step.sweep.model_dump() if step.sweep is not None else None,
         "param_map": impl.param_map if impl is not None else None,
         "output_map": impl.output_map if impl is not None else None,
         "custom_spec": custom_dump,
-        "pipeline_inputs": resolved_inputs,
+        "pipeline_inputs": _scrub_paths(resolved_inputs, fingerprinted_paths),
         "pipeline_input_paths": pipeline_input_paths,
         "param_paths": param_paths,
     }
@@ -730,7 +796,7 @@ def _resolve_recipe_mode(dag: PipelineDAG) -> CheckpointMode:
 
 
 def explicit_checkpoint_steps(dag: PipelineDAG) -> set[str]:
-    """Step ids explicitly marked ``checkpoint: always`` or ``checkpoint: save`` in the recipe."""
+    """Step ids explicitly marked ``checkpoint: always`` or ``save`` in the recipe."""
     return {
         node.step.id
         for node in dag.nodes.values()
@@ -752,7 +818,7 @@ def resolve_checkpoint_policy(
         * ad-hoc ``extra_step_ids`` (force save)
         * the recipe / call-site ``mode``
             - ``eager``   : every step
-            - ``explicit``: only steps marked ``checkpoint: always`` or ``checkpoint: save``
+            - ``explicit``: only steps marked ``checkpoint: always`` or ``save``
             - ``terminal``: only steps with no downstream consumers
             - ``none``    : empty set (but "always" still forces)
 
@@ -798,7 +864,8 @@ def resolve_checkpoint_policy(
             policy.add(step_id)
             continue
         if per_step == "save":
-            # "save" respects mode=none (unlike "always"), but checkpoints under all other modes
+            # "save" respects mode=none (unlike "always"), but checkpoints
+            # under all other modes
             if effective_mode in ("eager", "explicit"):
                 policy.add(step_id)
             elif effective_mode == "terminal" and step_id in terminal:
@@ -904,7 +971,7 @@ def _remove_existing_output(path: Path) -> None:
 
 
 def _write_zarr_with_retry(
-    write_fn: "Any",
+    write_fn: Any,
     zarr_path: Path,
     *,
     max_retries: int = 3,
@@ -980,14 +1047,195 @@ def _write_pickle(target: StorageLocation, value: Any) -> None:
         pickle.dump(value, fh)
 
 
-def _write_zarr(target: StorageLocation, write_local: Any, write_remote: Any) -> None:
-    """Write a zarr store locally (with Windows retry) or remotely (single shot)."""
+# A remote zarr checkpoint can be written two ways (measured on a 2.8 MiB/s
+# uplink, 398 MiB store): streaming ``to_zarr`` straight to gs:// ran at
+# 0.9 MiB/s — a third of the link — because xarray writes chunks and the many
+# small metadata objects mostly serially. Staging the store to local scratch and
+# bulk-uploading it with ``fs.put(recursive=True)`` uploads every object
+# concurrently (async) and hit 2.3 MiB/s, ~2.5x faster. Staging costs local disk
+# equal to the (compressed) store, so it is gated by a size threshold: whole-
+# survey stores that cannot fit on a low-disk workstation fall back to streaming.
+_DEFAULT_STAGE_MAX_BYTES = 8 * 2**30  # 8 GiB of estimated uncompressed data
+_STAGE_ENV_VAR = "AA_RECIPE_CHECKPOINT_STAGE_MAX_BYTES"
+
+
+def _stage_threshold_bytes() -> int:
+    """Max estimated *uncompressed* store size eligible for staged upload.
+
+    Override with ``$AA_RECIPE_CHECKPOINT_STAGE_MAX_BYTES`` (bytes); ``0`` forces
+    the streaming path for every remote write (no local scratch), which is the
+    setting for a survey larger than local disk. The gate is on uncompressed
+    ``nbytes``, so the disk actually used is smaller by the compression ratio.
+    """
+    raw = os.environ.get(_STAGE_ENV_VAR)
+    if raw is None:
+        return _DEFAULT_STAGE_MAX_BYTES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_STAGE_MAX_BYTES
+
+
+def _estimated_uncompressed_bytes(value: Any) -> int:
+    """Best-effort logical size of a to-be-written store, without computing it.
+
+    ``nbytes`` on a dask-backed Dataset is shape x dtype summed over variables —
+    no data is materialized. Returns 0 when the size cannot be determined, which
+    routes to streaming (the always-safe path)."""
+    try:
+        if _is_echodata(value):
+            tree = getattr(value, "_tree", None)
+            if tree is None:
+                return 0
+            total = 0
+            for group_path in value.group_paths:
+                ds = value[group_path]
+                if ds is not None:
+                    total += int(ds.nbytes)
+            return total
+        nbytes = getattr(value, "nbytes", None)
+        return int(nbytes) if nbytes is not None else 0
+    except Exception:
+        return 0
+
+
+def _should_stage(value: Any) -> bool:
+    """True when ``value`` is small enough to stage-then-upload in parallel."""
+    threshold = _stage_threshold_bytes()
+    if threshold <= 0:
+        return False
+    size = _estimated_uncompressed_bytes(value)
+    # size == 0 means "unknown"; stream rather than risk staging something huge.
+    return 0 < size <= threshold
+
+
+def _stage_parent_dir() -> str | None:
+    """Local directory to stage a checkpoint under, honoring the run's own
+    configured ``temp_dir`` instead of always falling back to the system
+    default temp location.
+
+    ``ExecutionContext.temp_dir`` is a plain ``Path`` when the run's temp_dir
+    is local, or a ``StorageLocation`` when it's itself remote (e.g. a
+    gs://-backed temp_dir) -- staging only makes sense against a local
+    directory, so a remote (or unset) temp_dir falls back to
+    ``tempfile.mkdtemp``'s own system-default resolution, same as before this
+    existed.
+    """
+    temp_dir = get_execution_context().temp_dir
+    if not isinstance(temp_dir, Path):
+        return None
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    return str(temp_dir)
+
+
+def _staged_remote_zarr(target: StorageLocation, write_to_path: Any) -> None:
+    """Write a zarr store to local scratch, then bulk-upload it in parallel.
+
+    ``write_to_path(local_path)`` must write the store to a local ``Path`` using
+    the *same* encoding the streaming writer would, so the uploaded bytes (and
+    the reloaded result) are identical — only the transport differs.
+
+    The scratch write is a *local* zarr write, so it needs the same Windows
+    PermissionError retry a local checkpoint target gets; see
+    ``_write_zarr_with_retry``. Streaming to a bucket never hit this because
+    object stores have no rename step.
+    """
+    import tempfile
+
+    scratch = Path(tempfile.mkdtemp(prefix="aa_recipe_ckpt_", dir=_stage_parent_dir()))
+    try:
+        local_store = scratch / target.name
+        _write_zarr_with_retry(lambda: write_to_path(local_store), local_store)
+        # fsspec's recursive put runs the per-object uploads concurrently on the
+        # gcsfs event loop — the whole point of staging.
+        target.fs.put(str(local_store), target.fs_path, recursive=True)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _write_tree_consolidated_once(tree: Any, store: Any, **to_zarr_kwargs: Any) -> None:
+    """Write a DataTree to zarr, consolidating its metadata exactly once.
+
+    ``DataTree.to_zarr(consolidated=True)`` consolidates far more than it looks:
+    xarray hands ``consolidate_on_close`` down to every child store, and each
+    child consolidates the *root* store, so the root ``.zmetadata`` is rewritten
+    once per node — eight times for an EchoData tree. Locally that is eight
+    rename-into-place operations on the same freshly-written file, which is what
+    makes the Windows ``PermissionError`` rename race easy to hit; remotely it is
+    that many redundant full-store consolidations over the wire.
+
+    Writing unconsolidated and consolidating once at the end produces a
+    byte-identical store (the last of those repeated consolidations already
+    covered the whole tree), so this is purely the redundancy removed.
+
+    Consolidating through the store handle ``to_zarr`` returns — rather than
+    reopening by URL — keeps the caller's credentials and filesystem without
+    re-plumbing ``storage_options``.
+    """
+    import zarr
+
+    zarr_store = tree.to_zarr(
+        store, mode="w", zarr_format=2, consolidated=False, **to_zarr_kwargs
+    )
+    zarr.consolidate_metadata(zarr_store.zarr_group.store, zarr_format=2)
+
+
+def _write_zarr(
+    target: StorageLocation,
+    write_local: Any,
+    write_remote: Any,
+    stage_writer: Any = None,
+) -> None:
+    """Write a zarr store locally (with Windows retry) or remotely.
+
+    Remotely: stage-then-parallel-upload when ``stage_writer`` is provided (the
+    caller decided the store fits local disk), else stream ``write_remote``
+    straight to the bucket.
+    """
     if target.is_local:
         _write_zarr_with_retry(write_local, target.as_local_path())
         return
     target.rm()
     with _zarr_write_warnings_suppressed():
-        write_remote()
+        if stage_writer is not None:
+            _staged_remote_zarr(target, stage_writer)
+        else:
+            write_remote()
+
+
+def _zarr_uniform_chunks(ds: Any) -> Any:
+    """Rechunk a Dataset's dask arrays so every dimension is Zarr-writable.
+
+    Zarr requires each dimension's chunks to be uniform except for a final
+    chunk no larger than the first. Dask arrays coming out of coarsen/reindex
+    style ops (e.g. echopype's ``remove_background_noise``) routinely violate
+    this: a dimension ends up chunked ``(103, ..., 105)`` — final chunk *larger*
+    than the first — or with ragged interior blocks. When such a variable has no
+    target ``encoding['chunks']`` to align against, neither ``align_chunks=True``
+    nor ``safe_chunks=False`` rescues the write (verified against xarray
+    2026.4), so ``to_zarr`` raises "Final chunk of Zarr array must be the same
+    size or smaller than the first".
+
+    For each offending dimension this rechunks to that dimension's largest
+    current block, which makes the interior uniform and the remainder no larger
+    than a full block while staying close to the existing layout (well-formed
+    variables and eager, non-dask data are left untouched). Returns ``ds``
+    unchanged when nothing needs fixing.
+    """
+    problem_dims: dict[str, int] = {}
+    for var in ds.variables.values():
+        if var.chunks is None:  # eager (numpy-backed) variable
+            continue
+        for dim, dim_chunks in zip(var.dims, var.chunks):
+            if len(dim_chunks) <= 1:
+                continue
+            first = dim_chunks[0]
+            interior_uniform = all(c == first for c in dim_chunks[:-1])
+            if not interior_uniform or dim_chunks[-1] > first:
+                problem_dims[dim] = max(problem_dims.get(dim, 0), max(dim_chunks))
+    if not problem_dims:
+        return ds
+    return ds.chunk(problem_dims)
 
 
 def _serialize_output(
@@ -1041,35 +1289,37 @@ def _serialize_output(
                     zarr_format=2,
                 )
 
+        # echopype's EchoData.to_zarr cannot write to a remote store: its
+        # save_file() hands the protocol-stripped fsspec mapper root
+        # (e.g. "bucket/key.zarr") to xarray.to_zarr with no filesystem, so a
+        # gs:// save_path silently becomes a LOCAL relative write. echopype backs
+        # EchoData with an xarray DataTree, so we write that tree directly.
+        # The store is consolidated so the downstream open_converted reopens with
+        # one request instead of listing every key (much faster over high-latency
+        # object storage); see _write_tree_consolidated_once for why that is done
+        # in one pass rather than via consolidated=True.
+        tree = getattr(value, "_tree", None)
+
+        def _write_tree_to(path: Any) -> None:
+            _write_tree_consolidated_once(tree, str(path))
+
         def _write_echodata_remote() -> None:
-            # echopype's EchoData.to_zarr cannot write to a remote store: its
-            # save_file() hands the protocol-stripped fsspec mapper root
-            # (e.g. "bucket/key.zarr") to xarray.to_zarr with no filesystem, so a
-            # gs:// save_path silently becomes a LOCAL relative write.
-            #
-            # The combined EchoData is the whole survey, so we must NOT stage it
-            # on local disk. echopype backs EchoData with an xarray DataTree;
-            # writing that tree directly with xarray streams it chunk-by-chunk
+            # Streaming path (no scratch): xarray streams the tree chunk-by-chunk
             # from the (lazy) source stores straight to the bucket — bounded
-            # memory, no local copy.
-            tree = getattr(value, "_tree", None)
+            # memory, no local copy. The fallback for tree-less EchoData-likes
+            # (e.g. test stubs) always stages.
             if tree is not None:
-                # consolidated=True writes a single .zmetadata per group so the
-                # downstream open_converted reopens with one request instead of
-                # listing every key (much faster over high-latency object storage).
-                tree.to_zarr(
-                    target.url,
-                    mode="w",
-                    zarr_format=2,
-                    storage_options=xr_storage_options,
-                    consolidated=True,
+                _write_tree_consolidated_once(
+                    tree, target.url, storage_options=xr_storage_options
                 )
                 return
-            # Fallback for EchoData-likes without a datatree (e.g. test stubs):
-            # write to local scratch, then upload the directory.
             import tempfile
 
-            scratch = Path(tempfile.mkdtemp(prefix="aa_recipe_echodata_"))
+            scratch = Path(
+                tempfile.mkdtemp(
+                    prefix="aa_recipe_echodata_", dir=_stage_parent_dir()
+                )
+            )
             try:
                 local_store = scratch / target.name
                 value.to_zarr(
@@ -1082,7 +1332,9 @@ def _serialize_output(
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
 
-        _write_zarr(target, _write_echodata_local, _write_echodata_remote)
+        # Stage-then-parallel-upload when the tree fits local disk; else stream.
+        stage = _write_tree_to if (tree is not None and _should_stage(value)) else None
+        _write_zarr(target, _write_echodata_local, _write_echodata_remote, stage)
         return target, "echodata_zarr"
 
     if isinstance(value, xr.DataArray):
@@ -1099,6 +1351,7 @@ def _serialize_output(
             return target, "pickle"
         # default: zarr
         target = _target(".zarr")
+        ds = _zarr_uniform_chunks(ds)
 
         def _write_da_local() -> None:
             with _zarr_write_warnings_suppressed():
@@ -1120,7 +1373,14 @@ def _serialize_output(
                 storage_options=xr_storage_options,
             )
 
-        _write_zarr(target, _write_da_local, _write_da_remote)
+        def _stage_da(path: Any) -> None:
+            ds.to_zarr(
+                str(path), mode="w", compute=True, align_chunks=True,
+                zarr_format=2,
+            )
+
+        stage = _stage_da if _should_stage(value) else None
+        _write_zarr(target, _write_da_local, _write_da_remote, stage)
         return target, "zarr_da"
 
     if isinstance(value, xr.Dataset):
@@ -1136,10 +1396,11 @@ def _serialize_output(
             return target, "pickle"
         # default: zarr
         target = _target(".zarr")
+        ds = _zarr_uniform_chunks(value)
 
         def _write_ds_local() -> None:
             with _zarr_write_warnings_suppressed():
-                value.to_zarr(
+                ds.to_zarr(
                     str(target.as_local_path()),
                     mode="w",
                     compute=True,
@@ -1148,7 +1409,7 @@ def _serialize_output(
                 )
 
         def _write_ds_remote() -> None:
-            value.to_zarr(
+            ds.to_zarr(
                 target.url,
                 mode="w",
                 compute=True,
@@ -1157,7 +1418,14 @@ def _serialize_output(
                 storage_options=xr_storage_options,
             )
 
-        _write_zarr(target, _write_ds_local, _write_ds_remote)
+        def _stage_ds(path: Any) -> None:
+            ds.to_zarr(
+                str(path), mode="w", compute=True, align_chunks=True,
+                zarr_format=2,
+            )
+
+        stage = _stage_ds if _should_stage(value) else None
+        _write_zarr(target, _write_ds_local, _write_ds_remote, stage)
         return target, "zarr"
 
     if _is_json_safe(value):
@@ -1277,6 +1545,12 @@ class _StepCacheMeta:
     #: on ordinary (non-fanned-out) step entries.
     instance_index: int | None = None
     instance_discriminator: dict[str, Any] | None = None
+    #: The raw input files the writing run read (``RawInputsRecord`` dumped to a
+    #: dict). Stamped on every entry written after the reader step resolves, so a
+    #: later run that hits this entry — including a user extending a survey cache
+    #: — can recover what raw files produced it. ``None`` on entries written
+    #: before the list was known (e.g. the reader's own entry).
+    raw_inputs: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _StepCacheMeta:
@@ -1298,6 +1572,7 @@ class _StepCacheMeta:
             artifacts=list(artifacts) if artifacts is not None else None,
             instance_index=data.get("instance_index"),
             instance_discriminator=data.get("instance_discriminator"),
+            raw_inputs=data.get("raw_inputs"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1315,6 +1590,7 @@ class _StepCacheMeta:
             "artifacts": self.artifacts,
             "instance_index": self.instance_index,
             "instance_discriminator": self.instance_discriminator,
+            "raw_inputs": self.raw_inputs,
         }
 
 
@@ -1341,7 +1617,7 @@ class CheckpointManager:
     entry is invisible; per-``run_id`` artifact directories mean concurrent
     writers of the same entry never share object keys.
 
-    ``output_dir`` may be a local path or an fsspec URL (e.g. ``gs://bucket/
+    ``user_cache_dir`` may be a local path or an fsspec URL (e.g. ``gs://bucket/
     users/me/cache``). Artifact paths in sidecars are relative to the entry
     directory (POSIX separators) so a cache prefix is relocatable;
     absolute/URL entries are honored as external references.
@@ -1352,7 +1628,7 @@ class CheckpointManager:
 
     def __init__(
         self,
-        output_dir: str | Path | StorageLocation,
+        user_cache_dir: str | Path | StorageLocation,
         hashes: dict[str, str],
         *,
         preferred_format: CheckpointFormat | str = "zarr",
@@ -1362,14 +1638,14 @@ class CheckpointManager:
         recipe_info: Mapping[str, str] | None = None,
         provenance_ref: str | None = None,
     ) -> None:
-        self.location = StorageLocation.parse(output_dir, storage_options)
+        self.location = StorageLocation.parse(user_cache_dir, storage_options)
         if not self.location.is_local and str(preferred_format) == "netcdf":
             raise ValueError(
-                "checkpoint_format='netcdf' requires a local output_dir "
+                "checkpoint_format='netcdf' requires a local user_cache_dir "
                 "(HDF5 needs seekable writes); use 'zarr' or a local cache "
                 f"instead of {self.location.url!r}"
             )
-        self.output_dir = self.location.as_context_value()
+        self.user_cache_dir = self.location.as_context_value()
         self._hashes = dict(hashes)
         self.preferred_format = preferred_format
         self._payloads = dict(payloads) if payloads else {}
@@ -1544,6 +1820,7 @@ class CheckpointManager:
         artifacts: list[str] | None = None,
         instance_index: int | None = None,
         instance_discriminator: dict[str, Any] | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> _StepCacheMeta:
         return _StepCacheMeta(
             step_id=step_id,
@@ -1558,6 +1835,7 @@ class CheckpointManager:
             artifacts=list(artifacts) if artifacts is not None else None,
             instance_index=instance_index,
             instance_discriminator=instance_discriminator,
+            raw_inputs=raw_inputs,
         )
 
     def _write_meta(self, meta: _StepCacheMeta) -> None:
@@ -1565,7 +1843,13 @@ class CheckpointManager:
         entry_dir.mkdir()
         (entry_dir / META_FILENAME).write_text(json.dumps(meta.to_dict(), indent=2))
 
-    def save_marker(self, step_id: str, *, artifacts: list[str] | None = None) -> None:
+    def save_marker(
+        self,
+        step_id: str,
+        *,
+        artifacts: list[str] | None = None,
+        raw_inputs: dict[str, Any] | None = None,
+    ) -> None:
         """Record that a side-effect (sink / no-output) step ran for this hash.
 
         Writes a metadata-only sidecar (no serialized outputs) so a later run
@@ -1576,7 +1860,14 @@ class CheckpointManager:
         """
         step_hash = self._require_hash(step_id)
         self._write_meta(
-            self._build_meta(step_id, step_hash, {}, marker=True, artifacts=artifacts)
+            self._build_meta(
+                step_id,
+                step_hash,
+                {},
+                marker=True,
+                artifacts=artifacts,
+                raw_inputs=raw_inputs,
+            )
         )
 
     def save(
@@ -1588,6 +1879,8 @@ class CheckpointManager:
         instance_hash: str | None = None,
         instance_index: int | None = None,
         instance_discriminator: dict[str, Any] | None = None,
+        write_token: str | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> None:
         """Persist a step's outputs, committing with a sidecar-last write.
 
@@ -1600,9 +1893,16 @@ class CheckpointManager:
         entry is addressed at that hash instead of the step's base hash, so each
         mapped/swept instance is its own content-addressed entry under
         ``<step_id>/<instance_hash[:8]>/``.
+
+        ``write_token`` disambiguates the artifact subdirectory when two
+        concurrent workers of the *same run* commit the same content hash
+        (Stage 9): the artifacts land under ``<hash>/<run_id>.<token>/`` so the
+        two writers never share an object key. The sidecar still commits last,
+        so the loser is simply overwritten by an equivalent entry.
         """
         step_hash = instance_hash or self._require_hash(step_id)
-        run_dir = self._entry_dir(step_id, step_hash) / self.run_id
+        run_key = self.run_id if write_token is None else f"{self.run_id}.{write_token}"
+        run_dir = self._entry_dir(step_id, step_hash) / run_key
         out_meta: dict[str, dict[str, str]] = {}
         for out_name, value in outputs.items():
             category = _checkpoint_output_category(
@@ -1613,7 +1913,7 @@ class CheckpointManager:
             base = category_loc / _checkpoint_artifact_stem(out_name)
             target, fmt = _serialize_output(value, base, self.preferred_format)
             out_meta[out_name] = {
-                "path": f"{self.run_id}/{category}/{target.name}",
+                "path": f"{run_key}/{category}/{target.name}",
                 "format": fmt,
             }
         self._write_meta(
@@ -1624,6 +1924,7 @@ class CheckpointManager:
                 artifacts=artifacts,
                 instance_index=instance_index,
                 instance_discriminator=instance_discriminator,
+                raw_inputs=raw_inputs,
             )
         )
 

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: NOAA Fisheries
 """Per-user run configuration file discovery and loading.
 
-Storage locations (``output_dir``, ``temp_dir``, ``outputs_dir``,
+Storage locations (``user_cache_dir``, ``temp_dir``, ``outputs_dir``,
 ``survey_cache_dir``) and cloud credentials (``storage_options``) are
 environment-specific, so they belong in a per-user config file rather than the
 portable recipe. This module discovers and loads that file; the ``run`` CLI
@@ -40,12 +40,15 @@ ENV_VAR = "AA_RECIPE_CONFIG"
 #: Keys accepted at the top level of the config file.
 _KNOWN_KEYS = frozenset(
     {
-        "output_dir",
+        "user_cache_dir",
         "temp_dir",
         "outputs_dir",
         "survey_cache_dir",
         "storage_options",
         "inputs",
+        "executor",
+        "dask_scheduler",
+        "dask_workers",
     }
 )
 
@@ -63,12 +66,16 @@ class RunConfig:
     ``--cache-write-tier`` (and enforced by bucket IAM, not by this client).
     """
 
-    output_dir: str | None = None
+    user_cache_dir: str | None = None
     temp_dir: str | None = None
     outputs_dir: str | None = None
     survey_cache_dir: str | None = None
     storage_options: dict[str, Any] | None = None
     inputs: dict[str, Any] = field(default_factory=dict)
+    #: Default executor backend and its local-cluster sizing (CLI flags win).
+    executor: str | None = None
+    dask_scheduler: str | None = None
+    dask_workers: int | None = None
     #: Path the config was loaded from, or ``None`` when no file was found.
     source: Path | None = None
 
@@ -160,7 +167,14 @@ def load_run_config(
             f"Allowed keys: {', '.join(sorted(_KNOWN_KEYS))}."
         )
 
-    for str_key in ("output_dir", "temp_dir", "outputs_dir", "survey_cache_dir"):
+    for str_key in (
+        "user_cache_dir",
+        "temp_dir",
+        "outputs_dir",
+        "survey_cache_dir",
+        "executor",
+        "dask_scheduler",
+    ):
         if str_key in data and data[str_key] is not None and not isinstance(
             data[str_key], str
         ):
@@ -168,6 +182,13 @@ def load_run_config(
                 f"Config file {path}: '{str_key}' must be a string, got "
                 f"{type(data[str_key]).__name__}."
             )
+    if data.get("dask_workers") is not None and not isinstance(
+        data["dask_workers"], int
+    ):
+        raise ValueError(
+            f"Config file {path}: 'dask_workers' must be an integer, got "
+            f"{type(data['dask_workers']).__name__}."
+        )
 
     storage_options = data.get("storage_options")
     if storage_options is not None and not isinstance(storage_options, dict):
@@ -184,11 +205,14 @@ def load_run_config(
         )
 
     return RunConfig(
-        output_dir=data.get("output_dir"),
+        user_cache_dir=data.get("user_cache_dir"),
         temp_dir=data.get("temp_dir"),
         outputs_dir=data.get("outputs_dir"),
         survey_cache_dir=data.get("survey_cache_dir"),
         storage_options=storage_options,
         inputs=dict(inputs),
+        executor=data.get("executor"),
+        dask_scheduler=data.get("dask_scheduler"),
+        dask_workers=data.get("dask_workers"),
         source=path,
     )

@@ -65,7 +65,7 @@ params:
     type: int
     description: Optional DPI override for raster image outputs
     required: false
-    default: null
+    default: 50
 implementations:
   - key: default
     callable_path: aa_si_visualization.echogram.plot_flattened_data_echogram

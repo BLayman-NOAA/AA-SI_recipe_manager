@@ -1,0 +1,103 @@
+# Segment-Parallel (per-file) MVBS Pipeline — Dask Executor
+#
+# Stage 9 demonstration of executor selection on top of the Stage 8 `map_over`
+# + `collect` pattern. Identical scientific content to
+# parallel_per_file_mvbs.yaml; the only additions are the `execution:` block and
+# per-step `execution:` overrides that tell the distributed backends how to run.
+#
+# The recipe stays portable: the executor is chosen at run time, not baked in.
+# Run it distributed with either
+#   aa-recipe run parallel_per_file_mvbs_dask.yaml --executor dask
+#   aa-recipe run parallel_per_file_mvbs_dask.yaml --executor dask \
+#       --dask-scheduler processes --dask-workers 4
+# or fall back to the in-process sequential runner with --executor sequential.
+# With --executor dask, the per-file chain instances run concurrently (each
+# file's read -> combine -> Sv -> MVBS stays on one worker); the `merge_mvbs`
+# collector fans them back in on the client.
+
+recipe:
+  name: "parallel_per_file_mvbs_dask"
+  description: "Per-file (map_over) Sv -> MVBS with a collect/merge fan-in, run on Dask."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+# Pipeline-level executor selection and Dask defaults. An explicit --executor
+# CLI flag (or executor= API argument) overrides `execution.executor`; a per-
+# step `execution:` block overrides these pipeline defaults on a per-key basis.
+execution:
+  executor: dask            # "sequential" (default), "dask", or "prefect"
+  dask_config:
+    scheduler: threads      # thread-based local cluster by default
+  checkpoint_format: zarr   # zarr intermediates hand off lazily between steps
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw_file_inputs"
+  sonar_model:
+    type: str
+    default: "EK60"
+  range_bin:
+    type: str
+    default: "20m"
+  ping_time_bin:
+    type: str
+    default: "20s"
+
+steps:
+
+  # --- Survey-level: enumerate the raw files (runs once) ------------------
+  - id: setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+
+  # --- Per-file fan-out (map_over ${setup.raw_file_paths}) ----------------
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${setup.raw_file_paths}
+    inputs:
+      raw_file_paths:
+        - ${_item}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      intermediate_format: "none"
+
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${setup.raw_file_paths}
+    checkpoint: always        # checkpoint so a process worker can reload it
+    inputs:
+      echodata: ${combine_raw.echodata}
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    map_over: ${setup.raw_file_paths}
+    # This step is CPU-bound: escalate it to a worker *process* so it is not
+    # bottlenecked by the GIL. Its upstream (compute_sv) is checkpointed above,
+    # so the process worker loads it from the cache rather than over the wire.
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+
+  # --- Fan-in (collect): concatenate every file's MVBS --------------------
+  - id: merge_mvbs
+    op: merge_datasets
+    collect: ${compute_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${compute_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"

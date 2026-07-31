@@ -194,7 +194,7 @@ def explain_cache(
     dag: PipelineDAG,
     *,
     inputs: dict[str, Any] | None = None,
-    output_dir: str | Path,
+    user_cache_dir: str | Path,
     survey_cache_dir: str | Path | None = None,
     storage_options: dict[str, Any] | None = None,
 ) -> CacheExplanation:
@@ -212,7 +212,7 @@ def explain_cache(
         (
             "user",
             CheckpointManager(
-                StorageLocation.parse(output_dir, storage_options),
+                StorageLocation.parse(user_cache_dir, storage_options),
                 fingerprints.hashes,
                 storage_options=storage_options,
             ),

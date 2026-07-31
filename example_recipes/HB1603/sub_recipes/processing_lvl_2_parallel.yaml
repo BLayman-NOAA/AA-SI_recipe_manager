@@ -1,0 +1,209 @@
+# Processing Level 2 (Parallel) - Per-File Sv, Masking, then Survey Fan-In
+#
+# Per-file variant of processing_lvl_2.yaml. Continues the mapped chain
+# started in processing_lvl_1_parallel.yaml (which must be included
+# immediately before this level), so every step through apply_mask runs once
+# per raw file. merge_sv is the single fan-in: it concatenates the per-file
+# masked Sv datasets back into one survey-wide Sv along ping_time. Background
+# noise removal and everything after it run on that merged survey dataset.
+#
+#   [per file] compute_sv -> ep_add_depth -> ep_add_splitbeam_angle
+#              -> log_seafloor_stats -> detect_seafloor
+#              -> seafloor/surface/frequency masks -> combine -> apply_mask
+#   [fan-in]   merge_sv (collect, concat along ping_time)
+#   [survey]   rechunk_before_noise -> remove_noise
+#
+# WHY THE FAN-IN SITS AT apply_mask, not immediately after compute_sv:
+#
+#   * ep_add_depth, ep_add_splitbeam_angle, log_seafloor_stats and
+#     detect_seafloor all need the EchoData that produced the Sv. Merging
+#     right after compute_sv would leave them with no per-file EchoData and
+#     force a survey-wide combine_raw back into the pipeline -- exactly the
+#     up-front combine this design removes.
+#   * Every step in the chain is ping-local (per-ping platform offsets,
+#     per-ping seafloor detection, elementwise masks), so computing them per
+#     file gives the same result as computing them on the whole survey.
+#   * remove_noise is the FIRST step with a cross-ping window: its
+#     coarsen()-based estimate spans noise_ping_num pings, so running it per
+#     file would change the noise estimate at file boundaries. It therefore
+#     stays survey-wide, after the merge, and its result is identical to the
+#     non-parallel pipeline's.
+#
+# The map_over source below is ${initial_setup.raw_file_paths}, a step
+# defined in processing_lvl_1_parallel.yaml. Includes flatten into a single
+# step namespace, so this resolves as long as level 1 (parallel) is included
+# ahead of this file.
+
+recipe:
+  name: "processing_lvl_2_parallel"
+  description: "Per-file Sv and masking, fan-in to survey Sv, then noise removal."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Per-file EchoData object from the parallel raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters selected for this file."
+  env_params:
+    type: dict
+    description: "Environmental parameters selected for this file."
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth above which samples are masked out as surface noise."
+  seafloor_buffer_m:
+    type: float
+    default: 100
+    description: "Buffer above the detected seafloor to keep in the seafloor mask."
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: "Frequencies (kHz) removed by the frequency mask."
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Range-sample window for the background noise estimate."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Ping window for the background noise estimate."
+  noise_chunk_ping_time:
+    type: int
+    default: 100
+    description: >
+      Ping-time chunk size applied to the MERGED survey Sv before
+      remove_noise, so its coarsen()-based noise estimate runs in
+      dask-parallel chunks instead of as one in-memory block. Confirmed via
+      isolated benchmark (2026-07-31, real compute_sv checkpoint, 1548-ping
+      window) to be a genuine ~40% win here, despite echopype's
+      add_remove_background_noise_attrs redundant-recompute inefficiency --
+      see recipe_optimization_plan.md section 6. Kept a multiple of
+      noise_ping_num so coarsen() dispatches across chunks cleanly.
+
+steps:
+
+  # --- Per-file chain (continues the map_over from level 1) ---------------
+
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      use_platform_vertical_offsets: true
+
+  - id: ep_add_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  - id: log_seafloor_stats
+    op: log_seafloor_detection_stats
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      echodata: ${inputs.echodata}
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: detect_seafloor
+    op: detect_seafloor
+    map_over: ${initial_setup.raw_file_paths}
+    depends_on: [log_seafloor_stats]
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  - id: combine_masks
+    op: combine_masks
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  # --- Fan-in: reassemble the survey from the per-file masked Sv ----------
+
+  - id: merge_sv
+    op: merge_datasets
+    collect: ${apply_mask.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${apply_mask.ds_Sv}
+    params:
+      dim: "ping_time"
+
+  # --- Survey-wide from here on ------------------------------------------
+
+  - id: rechunk_before_noise
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${merge_sv.merged}
+    params:
+      ping_time_chunk: ${inputs.noise_chunk_ping_time}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_noise.ds_Sv}
+    params:
+      noise_range_sample_num: ${inputs.noise_range_sample_num}
+      noise_ping_num: ${inputs.noise_ping_num}

@@ -630,11 +630,19 @@ def _topological_sort(
     errors: list[str],
 ) -> list[str]:
     """Kahn's algorithm topological sort. Appends a cycle error if a cycle is found."""
-    unique_deps: set[tuple[str, str]] = set()
+    # De-duplicate while preserving edge declaration order: a plain ``set``
+    # here made the ready-queue processing order (and therefore which mapped
+    # chains stay contiguous in dag.topological_order, see parallel.py's
+    # group_mapped_chains) depend on CPython's per-process string hash
+    # randomization -- the same recipe could split a mapped chain on one run
+    # and not the next.
+    seen_deps: set[tuple[str, str]] = set()
+    unique_deps: list[tuple[str, str]] = []
     for edge in edges:
         src, tgt = edge.source_step_id, edge.target_step_id
-        if src in nodes and tgt in nodes and src != tgt:
-            unique_deps.add((src, tgt))
+        if src in nodes and tgt in nodes and src != tgt and (src, tgt) not in seen_deps:
+            seen_deps.add((src, tgt))
+            unique_deps.append((src, tgt))
 
     in_degree: dict[str, int] = {node_id: 0 for node_id in nodes}
     adjacency: dict[str, list[str]] = {node_id: [] for node_id in nodes}

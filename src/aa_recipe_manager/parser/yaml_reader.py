@@ -269,7 +269,10 @@ def _flatten_recipe_yaml(raw: dict[str, Any]) -> dict[str, Any]:
     if "recipe" in raw:
         merged.update(raw["recipe"])
 
-    for key in ("inputs", "steps", "outputs", "include_blocks"):
+    # ``execution`` (executor selection, dask_config/prefect_config, checkpoint
+    # policy) is a top-level block per design §5; keep supporting it nested in
+    # ``recipe:`` too, with the explicit top-level value winning.
+    for key in ("inputs", "steps", "outputs", "include_blocks", "execution"):
         if key in raw:
             merged[key] = raw[key]
 

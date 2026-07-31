@@ -1,0 +1,132 @@
+# Processing Level 1 (Parallel) - Raw Ingest and Per-File Calibration
+#
+# Per-file variant of processing_lvl_1.yaml. Instead of opening every raw file
+# and combining the whole survey into one EchoData up front, each raw file is
+# opened and materialized independently (map_over), and each file selects its
+# own calibration parameters out of the survey-wide mapping.
+#
+# There is NO survey-wide combine_raw here: this level hands the next level a
+# per-file EchoData, and the survey is reassembled after Sv is computed (see
+# processing_lvl_2_parallel.yaml).
+#
+# Parallel shape:
+#
+#   initial_setup
+#     |-- gen_cal_mapping (once, survey-wide) ----+
+#     +-- read_raw          (per file)            |
+#           combine_raw     (per file) -----------+
+#           extract_cal_params (per file, picks this file's mapping)
+#
+# gen_cal_mapping is independent of the per-file chain, so a concurrent
+# executor overlaps them with no extra directives. The chain continues
+# without interruption into processing_lvl_2_parallel.yaml, which must be
+# included immediately after this level.
+
+recipe:
+  name: "processing_lvl_1_parallel"
+  description: "Per-file raw ingest with per-file calibration parameter selection."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files."
+  cal_input_folder:
+    type: path
+    description: "Folder containing standardized calibration files."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK60"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder". Note that
+      generate_standardized_cal_mapping always scans the full folder; this
+      input only constrains the set of files that get opened and processed.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+
+  # Runs once for the whole survey: builds calibration_dict (parsed cal data)
+  # and mapping_dict, which is keyed per raw filename. Each per-file
+  # extract_cal_params instance below just selects its own file's entry out
+  # of these shared dicts -- the calibration files are parsed once, not once
+  # per raw file.
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+
+  # --- Per-file fan-out starts here --------------------------------------
+  # Every step from here through the end of processing_lvl_2_parallel.yaml
+  # shares this same map_over source, forming one mapped chain: each raw file
+  # runs the whole chain as an isolated instance, checkpointed under its own
+  # content-addressed instance hash.
+
+  # checkpoint: never -- the output is an exe_temp store path that is deleted
+  # at the end of the run, so it must not be cached under any checkpoint mode
+  # (a cached path would dangle on the next run).
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      raw_file_paths:
+        - ${_item}          # a single-element list: just this file
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: true
+      intermediate_format: "zarr"
+
+  # Materializes THIS file's store as an EchoData object. Not a survey-wide
+  # fan-in: combine_raw_files accepts a single-file list and simply opens it
+  # (see its docstring, which documents this per-file map_over usage).
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+
+  # Selects (does not recompute) this file's channel-to-calibration mapping
+  # from the shared dicts built once above, so each file is calibrated with
+  # the parameters that actually match its own channel configuration.
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}
+    params:
+      raw_file_path: ${_item}

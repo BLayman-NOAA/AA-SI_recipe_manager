@@ -1,0 +1,119 @@
+# NOTE: this hasn't been refactored to combine after calibrating sv yet
+
+recipe:
+  name: "processing_levels_pipeline_gcs"
+  description: "HB1603 processing levels pipeline reading all inputs from a GCS bucket."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+
+  # Default display window shared by every plotting step in this pipeline
+  # You can override these by hardcoding values for a specific step or sub-recipe
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    default: 100
+  ping_min:
+    type: int
+    default: 0
+  ping_max:
+    type: int
+    default: 515
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  - include: sub_recipes/processing_lvl_1_parallel.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      # Data time range: 
+      file_time_start: "2024-10-12T00:15"
+      file_time_end: "2024-10-12T11:15"
+      cruise_id: "HB2407"
+      record_author: "<Your Name>"
+      sonar_model: "EK80"
+
+  - include: sub_recipes/processing_lvl_2.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Transducer depth is derived per file from the raw file's drop keel offset (e.g. 7.5 m), heave and 
+      # and manually derived datum_correction_m which assumes the recorded offset is waterline referenced.
+      datum_correction_m: -1.0
+      use_heave: true
+      heave_sign: 1.0
+      # surface mask
+      surface_depth_m: 5.0 
+      # parameters for echopype's remove_background_noise:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      seabed_line_path: "./seabed_lines/HDD_Henry_B_Bigelow_HB2407_Auxiliary_EV_seabedlines_d20241012_t005144-t115311_evseabed.evl"
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 100
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "4m"
+      ping_time_bin: "2s"
+      nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${compute_mvbs.ds_MVBS}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs: ${compute_mvbs.ds_MVBS}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}

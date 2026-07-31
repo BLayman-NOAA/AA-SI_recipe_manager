@@ -169,7 +169,7 @@ def execute(
     *,
     inputs=None,
     executor="sequential",
-    output_dir=None,
+    user_cache_dir=None,
     implementation_override=None,
     force=False,
     no_checkpoints=False,
@@ -196,7 +196,7 @@ def execute(
         recipe,
         inputs=inputs,
         executor=executor,
-        output_dir=output_dir,
+        user_cache_dir=user_cache_dir,
         implementation_override=implementation_override,
         force=force,
         no_checkpoints=no_checkpoints,
@@ -214,13 +214,13 @@ def execute(
     )
 
 
-def clean(recipe, output_dir, *, inputs=None, mode="intermediate", dry_run=False):
-    """Remove checkpoint files for ``recipe`` under ``output_dir``.
+def clean(recipe, user_cache_dir, *, inputs=None, mode="intermediate", dry_run=False):
+    """Remove checkpoint files for ``recipe`` under ``user_cache_dir``.
 
     Thin re-export of :func:`aa_recipe_manager.api.clean`.
     """
     from aa_recipe_manager.api import clean as _clean
 
     return _clean(
-        recipe, output_dir, inputs=inputs, mode=mode, dry_run=dry_run
+        recipe, user_cache_dir, inputs=inputs, mode=mode, dry_run=dry_run
     )

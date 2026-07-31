@@ -12,9 +12,11 @@ A recipe is a YAML file that describes a complete data processing pipeline as a 
 - **Recipe files** (YAML) capture pipeline structure, steps, dependencies, and parameters without containing implementation code
 - **Step registry** defines scientific specifications for each operation along with implementation mappings to real functions
 - **Code generation** produces Jupyter notebooks or Python scripts from a recipe
-- **Direct execution** runs the DAG in process with the sequential executor, checkpoint/resume, and progress reporting
-- **Hybrid mode** (planned) executes early steps directly, then generates interactive code for the rest
 - **Round trip** captures parameters from an interactive session back to a recipe file
+- **Direct execution** runs the DAG in process with the sequential executor and progress reporting
+- **Checkpointing and result caching** — step outputs are written to disk keyed by their inputs, so an interrupted run resumes from the last completed step and a later run of the same (or a partly changed) recipe reuses the unchanged results instead of recomputing them. An optional shared cache tier lets a curated run's results be reused across users
+- **Distributed execution** runs the same recipe on Dask (threads by default, worker processes or an external cluster on request) or Prefect, plus a batch runner for one recipe across many input files
+- **Hybrid mode** (planned) executes early steps directly, then generates interactive code for the rest
 
 ## Installation
 
@@ -56,11 +58,11 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
-Optional extras reserved for planned distributed execution backends:
+Optional extras for the distributed execution backends:
 
 ```bash
-pip install -e ".[dask]"     # planned Dask executor
-pip install -e ".[prefect]"  # planned Prefect executor
+pip install -e ".[dask]"     # Dask executor (--executor dask)
+pip install -e ".[prefect]"  # Prefect executor (--executor prefect)
 ```
 
 ## Usage
@@ -75,12 +77,47 @@ aa-recipe generate my_recipe.yaml
 # Generate a Python script
 aa-recipe generate my_recipe.yaml --format script
 
-# Run a pipeline directly with checkpoint/resume
-aa-recipe run my_recipe.yaml --input raw_folder=/data/survey --output-dir ./outputs
+# Run a pipeline directly. With --user-cache-dir, step outputs are cached: a re-run
+# reuses unchanged results and an interrupted run resumes from where it stopped.
+aa-recipe run my_recipe.yaml --input raw_folder=/data/survey --user-cache-dir ./outputs
 
 # Keep only selected checkpoint save points
 aa-recipe run my_recipe.yaml --checkpoint-mode explicit --checkpoint calibrated_sv
+
+# Remove cached checkpoints for a recipe (intermediates by default; --all / --stale)
+aa-recipe clean my_recipe.yaml --user-cache-dir ./outputs
+
+# Distribute across a Dask cluster (threads by default)
+aa-recipe run my_recipe.yaml --executor dask --user-cache-dir ./outputs
+aa-recipe run my_recipe.yaml --executor dask --dask-scheduler processes --dask-workers 4
+
+# Run one recipe across every .raw file in a folder (shared cache, per-file outputs)
+aa-recipe batch my_recipe.yaml \
+  --input-dir /data/survey/raw --input-name raw_input_folder \
+  --user-cache-dir ./cache --outputs-dir ./outputs --executor dask
 ```
+
+`run` reports each step as it starts and finishes, then the total wall-clock time
+for the run. The same numbers land in the run's `manifest.json`
+(`steps.<id>.elapsed_seconds` per step, `elapsed_seconds` for the run), which is
+the dependable way to compare one run against another.
+
+For anything more than a glance, read `<outputs-dir>/logs/standard_out.txt`
+rather than the console. It names the executor and concurrency actually in force,
+fences each step's output, labels each fan-out instance separately, and is
+flushed on every write — so an interrupted run still shows where it stopped,
+which a block-buffered terminal will not.
+
+`--dask-workers N` sets the number of concurrently running steps/instances. Each
+slot holds a whole chain instance in memory (for a per-file `map_over`, roughly
+one file's working set), so it is the knob to turn when a run is memory- or
+disk-bound.
+
+The executor is chosen at run time, not baked into the recipe. Precedence is the
+CLI flag / API argument > the recipe's `execution.executor` field > `sequential`.
+A recipe can also declare pipeline-wide `execution.dask_config` / `prefect_config`
+and per-step `execution:` overrides (e.g. escalate one CPU-bound step to worker
+processes) — see `example_recipes/parallel_per_file_mvbs_dask.yaml`.
 
 Python API:
 
@@ -89,7 +126,10 @@ from aa_recipe_manager import api
 
 api.generate("my_recipe.yaml", format="script")
 api.generate("my_recipe.yaml", format="notebook")
-api.execute("my_recipe.yaml", output_dir="./outputs")
+api.execute("my_recipe.yaml", user_cache_dir="./outputs")
+api.execute("my_recipe.yaml", executor="dask",
+            executor_options={"scheduler": "processes", "n_workers": 4},
+            user_cache_dir="./outputs")
 ```
 
 ### Google Cloud Storage (gs://) storage
@@ -105,26 +145,26 @@ gcloud auth application-default login          # credentials (ADC)
 
 # Checkpoint cache + outputs on the bucket; scratch stays local (default).
 aa-recipe run my_recipe.yaml \
-    --output-dir gs://my-bucket/surveys/HB1603/recipe_cache \
+    --user-cache-dir gs://my-bucket/surveys/HB1603/recipe_cache \
     --outputs-dir gs://my-bucket/surveys/HB1603/outputs
 
 # Big survey that won't fit on disk: put exe_temp on the bucket too.
 aa-recipe run my_recipe.yaml \
-    --output-dir gs://my-bucket/surveys/HB1603/recipe_cache \
+    --user-cache-dir gs://my-bucket/surveys/HB1603/recipe_cache \
     --temp-dir   gs://my-bucket/surveys/HB1603/exe_temp
 ```
 
 ```python
 api.execute(
     "my_recipe.yaml",
-    output_dir="gs://my-bucket/surveys/HB1603/recipe_cache",
+    user_cache_dir="gs://my-bucket/surveys/HB1603/recipe_cache",
     temp_dir="gs://my-bucket/surveys/HB1603/exe_temp",
     outputs_dir="gs://my-bucket/surveys/HB1603/outputs",
 )
 ```
 
 Notes:
-- `--temp-dir`/`--outputs-dir` default to siblings of `--output-dir` under the
+- `--temp-dir`/`--outputs-dir` default to siblings of `--user-cache-dir` under the
   same scheme, so a remote cache implies remote scratch/outputs unless you
   override them. Remote scratch trades local disk for extra bucket traffic
   (intermediates are written, read once by the combine step, then deleted);

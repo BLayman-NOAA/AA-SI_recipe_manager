@@ -1,0 +1,119 @@
+op: read_seafloor_line
+cache_key: read_seafloor_line  # pinned cache identity - keep stable across op renames
+description: >
+  Read a seafloor line from an Echoview ``.evl`` line file and align it to the
+  Sv dataset's pings, returning a 1-D (ping_time,) DataArray in metres. Use it
+  when a hand-verified Echoview bottom line is more trustworthy than running
+  detection over the Sv data.
+
+  Drop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the
+  output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so
+  downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe
+  step's ``inputs`` drop the ``echodata`` line (no detection is run) and the
+  ``params`` block takes ``evl_path`` plus the alignment settings below instead
+  of ``channel`` / ``min_valid_depth_m`` or ``method`` / ``method_params``.
+
+  Pings the line does not cover come back as NaN, and ``create_seafloor_mask``
+  rejects **every sample** of a ping whose seafloor is NaN (the metres-vs-metres
+  comparison is False against NaN). The step therefore prints its ping coverage
+  on every run; set ``min_coverage`` to turn a shortfall into a hard error, or
+  widen ``edge_extend_s`` / ``max_gap_s`` if the gaps are benign.
+category: detection
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset supplying the target ``ping_time`` coordinate. Also
+      supplies the vertical reference: pass a dataset that has been through
+      ``ep_add_depth`` so the line can be matched to ``depth`` (metres below the
+      surface), which is what an Echoview seabed line normally records.
+outputs:
+  seafloor_depth:
+    type: DataArray
+    description: >
+      Seafloor depth in metres, shape (ping_time,), on ds_Sv's exact ping_time
+      coordinate. Always 1-D (no channel dimension), matching the output of the
+      ``detect_seafloor`` and ``ep_detect_seafloor`` ops so downstream masking
+      steps are interchangeable. NaN wherever the line does not cover a ping.
+params:
+  evl_path:
+    type: path
+    description: >
+      Path to the Echoview ``.evl`` line file. May be a local path or a remote
+      fsspec URL (e.g. gs://bucket/survey/seabed_lines/line.evl); remote files
+      are read in place (no download) since line files are small. The must_exist
+      check is skipped at validation time for remote URLs and enforced by the
+      step at run time instead.
+    required: true
+    constraints:
+      must_exist: true
+    # Content-addressed so re-exporting or hand-editing the line invalidates the
+    # cached step, while merely moving the file does not.
+    fingerprint_mode: checksum
+  vertical_reference:
+    type: str
+    description: >
+      What the EVL depths are measured from. "surface" (the default, and
+      Echoview's usual seabed-line reference) means metres below the water
+      surface; "transducer" means metres along the beam from the transducer
+      face. The line is converted to whichever reference ds_Sv carries - depth
+      when ep_add_depth ran upstream, otherwise echo_range.
+    required: false
+    default: "surface"
+  min_status:
+    type: int
+    description: >
+      Drop line points whose Echoview status is below this value (0 = none,
+      1 = unverified, 2 = bad, 3 = good). When null (the default) every point is
+      kept. Dropped points leave a gap in the line, subject to max_gap_s.
+    required: false
+    default: null
+  max_gap_s:
+    type: float
+    units: s
+    description: >
+      Widest hole in the line, in seconds, to interpolate across; pings sitting
+      inside a wider hole come back as NaN. A ping landing exactly on a line
+      point always keeps that point's depth. When null (the default) holes of
+      any width are interpolated across.
+    required: false
+    default: null
+  edge_extend_s:
+    type: float
+    units: s
+    description: >
+      How many seconds past the line's first and last point to hold that point's
+      depth. The default 0.0 does no extrapolation at all, so pings outside the
+      line's time span are NaN - this is what keeps a line covering only part of
+      a survey from silently asserting a constant seafloor over the rest. Set
+      null to hold the end depths indefinitely.
+    required: false
+    default: 0.0
+  depth_offset_m:
+    type: float
+    units: m
+    description: >
+      Constant metres added to the line, for when the transducer draft
+      configured in Echoview differs from the one baked into ds_Sv['depth'].
+      Positive pushes the seafloor deeper.
+    required: false
+    default: 0.0
+  min_coverage:
+    type: float
+    description: >
+      Fraction of pings (0-1) that must end up with a finite seafloor depth;
+      below it the step fails instead of silently masking the uncovered pings
+      away. Default 0.0 never fails.
+    required: false
+    default: 0.0
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.read_seafloor_line_evl
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      seafloor_depth: __return__

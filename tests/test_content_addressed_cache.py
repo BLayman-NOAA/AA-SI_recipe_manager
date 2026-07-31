@@ -50,7 +50,7 @@ def test_entry_layout_and_sidecar_v2_fields(helper_module, tmp_path):
     dag = _linear_inc_dag()
     out = tmp_path / "ckpt"
     SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=out, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=out, checkpoint_mode="eager"
     )
 
     fingerprints = compute_step_fingerprints(dag, {"seed": 1})
@@ -233,7 +233,7 @@ def test_clean_stale_preserves_other_recipes_entries(helper_module, tmp_path):
     root = tmp_path / "ckpt"
     dag = _linear_inc_dag()
     SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=root, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=root, checkpoint_mode="eager"
     )
     # Another recipe's entry sharing the same cache root.
     foreign = CheckpointManager(root, {"foreign_step": "f0f0f0f0"})
@@ -251,7 +251,7 @@ def test_clean_stale_keeps_current_hashes(helper_module, tmp_path):
     root = tmp_path / "ckpt"
     dag = _linear_inc_dag()
     SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=root, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=root, checkpoint_mode="eager"
     )
     manager = CheckpointManager(root, compute_step_hashes(dag, {"seed": 1}))
     removed = manager.clean(dag, mode="stale")
@@ -263,7 +263,7 @@ def test_clean_all_sweeps_legacy_v1_dirs(helper_module, tmp_path):
     root = tmp_path / "ckpt"
     dag = _linear_inc_dag()
     SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=root, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=root, checkpoint_mode="eager"
     )
     # Plant a legacy (v1, step_id-addressed) cache alongside, using the
     # historical root-level dir names (`cache_metadata`, `zarr_data`).
@@ -303,7 +303,7 @@ def test_legacy_v1_cache_is_invisible(helper_module, tmp_path):
         )
 
     result = SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=root, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=root, checkpoint_mode="eager"
     )
     # Everything recomputed; v1 entries were never consulted.
     assert result.executed_steps == ["start", "first", "second"]

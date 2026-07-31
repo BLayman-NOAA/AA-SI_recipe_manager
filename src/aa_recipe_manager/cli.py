@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 import click
 
 from aa_recipe_manager import api, config
-from aa_recipe_manager.executor.checkpoint import DEFAULT_OUTPUT_ROOT
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
     DependencyVersionError,
@@ -20,6 +20,7 @@ from aa_recipe_manager.exceptions import (
     RecipeValidationError,
     SpecNotFoundError,
 )
+from aa_recipe_manager.executor.checkpoint import DEFAULT_OUTPUT_ROOT
 
 
 def _fail(message: str) -> None:
@@ -341,11 +342,98 @@ def env_create_cmd(
 
 
 
+def _format_duration(seconds: float) -> str:
+    """Render a duration as seconds, m/s, or h/m/s — whichever reads fastest.
+
+    Long GCS runs are the common case, and "1h 04m 12s" is easier to compare
+    across runs at a glance than "3852.31s".
+    """
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s ({seconds:.1f}s)"
+    return f"{minutes}m {secs:02d}s ({seconds:.1f}s)"
+
+
+def _format_step_time(elapsed: float, instance_seconds: Sequence[float] = ()) -> str:
+    """Render a step's time, adding the spread when it fanned out.
+
+    A mapped step's total is the sum over its instances, which alone cannot
+    tell "every file was slow" from "one file dominated" -- and under a
+    concurrent executor the sum exceeds wall clock, so quoting it by itself
+    invites the wrong conclusion. The per-instance spread makes both legible.
+    """
+    if len(instance_seconds) < 2:
+        return f"{elapsed:.2f}s"
+    count = len(instance_seconds)
+    mean = sum(instance_seconds) / count
+    return (
+        f"{count} instances: sum {sum(instance_seconds):.2f}s, "
+        f"avg {mean:.2f}s, min {min(instance_seconds):.2f}s, "
+        f"max {max(instance_seconds):.2f}s"
+    )
+
+
+def _resolve_executor_options(
+    executor: str,
+    dask_scheduler: str | None,
+    dask_workers: int | None,
+    run_config: config.RunConfig,
+) -> tuple[str, dict[str, object]]:
+    """Resolve the backend name and its constructor options.
+
+    Precedence for both the backend and its Dask sizing is explicit CLI flag,
+    then run config, then default. Only a flag the caller actually typed is
+    rejected against a non-Dask backend: a config carrying dask_scheduler /
+    dask_workers is a standing default for the runs that do use Dask, and must
+    not fail every other run.
+    """
+    if executor == "sequential" and run_config.executor:
+        executor = run_config.executor
+    if executor != "dask":
+        if dask_scheduler is not None or dask_workers is not None:
+            _fail("--dask-scheduler / --dask-workers require --executor dask.")
+        return executor, {}
+
+    options: dict[str, object] = {}
+    scheduler = dask_scheduler or run_config.dask_scheduler
+    workers = dask_workers if dask_workers is not None else run_config.dask_workers
+    if scheduler is not None:
+        options["scheduler"] = scheduler
+    if workers is not None:
+        options["n_workers"] = workers
+    return executor, options
+
+
+def _echo_now(message: str) -> None:
+    """Echo and flush immediately.
+
+    Under Git Bash / MinTTY (and any redirect to a file or pipe) stdout is not a
+    tty, so Python block-buffers it: progress lines surface in ~8 KB bursts and
+    an interrupted run loses the tail entirely — including the line naming the
+    step it died on. Flushing per line keeps the console honest about where a
+    long run actually is.
+    """
+    click.echo(message)
+    try:
+        sys.stdout.flush()
+    except Exception:  # a closed stream must not kill the run
+        pass
+
+
 class _CLIProgress:
-    """Simple progress reporter for the ``run`` subcommand."""
+    """Progress reporter for the ``run`` subcommand.
+
+    Start and finish are separate, fully-labeled lines. A concurrent executor
+    interleaves steps (and library code prints between them), so a step's
+    outcome cannot be appended to its start line — every line names the step it
+    belongs to, and the elapsed time is never ambiguous.
+    """
 
     def on_step_start(self, step_id: str, index: int, total: int) -> None:
-        click.echo(f"[{index}/{total}] {step_id} ...", nl=False)
+        _echo_now(f"[{index}/{total}] {step_id} ... start")
 
     def on_step_end(
         self,
@@ -356,12 +444,18 @@ class _CLIProgress:
         skipped: bool = False,
         elapsed: float = 0.0,
         error: BaseException | None = None,
+        instance_seconds: Sequence[float] = (),
     ) -> None:
         if error is not None:
-            click.echo(f" FAILED ({elapsed:.2f}s)")
-            return
-        tag = "cached" if skipped else "ok"
-        click.echo(f" {tag} ({elapsed:.2f}s)")
+            status = "FAILED"
+        elif skipped:
+            status = "cached"
+        else:
+            status = "ok"
+        _echo_now(
+            f"[{index}/{total}] {step_id} ... {status} "
+            f"({_format_step_time(elapsed, instance_seconds)})"
+        )
 
 
 @main.command("run")
@@ -369,9 +463,28 @@ class _CLIProgress:
 @click.option(
     "--executor",
     default="sequential",
-    type=click.Choice(["sequential"]),
+    type=click.Choice(["sequential", "dask", "prefect"]),
     show_default=True,
-    help="Executor backend (only 'sequential' is implemented in Stage 6).",
+    help=(
+        "Executor backend. 'sequential' (default) runs in-process; 'dask' "
+        "distributes across a Dask cluster (requires the 'dask' extra); "
+        "'prefect' orchestrates via Prefect (requires the 'prefect' extra)."
+    ),
+)
+@click.option(
+    "--dask-scheduler",
+    default=None,
+    help=(
+        "Dask scheduler for --executor dask: 'threads' (default local thread "
+        "cluster), 'processes' (local worker processes), or a scheduler "
+        "address (tcp://host:port) for an external cluster."
+    ),
+)
+@click.option(
+    "--dask-workers",
+    type=int,
+    default=None,
+    help="Worker count for a local Dask cluster (--executor dask).",
 )
 @click.option(
     "--config",
@@ -388,13 +501,13 @@ class _CLIProgress:
     ),
 )
 @click.option(
-    "--output-dir",
+    "--user-cache-dir",
     default=None,
     help=(
         "Directory for serialized step outputs and checkpoints. May be a local "
         "path or a gs:// URL (requires the 'gcs' extra; credentials via "
         "Application Default Credentials). Falls back to the config file's "
-        f"output_dir, then './{DEFAULT_OUTPUT_ROOT}'."
+        f"user_cache_dir, then './{DEFAULT_OUTPUT_ROOT}'."
     ),
 )
 @click.option(
@@ -402,7 +515,7 @@ class _CLIProgress:
     default=None,
     help=(
         "Directory for user-facing outputs (images, logs, provenance). "
-        "Defaults to a sibling of --output-dir named 'outputs'. May be a local "
+        "Defaults to a sibling of --user-cache-dir named 'outputs'. May be a local "
         "path or a gs:// URL."
     ),
 )
@@ -411,9 +524,19 @@ class _CLIProgress:
     default=None,
     help=(
         "Run-scoped scratch directory (exe_temp) for per-step intermediate "
-        "stores. Defaults to a sibling of --output-dir named 'exe_temp' under "
+        "stores. Defaults to a sibling of --user-cache-dir named 'exe_temp' under "
         "the same scheme. May be a local path or a gs:// URL; remote scratch "
         "requires zarr intermediates (NetCDF cannot be written to a bucket)."
+    ),
+)
+@click.option(
+    "--keep-temp",
+    is_flag=True,
+    default=False,
+    help=(
+        "Do not delete the run-scoped scratch directory (exe_temp) at the end "
+        "of the run. Diagnostic: leaves per-step intermediate stores in place "
+        "so a slow step can be profiled against its real inputs."
     ),
 )
 @click.option("--implementation", default=None, help="Override implementation key for all steps.")
@@ -494,7 +617,7 @@ class _CLIProgress:
     metavar="DIR_OR_URL",
     help=(
         "Root of the shared (curated) survey cache tier. Cache reads probe "
-        "[user, survey] in order; the user tier is --output-dir. Usually set "
+        "[user, survey] in order; the user tier is --user-cache-dir. Usually set "
         "via the run config (survey_cache_dir key) rather than this flag."
     ),
 )
@@ -514,10 +637,13 @@ class _CLIProgress:
 def run_cmd(
     recipe: str,
     executor: str,
+    dask_scheduler: str | None,
+    dask_workers: int | None,
     config_path: str | None,
-    output_dir: str | None,
+    user_cache_dir: str | None,
     outputs_dir: str | None,
     temp_dir: str | None,
+    keep_temp: bool,
     implementation: str | None,
     inputs: tuple[str, ...],
     save_provenance: str | None,
@@ -565,7 +691,9 @@ def run_cmd(
     if run_config.source is not None:
         click.echo(f"Using run config: {run_config.source}")
 
-    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    user_cache_dir = (
+        user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    )
     outputs_dir = outputs_dir or run_config.outputs_dir
     temp_dir = temp_dir or run_config.temp_dir
     survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
@@ -577,12 +705,17 @@ def run_cmd(
     # CLI --input wins over config inputs, which win over recipe defaults.
     merged_inputs = {**run_config.inputs, **parsed_inputs}
 
+    executor, executor_options = _resolve_executor_options(
+        executor, dask_scheduler, dask_workers, run_config
+    )
+
     try:
         result = api.execute(
             recipe,
             inputs=merged_inputs or None,
             executor=executor,
-            output_dir=output_dir,
+            executor_options=executor_options or None,
+            user_cache_dir=user_cache_dir,
             outputs_dir=outputs_dir,
             temp_dir=temp_dir,
             storage_options=run_config.storage_options,
@@ -599,6 +732,7 @@ def run_cmd(
             cache_write_tier=cache_write_tier,
             save_provenance=save_provenance,
             progress=_CLIProgress(),
+            keep_temp=keep_temp,
         )
     except Exception as exc:
         _handle_recipe_errors(exc)
@@ -609,8 +743,14 @@ def run_cmd(
         f"Executed {len(result.executed_steps)} step(s), "
         f"skipped {len(result.skipped_steps)} (cache hits)."
     )
-    if result.output_dir is not None:
-        click.echo(f"Cache in: {result.output_dir}")
+    click.echo(f"Total time: {_format_duration(result.elapsed_seconds)}")
+    # What actually ran the steps — the answer to "why was there no speedup?"
+    for entry in result.logs:
+        if entry.startswith("executor: "):
+            click.echo(entry.splitlines()[0].capitalize())
+            break
+    if result.user_cache_dir is not None:
+        click.echo(f"Cache in: {result.user_cache_dir}")
     if survey_cache_dir is not None:
         hit_count = sum(
             1
@@ -630,6 +770,109 @@ def run_cmd(
         click.echo(result.console_log)
 
 
+@main.command("batch")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--input-dir",
+    required=True,
+    help="Folder of input files (local path or gs:// URL); one run per file.",
+)
+@click.option(
+    "--input-name",
+    required=True,
+    help="Recipe input each matched file is bound to (e.g. raw_input_folder).",
+)
+@click.option(
+    "--pattern", default="*.raw", show_default=True,
+    help="Glob selecting files under --input-dir.",
+)
+@click.option(
+    "--user-cache-dir", default=None,
+    help=(
+        "Shared checkpoint cache for the whole batch (work common to several "
+        f"inputs is computed once). Defaults to ./{DEFAULT_OUTPUT_ROOT}."
+    ),
+)
+@click.option(
+    "--outputs-dir", default=None,
+    help="Root for per-input outputs; each run writes under <outputs-dir>/<label>/.",
+)
+@click.option(
+    "--config", "config_path", default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Run-config file (same discovery as 'run' when omitted).",
+)
+@click.option(
+    "--executor", default="sequential",
+    type=click.Choice(["sequential", "dask", "prefect"]), show_default=True,
+    help="Executor backend for each run.",
+)
+@click.option("--dask-scheduler", default=None, help="Dask scheduler (see 'run').")
+@click.option("--dask-workers", type=int, default=None, help="Dask worker count.")
+def batch_cmd(
+    recipe: str,
+    input_dir: str,
+    input_name: str,
+    pattern: str,
+    user_cache_dir: str | None,
+    outputs_dir: str | None,
+    config_path: str | None,
+    executor: str,
+    dask_scheduler: str | None,
+    dask_workers: int | None,
+) -> None:
+    """Run RECIPE once per input file under --input-dir (UC-6)."""
+    import os as _os
+    _os.environ.setdefault("MPLBACKEND", "Agg")
+
+    from aa_recipe_manager.executor import input_sets_from_folder
+
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    user_cache_dir = (
+        user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    )
+    outputs_dir = outputs_dir or run_config.outputs_dir
+
+    executor, executor_options = _resolve_executor_options(
+        executor, dask_scheduler, dask_workers, run_config
+    )
+
+    try:
+        input_sets = input_sets_from_folder(
+            input_dir, input_name, pattern=pattern,
+            storage_options=run_config.storage_options,
+        )
+        click.echo(f"Batch: {len(input_sets)} input set(s) from {input_dir}")
+        batch = api.execute_batch(
+            recipe,
+            input_sets,
+            executor=executor,
+            executor_options=executor_options or None,
+            user_cache_dir=user_cache_dir,
+            outputs_dir=outputs_dir,
+            storage_options=run_config.storage_options,
+            progress=_CLIProgress(),
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    click.echo("")
+    click.echo(f"Completed {len(batch)} run(s).")
+    for label, result in zip(batch.labels, batch.results):
+        click.echo(
+            f"  [{label}] {len(result.executed_steps)} computed, "
+            f"{len(result.skipped_steps)} cached, "
+            f"{_format_duration(result.elapsed_seconds)}"
+        )
+    click.echo(f"Total time: {_format_duration(batch.elapsed_seconds)}")
+    if batch.manifest_file is not None:
+        click.echo(f"Batch manifest: {batch.manifest_file}")
+
+
 @main.command("clean")
 @click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
 @click.option(
@@ -643,11 +886,11 @@ def run_cmd(
     ),
 )
 @click.option(
-    "--output-dir",
+    "--user-cache-dir",
     default=None,
     help=(
         "Directory containing checkpoint files. Defaults to the run config's "
-        f"output_dir, else ./{DEFAULT_OUTPUT_ROOT}. Cleans the user cache "
+        f"user_cache_dir, else ./{DEFAULT_OUTPUT_ROOT}. Cleans the user cache "
         "tier only — the shared survey tier is curated/manual."
     ),
 )
@@ -664,13 +907,13 @@ def run_cmd(
 def clean_cmd(
     recipe: str,
     config_path: str | None,
-    output_dir: str | None,
+    user_cache_dir: str | None,
     inputs: tuple[str, ...],
     clean_all: bool,
     stale: bool,
     dry_run: bool,
 ) -> None:
-    """Remove checkpoint files for RECIPE under --output-dir."""
+    """Remove checkpoint files for RECIPE under --user-cache-dir."""
     if clean_all and stale:
         _fail("--all and --stale cannot be combined")
     mode = "all" if clean_all else ("stale" if stale else "intermediate")
@@ -690,13 +933,15 @@ def clean_cmd(
         _fail(str(exc))
     if run_config.source is not None:
         click.echo(f"Using run config: {run_config.source}")
-    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    user_cache_dir = (
+        user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    )
     merged_inputs = {**run_config.inputs, **parsed_inputs}
 
     try:
         removed = api.clean(
             recipe,
-            output_dir,
+            user_cache_dir,
             inputs=merged_inputs or None,
             mode=mode,
             dry_run=dry_run,
@@ -728,10 +973,10 @@ def clean_cmd(
     ),
 )
 @click.option(
-    "--output-dir",
+    "--user-cache-dir",
     default=None,
     help=(
-        "User cache root to probe. Defaults to the run config's output_dir, "
+        "User cache root to probe. Defaults to the run config's user_cache_dir, "
         f"else ./{DEFAULT_OUTPUT_ROOT}."
     ),
 )
@@ -759,7 +1004,7 @@ def clean_cmd(
 def explain_cache_cmd(
     recipe: str,
     config_path: str | None,
-    output_dir: str | None,
+    user_cache_dir: str | None,
     survey_cache_dir: str | None,
     inputs: tuple[str, ...],
     as_json: bool,
@@ -786,7 +1031,9 @@ def explain_cache_cmd(
         _fail(str(exc))
     if run_config.source is not None and not as_json:
         click.echo(f"Using run config: {run_config.source}")
-    output_dir = output_dir or run_config.output_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    user_cache_dir = (
+        user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    )
     survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
     merged_inputs = {**run_config.inputs, **parsed_inputs}
 
@@ -794,7 +1041,7 @@ def explain_cache_cmd(
         explanation = api.explain_cache(
             recipe,
             inputs=merged_inputs or None,
-            output_dir=output_dir,
+            user_cache_dir=user_cache_dir,
             survey_cache_dir=survey_cache_dir,
             storage_options=run_config.storage_options,
         )

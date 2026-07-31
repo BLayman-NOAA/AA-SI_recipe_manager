@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any
 
 from aa_recipe_manager.storage import StorageLocation
 
@@ -16,7 +17,7 @@ from aa_recipe_manager.storage import StorageLocation
 @dataclass(frozen=True)
 class ExecutionContext:
     mode: str | None = None
-    output_dir: Path | StorageLocation | None = None
+    user_cache_dir: Path | StorageLocation | None = None
     step_id: str | None = None
     artifacts_dir: Path | StorageLocation | None = None
     temp_dir: Path | StorageLocation | None = None
@@ -48,7 +49,7 @@ def get_execution_context() -> ExecutionContext:
 def execution_context(
     *,
     mode: str | None = None,
-    output_dir: str | Path | StorageLocation | None = None,
+    user_cache_dir: str | Path | StorageLocation | None = None,
     step_id: str | None = None,
     artifacts_dir: str | Path | StorageLocation | None = None,
     temp_dir: str | Path | StorageLocation | None = None,
@@ -68,13 +69,13 @@ def execution_context(
             return None
         return StorageLocation.parse(value).as_context_value()
 
-    resolved_output_dir = _resolve(output_dir)
+    resolved_user_cache_dir = _resolve(user_cache_dir)
     resolved_artifacts_dir = _resolve(artifacts_dir)
     resolved_temp_dir = _resolve(temp_dir)
     token: Token[ExecutionContext] = _EXECUTION_CONTEXT.set(
         ExecutionContext(
             mode=mode,
-            output_dir=resolved_output_dir,
+            user_cache_dir=resolved_user_cache_dir,
             step_id=step_id,
             artifacts_dir=resolved_artifacts_dir,
             temp_dir=resolved_temp_dir,

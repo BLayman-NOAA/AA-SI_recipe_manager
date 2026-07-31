@@ -23,7 +23,16 @@ outputs:
     type: dict
     description: "Additional extracted calibration metadata keyed by channel and source file details"
     required: false
-params: {}
+params:
+  raw_file_path:
+    type: path
+    required: false
+    description: >
+      Path to the specific raw file whose channel mapping should be
+      selected from mapping_dict (matched by basename). Wire this to
+      ${_item} in a per-file map_over chain so each instance picks its own
+      file's calibration mapping instead of defaulting to the first file
+      in the survey. Leave unset for whole-survey recipes.
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.extract_standardized_calibration_parameters

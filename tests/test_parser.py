@@ -377,3 +377,24 @@ class TestResolveInputRefs:
     def test_non_string_values_unchanged(self):
         result = resolve_input_refs({"count": 5}, {"count": 99})
         assert result["count"] == 5
+
+    def test_refs_inside_list_resolved(self):
+        result = resolve_input_refs(
+            {"plot_window": ["${inputs.min_depth}", "${inputs.max_depth}", 0, 515]},
+            {"min_depth": 0, "max_depth": 100},
+        )
+        assert result["plot_window"] == [0, 100, 0, 515]
+
+    def test_refs_inside_dict_resolved(self):
+        result = resolve_input_refs(
+            {"style": {"color": "${inputs.line_color}", "width": 2}},
+            {"line_color": "red"},
+        )
+        assert result["style"] == {"color": "red", "width": 2}
+
+    def test_unresolvable_ref_inside_list_left_as_is(self):
+        result = resolve_input_refs(
+            {"plot_window": ["${inputs.missing}"]},
+            {"other": 1},
+        )
+        assert result["plot_window"] == ["${inputs.missing}"]

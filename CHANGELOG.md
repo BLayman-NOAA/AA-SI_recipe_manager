@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `read_seafloor_line` op (Echoview `.evl` seabed lines)
+
+Takes the seafloor from a hand-verified Echoview line file instead of detecting
+it from the Sv data. It emits the same `seafloor_depth` output port, 1-D over
+`ping_time`, as `detect_seafloor` and `ep_detect_seafloor`, so it is a drop-in
+swap: only the step's `op` and `params` change, and `create_seafloor_mask` and
+everything downstream stay as they are.
+
+- `evl_path` is a `path` param with `fingerprint_mode: checksum`, so re-exporting
+  or hand-editing the line invalidates the cached step while merely moving the
+  file does not. Remote (`gs://`) line files are read in place.
+- Alignment onto the ping grid is controlled by `max_gap_s` (widest hole in the
+  line to interpolate across) and `edge_extend_s` (how far past the line's ends
+  its depth is held, default `0.0` — no extrapolation). Pings the line does not
+  cover come back NaN, and `create_seafloor_mask` then rejects every sample in
+  those pings, so the step prints its ping coverage and `min_coverage` can turn
+  a shortfall into a failed run.
+- `vertical_reference` and `depth_offset_m` reconcile the line's vertical datum
+  with `ds_Sv`. Backed by `aa_si_utils.utils.read_seafloor_line_evl`.
+
+The HB2407 example recipe now uses it: `processing_lvl_2.yaml` takes a new
+`seabed_line_path` input, its `detect_seafloor` step reads the line file (with
+the `ep_detect_seafloor` version kept alongside, commented, as the alternative),
+and the seafloor mask is back in `combine_masks`. Its `seafloor_buffer_m` drops
+from 100 m to 5 m — the seabed in that line sits at 55-71 m, so a 100 m buffer
+would have masked away the entire dataset.
+
+### Changed — BREAKING: `output_dir` renamed to `user_cache_dir`
+
+The per-user cache-root setting is now named `user_cache_dir` everywhere it was
+`output_dir`: the run-config key, the `--user-cache-dir` CLI flag (formerly
+`--output-dir`), the `api.execute` / `execute_batch` / `clean` / `explain_cache`
+keyword argument, and `ExecutionResult.user_cache_dir`. This removes the
+one-letter confusion with `outputs_dir` (the separate user-facing images/logs
+directory). There is no backward-compatible alias: a config using `output_dir`
+now errors with "unknown key", and `--output-dir` is no longer accepted — update
+configs and scripts to `user_cache_dir` / `--user-cache-dir`. (The unrelated
+`output_dir` parameter of the `download_ncei_data` op is unchanged.)
+
+### Changed — BREAKING: `fingerprint_contents` replaced by `fingerprint_mode`
+
+The boolean `fingerprint_contents` on a path input/param is gone, replaced by
+`fingerprint_mode`, which picks *which* signal folds into the cache key: `off`
+(default, path string only), `names`, `size`, `checksum`, or `auto` (names+size
+locally, names+checksum remotely). The closest equivalent of the old
+`fingerprint_contents: true` is `fingerprint_mode: auto`.
+
+Two related changes to what a non-`off` mode hashes: the target's **path is no
+longer part of the key** (its content identity travels separately), so the same
+files under a moved or renamed folder now hash identically; and **mtime is never
+included**, since re-uploading or re-copying identical bytes changes it and would
+false-miss. Locally that means `auto` keys on size, so a same-size edit to a
+local input no longer invalidates — use `fingerprint_mode: checksum` where that
+matters.
+
+There is no backward-compatible alias, and declaration blocks (`inputs:`,
+`params:`, and spec ports) now **reject unknown keys** rather than ignoring them:
+a recipe still saying `fingerprint_contents` fails validation instead of silently
+falling back to path-only keying. This also catches ordinary typos in those
+blocks. Not yet migrated: the AA-SI_Workbench builtin recipes
+(`byo_folder_example.yaml`, `gcs_bucket_example.yaml`, `pipeline_modified.yaml`,
+`processing_levels_pipeline_gcs.yaml`) still carry the old key.
+
+### Added — faster remote checkpoint upload (staged parallel put)
+
+Writing a zarr checkpoint to a bucket by streaming `to_zarr` object-by-object
+measured ~0.9 MiB/s on a 2.8 MiB/s uplink — a third of the link — because
+xarray writes chunks and the many small metadata objects mostly serially.
+
+- Stores whose estimated size is under a threshold are now written to local
+  scratch and bulk-uploaded with `fs.put(recursive=True)`, which parallelizes
+  the per-object PUTs (~2.5x faster on a real 398 MiB EchoData checkpoint). The
+  reloaded store is byte-identical; only the transport changes.
+- Larger stores stream straight to the bucket with no local copy, so a survey
+  bigger than local disk still writes. The threshold is estimated *uncompressed*
+  bytes (actual disk use is smaller by the compression ratio), defaults to 8 GiB,
+  and is set with `AA_RECIPE_CHECKPOINT_STAGE_MAX_BYTES` (`0` = always stream).
+- Applies to EchoData, `xr.Dataset`, and `xr.DataArray` remote zarr writes.
+
+### Added — run timing and concurrent-run debuggability
+
+- `run` prints the total wall-clock time and the executor/concurrency actually
+  in force; per-step and whole-run times are recorded in `manifest.json`
+  (`elapsed_seconds`), and a step's checkpoint-write share is split out as
+  `save_seconds`.
+- The run log names the executor (and Dask dashboard URL), fences each step, and
+  labels each mapped-chain instance; stdout/stderr capture is now thread-routed
+  so concurrent steps no longer lose or cross-attribute each other's output, and
+  every write is flushed so an interrupted run still shows where it stopped.
+- `--dask-workers N` is now the concurrency (N slots), not `N x cores`.
+- `run --keep-temp` leaves the run-scoped scratch (exe_temp) in place instead of
+  deleting it at run end, so a slow step can be profiled against its real
+  intermediate inputs.
+
 ### Added — segment-parallel & parameter-parallel execution (Stage 8)
 
 Recipes can now express fan-out / fan-in with `map_over`, `sweep`, and
@@ -101,7 +195,7 @@ read, so content is still addressed by the full hash and a (astronomically
 unlikely) short-hash collision degrades to a cache miss, never a wrong result.
 Trade-off: two *differently named* steps with an identical computation no
 longer share one entry (forks keep step ids, so shared subgraphs still dedupe).
-Point your config's `output_dir` at a **per-user** cache root (e.g.
+Point your config's `user_cache_dir` at a **per-user** cache root (e.g.
 `gs://…/users/<you>/cache`) rather than a per-run directory so your own runs
 and forked recipes dedupe against each other.
 
@@ -142,7 +236,7 @@ and forked recipes dedupe against each other.
   (prominently for op-implementing packages) — never blocking the hit.
   Mismatches are recorded in the result and manifest.
 - `aa-recipe clean` now honors the run config (`--config` / auto-discovery)
-  for `output_dir` and `storage_options`; `--stale` only removes entries
+  for `user_cache_dir` and `storage_options`; `--stale` only removes entries
   belonging to the given recipe (a content-addressed root can host many);
   `--all` also sweeps legacy (pre-content-addressing) cache directories.
 - Curated partial runs should use `--checkpoint-mode eager` (or per-step
@@ -161,7 +255,7 @@ and forked recipes dedupe against each other.
 
 ### Added
 - Optional Google Cloud Storage backing for the three run storage locations —
-  the checkpoint cache (`--output-dir`), the `exe_temp` scratch dir
+  the checkpoint cache (`--user-cache-dir`), the `exe_temp` scratch dir
   (`--temp-dir`), and the user-facing outputs dir (`--outputs-dir`) — each may
   now be a local path or a `gs://` URL. Set independently; all default to local.
   Install the `gcs` extra (`pip install aa-recipe-manager[gcs]`); credentials
@@ -176,7 +270,7 @@ and forked recipes dedupe against each other.
   inputs skip local existence/mkdir checks and are fingerprinted via fsspec,
   degrading to a warning (not a crash) when credentials/drivers are absent.
 - Optional Google Cloud Storage backing for the three run storage locations —
-  the checkpoint cache (`--output-dir`), the `exe_temp` scratch dir
+  the checkpoint cache (`--user-cache-dir`), the `exe_temp` scratch dir
   (`--temp-dir`), and the user-facing outputs dir (`--outputs-dir`).
 - `gs://` support extended to **data inputs**: recipe path inputs
   (`raw_input_folder`, `cal_input_folder`, `line_file_path`) may be local paths
@@ -189,7 +283,7 @@ and forked recipes dedupe against each other.
   survey too large for the workstation disk can still be processed. New
   `example_recipes/gcs_bucket_example.yaml` demonstrates the flow.
 - Per-user run-config file (`aa_recipe_manager.config`): the `run` command reads
-  `output_dir`, `temp_dir`, `outputs_dir`, `storage_options`, and input defaults
+  `user_cache_dir`, `temp_dir`, `outputs_dir`, `storage_options`, and input defaults
   from a git-ignored config file so environment-specific bucket paths stay out
   of the shared recipe. Auto-discovery (first found wins): `--config PATH` >
   `$AA_RECIPE_CONFIG` > per-recipe `<recipe_stem>.config.yaml` beside the recipe
@@ -208,7 +302,7 @@ and forked recipes dedupe against each other.
 ### Changed
 - Checkpoint sidecar artifact paths are now stored relative to the cache root
   (POSIX separators), so a cache directory/prefix is relocatable (e.g. sync a
-  bucket cache down and point `--output-dir` at the local copy). Legacy caches
+  bucket cache down and point `--user-cache-dir` at the local copy). Legacy caches
   with absolute artifact paths still load.
 - The `execute()` re-export now forwards `checkpoint_mode`, `checkpoint_steps`,
   and `checkpoint_format` (previously silently dropped).

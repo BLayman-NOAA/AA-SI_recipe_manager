@@ -23,6 +23,7 @@ Tier policy (see ``global_cache_plan.md`` §4.2, §9.3):
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -58,10 +59,16 @@ class CheckpointStore(Protocol):
         instance_hash: str | None = None,
         instance_index: int | None = None,
         instance_discriminator: dict[str, Any] | None = None,
+        write_token: str | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> None: ...
 
     def save_marker(
-        self, step_id: str, *, artifacts: list[str] | None = None
+        self,
+        step_id: str,
+        *,
+        artifacts: list[str] | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> None: ...
 
 
@@ -105,6 +112,10 @@ class TieredCheckpointStore:
         self._hit_tier: dict[str, str] = {}
         # Per-instance (map_over/sweep) hit tier, keyed by (step_id, instance_hash).
         self._instance_hit_tier: dict[tuple[str, str], str] = {}
+        # Guards the two hit-tier maps: a threaded backend probes and saves from
+        # several tasks at once (Stage 9). Process workers each hold their own
+        # store, so the lock only ever matters within one process.
+        self._lock = threading.Lock()
 
     # -- introspection (manifest / logging) ----------------------------------
 
@@ -145,6 +156,47 @@ class TieredCheckpointStore:
                 refs.add(meta.provenance_ref)
         return refs
 
+    def recovered_raw_inputs(
+        self, preferred_step_ids: tuple[str, ...] = ()
+    ) -> dict[str, Any] | None:
+        """Recover the raw-file list stamped on a sidecar this run hit or wrote.
+
+        Spans *all* tiers (user and survey): reads each touched step's sidecar
+        via the tier that served it. This is the path that carries a curated
+        survey run's raw files down into a user run that extends its cache — the
+        stamped record already holds ``{name, size}``, so it survives even when
+        the user cannot reach the original raw source.
+
+        ``preferred_step_ids`` (the raw-file lineage, e.g. the reader step) are
+        consulted first so a run with mixed-origin hits picks the authoritative
+        record rather than an arbitrary one. Every entry a single run writes
+        carries the same record, so within one origin this is unambiguous.
+
+        ``source``/``origin_run_id`` are set from the current run's vantage: a
+        record whose ultimate origin is this run reads as ``resolved``; one from
+        another run reads as ``inherited`` (preserving the *original* resolving
+        run across chained extensions).
+        """
+        seen = set(preferred_step_ids)
+        order = [sid for sid in preferred_step_ids if sid in self._hit_tier]
+        order += sorted(sid for sid in self._hit_tier if sid not in seen)
+        for step_id in order:
+            tier = self._hit_tier.get(step_id)
+            if tier is None:
+                continue
+            meta = self._managers[tier].read_meta(step_id)
+            if meta is None or not meta.raw_inputs:
+                continue
+            record = dict(meta.raw_inputs)
+            origin = record.get("origin_run_id") or meta.run_id
+            if origin and origin != self.run_id:
+                record["source"] = "inherited"
+            else:
+                record["source"] = "resolved"
+            record["origin_run_id"] = origin
+            return record
+        return None
+
     def artifact_urls(self, step_id: str) -> dict[str, str]:
         """Absolute artifact locations from the step's hit/write tier."""
         manager = self._manager_for(step_id)
@@ -169,9 +221,10 @@ class TieredCheckpointStore:
                 else manager.has_checkpoint(step_id)
             )
             if found:
-                self._hit_tier[step_id] = tier
-                if instance_hash is not None:
-                    self._instance_hit_tier[(step_id, instance_hash)] = tier
+                with self._lock:
+                    self._hit_tier[step_id] = tier
+                    if instance_hash is not None:
+                        self._instance_hit_tier[(step_id, instance_hash)] = tier
                 return True
         return False
 
@@ -189,7 +242,8 @@ class TieredCheckpointStore:
         for tier in self._read_order:
             manager = self._managers[tier]
             if manager.has_checkpoint(step_id):
-                self._hit_tier[step_id] = tier
+                with self._lock:
+                    self._hit_tier[step_id] = tier
                 return manager.recorded_artifacts(step_id)
         return None
 
@@ -198,11 +252,13 @@ class TieredCheckpointStore:
     ) -> dict[str, Any]:
         if instance_hash is not None:
             key = (step_id, instance_hash)
-            tier = self._instance_hit_tier.get(key)
+            with self._lock:
+                tier = self._instance_hit_tier.get(key)
             if tier is None and self.has_checkpoint(
                 step_id, instance_hash=instance_hash
             ):
-                tier = self._instance_hit_tier[key]
+                with self._lock:
+                    tier = self._instance_hit_tier[key]
             if tier is None:
                 raise FileNotFoundError(
                     f"no checkpoint for step {step_id!r} instance "
@@ -228,6 +284,8 @@ class TieredCheckpointStore:
         instance_hash: str | None = None,
         instance_index: int | None = None,
         instance_discriminator: dict[str, Any] | None = None,
+        write_token: str | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> None:
         writer = self._managers[self.write_tier]
         if self.write_tier == SURVEY_TIER:
@@ -245,23 +303,25 @@ class TieredCheckpointStore:
                         "environments; only zarr/json artifacts are shared). "
                         "Run with the user write tier instead."
                     )
-        # Keep the non-fanout call signature identical for plain test doubles.
-        if instance_hash is None:
-            writer.save(step_id, outputs, artifacts=artifacts)
-        else:
-            writer.save(
-                step_id,
-                outputs,
-                artifacts=artifacts,
-                instance_hash=instance_hash,
-                instance_index=instance_index,
-                instance_discriminator=instance_discriminator,
-            )
+        # Keep the non-fanout call signature identical for plain test doubles
+        # (a bare ``save(step_id, outputs, artifacts=...)`` mock stays valid);
+        # only pass the fan-out / concurrency / provenance kwargs when in play.
+        save_kwargs: dict[str, Any] = {"artifacts": artifacts}
+        if write_token is not None:
+            save_kwargs["write_token"] = write_token
+        if raw_inputs is not None:
+            save_kwargs["raw_inputs"] = raw_inputs
+        if instance_hash is not None:
+            save_kwargs["instance_hash"] = instance_hash
+            save_kwargs["instance_index"] = instance_index
+            save_kwargs["instance_discriminator"] = instance_discriminator
+        writer.save(step_id, outputs, **save_kwargs)
         # The immediate save-then-reload round trip (and the manifest) must
         # resolve against the tier that now holds the entry.
-        self._hit_tier[step_id] = self.write_tier
-        if instance_hash is not None:
-            self._instance_hit_tier[(step_id, instance_hash)] = self.write_tier
+        with self._lock:
+            self._hit_tier[step_id] = self.write_tier
+            if instance_hash is not None:
+                self._instance_hit_tier[(step_id, instance_hash)] = self.write_tier
 
     # -- markers: user tier only, unconditionally ----------------------------
 
@@ -269,7 +329,15 @@ class TieredCheckpointStore:
         return self._managers[USER_TIER].has_marker(step_id)
 
     def save_marker(
-        self, step_id: str, *, artifacts: list[str] | None = None
+        self,
+        step_id: str,
+        *,
+        artifacts: list[str] | None = None,
+        raw_inputs: dict[str, Any] | None = None,
     ) -> None:
-        self._managers[USER_TIER].save_marker(step_id, artifacts=artifacts)
-        self._hit_tier.setdefault(step_id, USER_TIER)
+        marker_kwargs: dict[str, Any] = {"artifacts": artifacts}
+        if raw_inputs is not None:
+            marker_kwargs["raw_inputs"] = raw_inputs
+        self._managers[USER_TIER].save_marker(step_id, **marker_kwargs)
+        with self._lock:
+            self._hit_tier.setdefault(step_id, USER_TIER)

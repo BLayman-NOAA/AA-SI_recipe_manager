@@ -20,7 +20,7 @@ def _warm(dag, tmp_path, **kwargs):
     return SequentialExecutor().execute(
         dag,
         inputs={"seed": 1},
-        output_dir=tmp_path / "user_cache",
+        user_cache_dir=tmp_path / "user_cache",
         checkpoint_mode="eager",
         **kwargs,
     )
@@ -35,7 +35,7 @@ class TestExplainCache:
         dag = _linear_inc_dag()
         _warm(dag, tmp_path)
         report = explain_cache(
-            dag, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            dag, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         steps = _by_step(report)
         assert all(step.status == "hit" for step in steps.values())
@@ -48,7 +48,7 @@ class TestExplainCache:
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir=tmp_path / "curator_cache",
+            user_cache_dir=tmp_path / "curator_cache",
             survey_cache_dir=tmp_path / "survey_cache",
             cache_write_tier="survey",
             checkpoint_mode="eager",
@@ -56,7 +56,7 @@ class TestExplainCache:
         report = explain_cache(
             dag,
             inputs={"seed": 1},
-            output_dir=tmp_path / "empty_user_cache",
+            user_cache_dir=tmp_path / "empty_user_cache",
             survey_cache_dir=tmp_path / "survey_cache",
         )
         steps = _by_step(report)
@@ -73,7 +73,7 @@ class TestExplainCache:
         forked.nodes["scale"].resolved_params["factor"] = 5
 
         report = explain_cache(
-            forked, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            forked, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         steps = _by_step(report)
         assert steps["start"].status == "hit"
@@ -98,7 +98,7 @@ class TestExplainCache:
         bumped = _linear_inc_dag()
         bumped.recipe.execution = ExecutionHints(cache_epoch="2026-07")
         report = explain_cache(
-            bumped, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            bumped, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         steps = _by_step(report)
         assert steps["start"].status == "miss"
@@ -117,7 +117,7 @@ class TestExplainCache:
         forked.nodes["first"].resolved_params["factor"] = 7
 
         report = explain_cache(
-            forked, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            forked, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         steps = _by_step(report)
         assert steps["scale"].status == "miss"
@@ -137,7 +137,7 @@ class TestExplainCache:
     def test_never_cached_step(self, helper_module, tmp_path):
         dag = _linear_inc_dag()
         report = explain_cache(
-            dag, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            dag, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         assert all(step.status == "never-cached" for step in report.steps)
         assert "NEVER CACHED" in report.format_text()
@@ -146,7 +146,7 @@ class TestExplainCache:
         dag = _sink_after_chain_dag()
         _warm(dag, tmp_path)
         report = explain_cache(
-            dag, inputs={"seed": 1}, output_dir=tmp_path / "user_cache"
+            dag, inputs={"seed": 1}, user_cache_dir=tmp_path / "user_cache"
         )
         steps = _by_step(report)
         assert steps["report"].status == "marker-hit"

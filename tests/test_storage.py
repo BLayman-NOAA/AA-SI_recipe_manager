@@ -229,7 +229,7 @@ def test_remote_checkpoint_marker_round_trip():
 
 
 def test_remote_netcdf_checkpoint_format_rejected():
-    with pytest.raises(ValueError, match="requires a local output_dir"):
+    with pytest.raises(ValueError, match="requires a local user_cache_dir"):
         CheckpointManager(
             "memory://cache/recipe_cache", {"s": "h"}, preferred_format="netcdf"
         )
@@ -273,7 +273,7 @@ def test_executor_remote_cache_hit_on_second_run():
     cache = "memory://cache/recipe_cache"
 
     first = SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=cache, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=cache, checkpoint_mode="eager"
     )
     assert first.executed_steps == ["start", "first", "second"]
     assert first.outputs["second"]["out"] == 4
@@ -283,7 +283,7 @@ def test_executor_remote_cache_hit_on_second_run():
     helper = _install_helper_module()
     helper.call_log.clear()
     second = SequentialExecutor().execute(
-        dag, inputs={"seed": 1}, output_dir=cache, checkpoint_mode="eager"
+        dag, inputs={"seed": 1}, user_cache_dir=cache, checkpoint_mode="eager"
     )
     assert second.executed_steps == []
     assert helper.call_log == []  # no callable actually invoked
@@ -303,7 +303,7 @@ def test_remote_log_uploaded_to_outputs_dir():
     result = SequentialExecutor().execute(
         dag,
         inputs={"seed": 1},
-        output_dir="memory://cache/recipe_cache",
+        user_cache_dir="memory://cache/recipe_cache",
         outputs_dir="memory://cache/outputs",
         checkpoint_mode="eager",
         log_destination="file",
@@ -324,7 +324,7 @@ def test_remote_log_uploaded_even_when_a_step_fails():
         SequentialExecutor().execute(
             dag,
             inputs={"seed": 1},
-            output_dir="memory://cache/recipe_cache",
+            user_cache_dir="memory://cache/recipe_cache",
             outputs_dir="memory://cache/outputs",
             checkpoint_mode="eager",
             log_destination="file",

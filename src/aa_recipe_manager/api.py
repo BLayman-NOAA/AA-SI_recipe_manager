@@ -14,9 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
-from aa_recipe_manager.storage import StorageLocation
-from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
     DependencyVersionError,
@@ -25,6 +22,9 @@ from aa_recipe_manager.exceptions import (
     RecipeValidationError,
     SpecNotFoundError,
 )
+from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
+from aa_recipe_manager.storage import StorageLocation
+from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
@@ -575,7 +575,7 @@ def execute(
     *,
     inputs: dict[str, Any] | None = None,
     executor: str = "sequential",
-    output_dir: str | Path | None = None,
+    user_cache_dir: str | Path | None = None,
     implementation_override: str | None = None,
     force: bool = False,
     no_checkpoints: bool = False,
@@ -592,6 +592,8 @@ def execute(
     cache_write_tier: str = "user",
     save_provenance: str | Path | None = None,
     progress: Any = None,
+    executor_options: dict[str, Any] | None = None,
+    keep_temp: bool = False,
 ) -> Any:
     """Execute a recipe's pipeline directly in the current process.
 
@@ -603,12 +605,17 @@ def execute(
         Pipeline-level input values, used both for DAG resolution and as
         runtime values for ``${inputs.x}`` references.
     executor:
-        Executor backend name. Only ``"sequential"`` is implemented in Stage 6;
-        ``"dask"`` and ``"prefect"`` are reserved for Stage 9.
-    output_dir:
+        Executor backend name: ``"sequential"`` (default, in-process),
+        ``"dask"`` (distributed; requires the ``dask`` extra), or ``"prefect"``
+        (requires the ``prefect`` extra). When left ``"sequential"`` the
+        recipe's ``execution.executor`` field is used if set.
+    executor_options:
+        Backend constructor options, e.g. ``{"scheduler": "processes",
+        "n_workers": 4}`` for Dask. Ignored by the sequential backend.
+    user_cache_dir:
         Directory used for step-output checkpoints. When ``None`` no checkpoint
         files are written; explicit checkpoint options require a non-None
-        ``output_dir``.
+        ``user_cache_dir``.
     implementation_override:
         Force a single implementation key for every step.
     force:
@@ -629,12 +636,12 @@ def execute(
     outputs_dir:
         Directory for user-facing outputs (images under ``outputs_dir/images``
         and logs under ``outputs_dir/logs/standard_out.txt``). When ``None``
-        it defaults to a sibling of ``output_dir`` named ``outputs`` (e.g.
+        it defaults to a sibling of ``user_cache_dir`` named ``outputs`` (e.g.
         ``recipe_cache`` -> ``outputs``). May be a local path or an fsspec URL
         (``gs://...``).
     temp_dir:
         Run-scoped scratch directory (``exe_temp``) for per-step intermediate
-        stores. When ``None`` it follows the cache: a sibling of ``output_dir``
+        stores. When ``None`` it follows the cache: a sibling of ``user_cache_dir``
         named ``exe_temp`` under the same scheme. May be a local path or an
         fsspec URL; remote scratch requires zarr intermediates (NetCDF cannot
         be written to object storage).
@@ -655,7 +662,7 @@ def execute(
         Serialization format for checkpoint files. One of ``"zarr"`` (default),
         ``"netcdf"``, or ``"pickle"``. Overrides the recipe's
         ``execution.checkpoint_format`` setting when provided. ``"netcdf"`` is
-        rejected for a remote (``gs://``) ``output_dir``.
+        rejected for a remote (``gs://``) ``user_cache_dir``.
     storage_options:
         fsspec storage options applied to every remote (URL) storage location
         (cache, exe_temp, outputs) and to remote *data input* paths: ops read
@@ -665,9 +672,9 @@ def execute(
         up Application Default Credentials.
     survey_cache_dir:
         Root of the shared (curated) survey cache tier. When set, cache reads
-        probe ``[user, survey]`` in order (the user tier is ``output_dir``);
+        probe ``[user, survey]`` in order (the user tier is ``user_cache_dir``);
         writes still go only to the user tier unless ``cache_write_tier`` says
-        otherwise. Requires ``output_dir``.
+        otherwise. Requires ``user_cache_dir``.
     cache_write_tier:
         ``"user"`` (default) or ``"survey"``. ``"survey"`` marks this a
         *curated* run: it reads and writes only the survey tier (side-effect
@@ -675,12 +682,12 @@ def execute(
         artifacts. Access control is enforced by bucket IAM, not this client.
     save_provenance:
         If provided, write the captured provenance as YAML at this path. When
-        ``output_dir`` is set and this is None, a default sidecar named
-        ``provenance.yaml`` is written under ``output_dir/other``.
+        ``user_cache_dir`` is set and this is None, a default sidecar named
+        ``provenance.yaml`` is written under ``user_cache_dir/other``.
 
     Returns the :class:`ExecutionResult`.
     """
-    from aa_recipe_manager.executor import SequentialExecutor
+    from aa_recipe_manager.executor import resolve_executor
 
     if no_checkpoints and (checkpoint_mode or checkpoint_steps):
         raise ValueError(
@@ -692,13 +699,13 @@ def execute(
             "no_checkpoints=True cannot be combined with survey_cache_dir or "
             "cache_write_tier; the tiered cache requires checkpointing."
         )
-    if output_dir is None and not no_checkpoints and (
+    if user_cache_dir is None and not no_checkpoints and (
         checkpoint_steps
         or (checkpoint_mode is not None and checkpoint_mode != "none")
     ):
         raise ValueError(
-            "checkpoint_mode / checkpoint_steps require output_dir; pass an "
-            "output_dir or set no_checkpoints=True."
+            "checkpoint_mode / checkpoint_steps require user_cache_dir; pass an "
+            "user_cache_dir or set no_checkpoints=True."
         )
 
     dag = _load_dag(
@@ -708,18 +715,17 @@ def execute(
         check_versions=False,
     )
 
-    if executor == "sequential":
-        impl = SequentialExecutor()
-    else:
-        raise ValueError(
-            f"executor backend {executor!r} is not implemented yet "
-            "(only 'sequential' is available in Stage 6)"
-        )
+    # Recipe-declared executor is the lowest-priority default; the explicit
+    # ``executor`` argument (from CLI / API) wins when it is non-default.
+    effective_executor = executor
+    if executor == "sequential" and dag.recipe.execution is not None:
+        effective_executor = dag.recipe.execution.executor or "sequential"
+    impl = resolve_executor(effective_executor, **(executor_options or {}))
 
     result = impl.execute(
         dag,
         inputs=inputs,
-        output_dir=output_dir,
+        user_cache_dir=user_cache_dir,
         force=force,
         no_checkpoints=no_checkpoints,
         skip_sinks=skip_sinks,
@@ -734,6 +740,7 @@ def execute(
         survey_cache_dir=survey_cache_dir,
         cache_write_tier=cache_write_tier,
         progress=progress,
+        keep_temp=keep_temp,
     )
 
     sidecar_loc: StorageLocation | None = None
@@ -752,6 +759,52 @@ def execute(
     return result
 
 
+def execute_batch(
+    recipe: str | Path | Recipe,
+    input_sets: list[Any],
+    *,
+    executor: str = "sequential",
+    executor_options: dict[str, Any] | None = None,
+    user_cache_dir: str | Path | None = None,
+    outputs_dir: str | Path | None = None,
+    implementation_override: str | None = None,
+    storage_options: dict[str, Any] | None = None,
+    progress: Any = None,
+    **execute_kwargs: Any,
+) -> Any:
+    """Run a recipe once per input set (UC-6), sharing one checkpoint cache.
+
+    ``input_sets`` is a list of :class:`~aa_recipe_manager.executor.batch.
+    InputSet` (build them with ``input_sets_from_folder`` / ``_from_csv`` /
+    ``_from_lists``). The DAG is resolved once; each set runs against the shared
+    ``user_cache_dir`` cache with its own ``outputs_dir/<label>/`` tree, so work
+    common to several sets is computed once. Returns a ``BatchResult``.
+    """
+    from aa_recipe_manager.executor import BatchExecutor, resolve_executor
+
+    def _dag_factory(set_inputs: dict[str, Any]):
+        # Rebuild per set: ``${inputs.x}`` params are baked into each step's
+        # cache fingerprint at build time, so each set must build its own DAG
+        # for its input-dependent steps to address distinct cache entries.
+        return _load_dag(
+            recipe,
+            input_values=set_inputs or None,
+            implementation_override=implementation_override,
+            check_versions=False,
+        )
+
+    impl = resolve_executor(executor, **(executor_options or {}))
+    return BatchExecutor(impl).execute_batch(
+        _dag_factory,
+        input_sets,
+        user_cache_dir=user_cache_dir,
+        outputs_dir=outputs_dir,
+        storage_options=storage_options,
+        progress=progress,
+        **execute_kwargs,
+    )
+
+
 def _write_provenance_sidecar(provenance: Any, loc: StorageLocation) -> None:
     """Serialize a Provenance object to YAML at a local or remote location."""
     from aa_recipe_manager.provenance.recorder import to_yaml
@@ -761,16 +814,16 @@ def _write_provenance_sidecar(provenance: Any, loc: StorageLocation) -> None:
 
 def clean(
     recipe: str | Path | Recipe,
-    output_dir: str | Path,
+    user_cache_dir: str | Path,
     *,
     inputs: dict[str, Any] | None = None,
     mode: str = "intermediate",
     dry_run: bool = False,
     storage_options: dict[str, Any] | None = None,
 ) -> list[StorageLocation]:
-    """Remove checkpoint files for a recipe under ``output_dir``.
+    """Remove checkpoint files for a recipe under ``user_cache_dir``.
 
-    ``output_dir`` may be a local path or an fsspec URL (``gs://...``). Modes are
+    ``user_cache_dir`` may be a local path or an fsspec URL (``gs://...``). Modes are
     ``"intermediate"`` (default), ``"all"``, and ``"stale"``. When ``dry_run`` is
     true the locations that would be deleted are returned without being removed.
     ``storage_options`` authenticates remote cache access and remote-input
@@ -787,7 +840,7 @@ def clean(
         )
     dag = _load_dag(recipe, input_values=inputs, check_versions=False)
     manager = CheckpointManager(
-        output_dir,
+        user_cache_dir,
         compute_step_hashes(dag, inputs or {}, storage_options=storage_options),
         storage_options=storage_options,
     )
@@ -798,7 +851,7 @@ def explain_cache(
     recipe: str | Path | Recipe,
     *,
     inputs: dict[str, Any] | None = None,
-    output_dir: str | Path,
+    user_cache_dir: str | Path,
     survey_cache_dir: str | Path | None = None,
     storage_options: dict[str, Any] | None = None,
 ) -> Any:
@@ -819,7 +872,7 @@ def explain_cache(
     return _explain(
         dag,
         inputs=inputs,
-        output_dir=output_dir,
+        user_cache_dir=user_cache_dir,
         survey_cache_dir=survey_cache_dir,
         storage_options=storage_options,
     )

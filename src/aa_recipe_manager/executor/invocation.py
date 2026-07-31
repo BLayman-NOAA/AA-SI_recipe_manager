@@ -26,7 +26,14 @@ import importlib
 import re
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.executor.refs import (
+    CheckpointRef,
+    FoldedCheckpointRef,
+    resolve_ref,
+)
+
 if TYPE_CHECKING:
+    from aa_recipe_manager.executor.tiered import CheckpointStore
     from aa_recipe_manager.model.types import DAGNode
 
 
@@ -48,16 +55,38 @@ class RuntimeContext:
     Stores the outputs of each completed step so downstream steps can resolve
     ``${step.output}`` references. Sink and no-output steps still get an
     (empty) entry so they appear as "executed".
+
+    ``store``, when given, lets a checkpointed-and-evicted entry (see
+    :meth:`evict`) be transparently reloaded on read instead of raising.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, store: CheckpointStore | None = None) -> None:
         self._data: dict[str, dict[str, Any]] = {}
+        self._store = store
 
     def record(self, step_id: str, outputs: dict[str, Any]) -> None:
         self._data[step_id] = dict(outputs)
 
+    def evict(
+        self, step_id: str, output_name: str, ref: CheckpointRef | FoldedCheckpointRef
+    ) -> None:
+        """Replace a recorded value with a lazy ref (frees the live object).
+
+        ``step_id`` must already have been :meth:`record`-ed; only the one
+        output slot is replaced in place.
+        """
+        self._data[step_id][output_name] = ref
+
     def has_step(self, step_id: str) -> bool:
         return step_id in self._data
+
+    def has_output(self, step_id: str, output_name: str) -> bool:
+        """Whether ``step_id`` recorded a value for ``output_name``.
+
+        Unlike :meth:`get`, never resolves a lazy ref — cheap membership
+        check used by eviction bookkeeping.
+        """
+        return output_name in self._data.get(step_id, {})
 
     def get(self, step_id: str, output_name: str) -> Any:
         if step_id not in self._data:
@@ -69,13 +98,23 @@ class RuntimeContext:
             raise KeyError(
                 f"step {step_id!r} did not produce output {output_name!r}"
             )
-        return outputs[output_name]
+        value = outputs[output_name]
+        if isinstance(value, (CheckpointRef, FoldedCheckpointRef)):
+            return resolve_ref(value, self._store)
+        return value
 
     def step_outputs(self, step_id: str) -> dict[str, Any]:
-        return dict(self._data.get(step_id, {}))
+        return {
+            name: (
+                resolve_ref(value, self._store)
+                if isinstance(value, (CheckpointRef, FoldedCheckpointRef))
+                else value
+            )
+            for name, value in self._data.get(step_id, {}).items()
+        }
 
     def as_dict(self) -> dict[str, dict[str, Any]]:
-        return {sid: dict(outs) for sid, outs in self._data.items()}
+        return {sid: self.step_outputs(sid) for sid in self._data}
 
 
 class _ElementContext:

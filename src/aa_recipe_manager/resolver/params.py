@@ -102,27 +102,33 @@ def resolve_input_refs(
     """Substitute ${inputs.x} placeholders in params with values from input_values.
 
     Handles both full-string references and partial interpolation
-    (e.g. "${inputs.folder}/subdir"). References with no corresponding value
-    in input_values are left as-is.
+    (e.g. "${inputs.folder}/subdir"), and recurses into list- and dict-valued
+    params (e.g. plot_window: [${inputs.min_depth}, ...]). References with no
+    corresponding value in input_values are left as-is.
     """
     if not input_values:
         return dict(params)
 
-    resolved: dict[str, Any] = {}
-    for key, value in params.items():
-        if isinstance(value, str) and "${inputs." in value:
-            full_match = _INPUT_REF.fullmatch(value)
-            if full_match:
-                input_value = input_values.get(full_match.group(1))
-                resolved[key] = value if input_value is None else input_value
-                continue
+    return {key: _resolve_value(value, input_values) for key, value in params.items()}
 
-            def _replace(m: re.Match, _iv: dict = input_values) -> str:
-                sub = _iv.get(m.group(1))
-                return str(sub) if sub is not None else m.group(0)
 
-            resolved[key] = _INPUT_REF.sub(_replace, value)
-        else:
-            resolved[key] = value
-    return resolved
+def _resolve_value(value: Any, input_values: dict[str, Any]) -> Any:
+    """Substitute ${inputs.x} placeholders anywhere within a nested value."""
+    if isinstance(value, list):
+        return [_resolve_value(item, input_values) for item in value]
+    if isinstance(value, dict):
+        return {key: _resolve_value(item, input_values) for key, item in value.items()}
+    if not isinstance(value, str) or "${inputs." not in value:
+        return value
+
+    full_match = _INPUT_REF.fullmatch(value)
+    if full_match:
+        input_value = input_values.get(full_match.group(1))
+        return value if input_value is None else input_value
+
+    def _replace(m: re.Match) -> str:
+        sub = input_values.get(m.group(1))
+        return str(sub) if sub is not None else m.group(0)
+
+    return _INPUT_REF.sub(_replace, value)
 

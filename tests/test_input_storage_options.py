@@ -81,7 +81,7 @@ def _observe_dag() -> PipelineDAG:
 
 
 def _remote_fingerprint_dag() -> PipelineDAG:
-    """Single step referencing a path input declared with fingerprint_contents."""
+    """Single step referencing a path input declared with fingerprint_mode."""
     spec = Spec(
         op="observe",
         description="",
@@ -106,7 +106,7 @@ def _remote_fingerprint_dag() -> PipelineDAG:
         schema_version="1",
         inputs={
             "raw_dir": InputDeclaration(
-                type="path", fingerprint_contents=True, default="memory://bkt/raw"
+                type="path", fingerprint_mode="auto", default="memory://bkt/raw"
             )
         },
         steps=[node.step],
