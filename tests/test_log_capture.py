@@ -128,3 +128,51 @@ class TestThreadRoutedCapture:
         assert router.custom_marker == "x"
         assert router.isatty() is False
         assert router.writable() is True
+
+
+class TestOverlappingInstalls:
+    """Two runs in one process (an embedding service) must not strand the
+    streams. Save/restore per run only survives strictly nested runs."""
+
+    def test_nested_installs_restore_exactly_once(self):
+        original = sys.stdout
+        with install_router():
+            installed = sys.stdout
+            with install_router():
+                assert sys.stdout is installed  # shared, not re-wrapped
+            assert sys.stdout is installed  # inner exit must not restore yet
+        assert sys.stdout is original
+
+    def test_non_lifo_overlap_still_restores_the_real_stream(self):
+        # A finishes while B is still running: the classic interleaving a
+        # threaded server produces. B must keep a live router, and the real
+        # stream must come back once B exits.
+        original = sys.stdout
+        a_entered = threading.Event()
+        b_entered = threading.Event()
+        a_exited = threading.Event()
+
+        def run_a():
+            with install_router():
+                a_entered.set()
+                b_entered.wait(timeout=5)
+            a_exited.set()
+
+        def run_b():
+            a_entered.wait(timeout=5)
+            with install_router():
+                b_entered.set()
+                a_exited.wait(timeout=5)
+                # A has finished; B is still inside and must still be routed.
+                assert isinstance(sys.stdout, ThreadRoutedStream)
+                buf = io.StringIO()
+                with capture_output(buf):
+                    print("b-still-captured")
+                assert buf.getvalue() == "b-still-captured\n"
+
+        threads = [threading.Thread(target=run_a), threading.Thread(target=run_b)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert sys.stdout is original

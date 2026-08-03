@@ -18,6 +18,27 @@ inputs:
       Dataset returned by compute_per_cell_statistics, carrying per-MVBS-cell
       statistic variables (e.g. cell_cv). Required when 'cell_cv' is listed
       in features.
+  seafloor_depth:
+    type: DataArray
+    required: false
+    description: >
+      Pre-detected seafloor line, 1-D over ping_time, typically wired from a
+      detect_seafloor step. Takes precedence over echodata for the
+      'seafloor_depth' and 'altitude' features, so the ML features use the
+      same line the masking stack used instead of a channel mean recomputed
+      internally. Either this or echodata is required for those features.
+
+      In a per-file map_over pipeline, wire it straight from the mapped
+      detect_seafloor step (${detect_seafloor.seafloor_depth}): the reference
+      resolves to the list of per-file lines, which is concatenated along
+      ping_time in segment order. No separate collect step is needed.
+
+      Vertical reference: 'altitude' is a difference (seafloor minus sample),
+      so a constant offset shared by both terms cancels and the frame does not
+      matter as long as they agree. They normally do: detect_seafloor promotes
+      its line to surface-referenced only when its ds_Sv carries depth, the
+      same condition under which depth reaches the ML dataset, and 'altitude'
+      prefers depth over echo_range to pair with it.
 outputs:
   ds_ml_ready:
     type: Dataset

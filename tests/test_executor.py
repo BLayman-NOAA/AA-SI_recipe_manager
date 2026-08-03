@@ -1061,7 +1061,7 @@ class TestSequentialExecutor:
         delays: list[float] = []
         gc_calls: list[int] = []
 
-        def fake_rmtree(path, onerror=None):
+        def fake_rmtree(path):
             attempts.append(Path(path))
             if len(attempts) < 3:
                 exc = PermissionError(
@@ -1071,10 +1071,10 @@ class TestSequentialExecutor:
                 )
                 exc.winerror = 32
                 raise exc
-            real_rmtree(path, onerror=onerror)
+            real_rmtree(path)
 
         monkeypatch.setattr(
-            "aa_recipe_manager.executor.sequential.shutil.rmtree", fake_rmtree
+            "aa_recipe_manager.executor.sequential.rmtree", fake_rmtree
         )
         monkeypatch.setattr(
             "aa_recipe_manager.executor.sequential.time.sleep",

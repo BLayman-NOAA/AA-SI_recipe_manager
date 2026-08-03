@@ -37,6 +37,7 @@ from aa_recipe_manager.executor.engine.schedule import (
 )
 from aa_recipe_manager.executor.engine.step import execute_step
 from aa_recipe_manager.executor.engine.tasks import (
+    TASK_LOG_ATTR,
     ChainInstanceTask,
     CheckpointRef,
     StepTask,
@@ -390,7 +391,7 @@ class PipelineRunner:
                     # already raises a fully attributed PipelineExecutionError,
                     # and a store-policy error (e.g. pickle-in-survey-tier) must
                     # surface as its own type, just as it did in the old loop.
-                    self._on_unit_error(unit, exc)
+                    self._on_unit_error(unit, exc, chain_state)
                     raise
                 self._collect_task(unit, task, task_result, chain_state)
                 if chain_state[unit.unit_id]["remaining"] == 0:
@@ -822,12 +823,31 @@ class PipelineRunner:
             "prefect_config": resolve_unit_prefect_config(self._dag, unit),
         }
 
-    def _on_unit_error(self, unit: Unit, exc: BaseException) -> None:
-        """Signal the failing step to the progress callback (best-effort)."""
+    def _on_unit_error(
+        self, unit: Unit, exc: BaseException, chain_state: dict | None = None
+    ) -> None:
+        """Report a failing step: elapsed time, captured output, progress.
+
+        The task's own stdout is only reachable through the exception (see
+        ``tasks.attach_task_log``), so it is flushed to the log sink here.
+        Without it the step that failed contributes nothing to
+        ``standard_out.txt``, which is where "how far did it get" lives.
+        """
         step_id = getattr(exc, "step_id", None) or unit.first
         index = self._step_index.get(step_id, 0)
+        state = (chain_state or {}).get(unit.unit_id) or {}
+        start = state.get("start")
+        elapsed = time.perf_counter() - start if start is not None else 0.0
+
+        log_text = getattr(exc, TASK_LOG_ATTR, None)
+        self._log_sink.write(f"\n=== step {step_id} FAILED ===\n")
+        if log_text:
+            self._log_sink.write(log_text)
+        self._log_sink.write(f"--- {step_id}: {type(exc).__name__}: {exc} ---\n")
+        self._log_sink.flush()
+
         self._progress.on_step_end(
-            step_id, index, self._total, elapsed=0.0, error=exc
+            step_id, index, self._total, elapsed=elapsed, error=exc
         )
 
     # -- result collection ---------------------------------------------------

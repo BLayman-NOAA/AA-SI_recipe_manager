@@ -91,17 +91,51 @@ class ThreadRoutedStream:
         return getattr(self._default, name)
 
 
+# One router per process, reference-counted across overlapping runs. Saving and
+# restoring sys.stdout per run only survives strictly nested runs: two runs
+# overlapping on different threads (an embedding service handling two requests)
+# would have the first to finish restore the real stream out from under the
+# second, and the second then leave its own dead router installed for good.
+# Routing is per *thread*, so one shared router serves any number of concurrent
+# runs correctly; only the outermost installer swaps the streams, and only the
+# last one out puts them back.
+_INSTALL_LOCK = threading.Lock()
+_ROUTERS: tuple[ThreadRoutedStream, ThreadRoutedStream] | None = None
+_SAVED_STREAMS: tuple[Any, Any] | None = None
+_INSTALL_DEPTH = 0
+
+
 @contextmanager
 def install_router() -> Iterator[tuple[ThreadRoutedStream, ThreadRoutedStream]]:
-    """Install thread-routing ``sys.stdout`` / ``sys.stderr`` for a run."""
-    out_router = ThreadRoutedStream(sys.stdout)
-    err_router = ThreadRoutedStream(sys.stderr)
-    saved_out, saved_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = out_router, err_router
+    """Install thread-routing ``sys.stdout`` / ``sys.stderr`` for a run.
+
+    Safe to nest and to enter concurrently from several threads: overlapping
+    runs share one router and the streams are restored once the last of them
+    exits.
+    """
+    global _ROUTERS, _SAVED_STREAMS, _INSTALL_DEPTH
+
+    with _INSTALL_LOCK:
+        if _INSTALL_DEPTH == 0:
+            _SAVED_STREAMS = (sys.stdout, sys.stderr)
+            _ROUTERS = (
+                ThreadRoutedStream(sys.stdout),
+                ThreadRoutedStream(sys.stderr),
+            )
+            sys.stdout, sys.stderr = _ROUTERS
+        _INSTALL_DEPTH += 1
+        routers = _ROUTERS
+    assert routers is not None
     try:
-        yield out_router, err_router
+        yield routers
     finally:
-        sys.stdout, sys.stderr = saved_out, saved_err
+        with _INSTALL_LOCK:
+            _INSTALL_DEPTH -= 1
+            if _INSTALL_DEPTH == 0:
+                if _SAVED_STREAMS is not None:
+                    sys.stdout, sys.stderr = _SAVED_STREAMS
+                _SAVED_STREAMS = None
+                _ROUTERS = None
 
 
 @contextmanager

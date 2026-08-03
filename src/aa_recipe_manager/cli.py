@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import traceback
 from collections.abc import Sequence
 from typing import Any
 
@@ -27,6 +28,43 @@ def _fail(message: str) -> None:
     """Print an error message to stderr and exit with code 1."""
     click.echo(f"Error: {message}", err=True)
     sys.exit(1)
+
+
+def _echo_cause_chain(exc: BaseException) -> None:
+    """Print the exceptions that led to ``exc``, innermost last.
+
+    An error raised while handling another (a cleanup failure during a failed
+    run, say) replaces it as the reported error. Printing the chain means the
+    original is always visible even when something masks it.
+    """
+    # Anything already reported on its own line is walked through but not
+    # repeated, so a deeper cause is still reached.
+    quiet = {id(exc), id(getattr(exc, "original", None))}
+    visited = {id(exc)}
+    cursor: BaseException | None = exc
+    while cursor is not None:
+        nxt = cursor.__cause__ or cursor.__context__
+        if nxt is None or id(nxt) in visited:
+            break
+        visited.add(id(nxt))
+        if id(nxt) not in quiet:
+            click.echo(f"  caused by: {type(nxt).__name__}: {nxt}", err=True)
+        cursor = nxt
+
+
+def _echo_traceback(exc: BaseException) -> None:
+    """Print a full traceback when the root logger is at DEBUG."""
+    if not logging.getLogger().isEnabledFor(logging.DEBUG):
+        click.echo(
+            "  (re-run with `aa-recipe --log-level DEBUG run ...` for a full "
+            "traceback)",
+            err=True,
+        )
+        return
+    text = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    click.echo(text, err=True)
 
 
 def _handle_recipe_errors(exc: Exception) -> None:
@@ -52,12 +90,21 @@ def _handle_recipe_errors(exc: Exception) -> None:
         click.echo(f"  {exc}", err=True)
         if exc.callable_path:
             click.echo(f"  callable: {exc.callable_path}", err=True)
+        if exc.original is not None:
+            click.echo(
+                f"  original: {type(exc.original).__name__}: {exc.original}",
+                err=True,
+            )
+        _echo_cause_chain(exc)
+        _echo_traceback(exc)
     elif isinstance(exc, FileExistsError):
         click.echo(f"File already exists: {exc}", err=True)
     elif isinstance(exc, FileNotFoundError):
         click.echo(f"File not found: {exc}", err=True)
     else:
-        click.echo(f"Error: {exc}", err=True)
+        click.echo(f"Error: {type(exc).__name__}: {exc}", err=True)
+        _echo_cause_chain(exc)
+        _echo_traceback(exc)
     sys.exit(1)
 
 
@@ -871,6 +918,49 @@ def batch_cmd(
     click.echo(f"Total time: {_format_duration(batch.elapsed_seconds)}")
     if batch.manifest_file is not None:
         click.echo(f"Batch manifest: {batch.manifest_file}")
+
+
+@main.command("doctor")
+@click.argument(
+    "recipe", required=False, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Run-config file to report on (same discovery as 'run' when omitted; "
+        "pass a RECIPE to pick up its per-recipe config)."
+    ),
+)
+def doctor_command(recipe: str | None, config_path: str | None) -> None:
+    """Report installed versions, machine resources, and path writability.
+
+    Run this from the directory a recipe is run from, and send the output along
+    when reporting a failure: it identifies the exact build of every AA-SI
+    package, the memory that decides whether echopype swaps large arrays to
+    disk, and whether the configured directories accept the nested writes a
+    zarr store performs.
+    """
+    from aa_recipe_manager import diagnostics  # noqa: PLC0415
+
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        # A broken config must not stop the rest of the report; it is often
+        # the thing being diagnosed.
+        click.echo(diagnostics.build_report(f"failed to load: {exc}", {}))
+        return
+
+    paths = {
+        "temp_dir": run_config.temp_dir,
+        "outputs_dir": run_config.outputs_dir,
+        "user_cache_dir": run_config.user_cache_dir,
+        "survey_cache_dir": run_config.survey_cache_dir,
+    }
+    source = str(run_config.source) if run_config.source else None
+    click.echo(diagnostics.build_report(source, paths))
 
 
 @main.command("clean")

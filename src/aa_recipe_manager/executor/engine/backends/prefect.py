@@ -45,7 +45,9 @@ _TASK_OPTION_KEYS = (
 
 def _dispatch(task: StepTask | ChainInstanceTask, wctx: WorkerContext) -> TaskResult:
     """Prefect task body: run the unit in whatever worker Prefect placed it."""
-    os.environ.setdefault("MPLBACKEND", "Agg")
+    # Only in a spawned worker process; see the matching note in backends/dask.py.
+    if not wctx.in_client_process():
+        os.environ.setdefault("MPLBACKEND", "Agg")
     if isinstance(task, ChainInstanceTask):
         return run_chain_instance(task, wctx)
     return run_step_task(task, wctx)

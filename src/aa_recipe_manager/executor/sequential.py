@@ -8,8 +8,6 @@ import gc
 import io
 import json
 import os
-import shutil
-import stat
 import time
 import warnings
 from collections.abc import Iterable
@@ -25,8 +23,10 @@ from aa_recipe_manager.executor.base import (
 from aa_recipe_manager.executor.engine.backends.inline import InlineBackend
 from aa_recipe_manager.executor.engine.context import build_run_context
 from aa_recipe_manager.executor.engine.logcapture import install_router
+from aa_recipe_manager.executor.engine.mplbackend import preserve_backend
 from aa_recipe_manager.executor.engine.runner import PipelineRunner
 from aa_recipe_manager.executor.invocation import RuntimeContext
+from aa_recipe_manager.fsutil import rmtree
 from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
@@ -58,8 +58,8 @@ class _Tee:
 
     def write(self, data: str) -> int:
         for stream in self._streams:
-            stream.write(data)
             try:
+                stream.write(data)
                 stream.flush()
             except Exception:  # a closed/detached stream must not kill the run
                 pass
@@ -75,13 +75,6 @@ class _Tee:
 
 _TEMP_DIR_CLEANUP_RETRIES = 5
 _TEMP_DIR_CLEANUP_BASE_DELAY = 0.25
-
-
-def _remove_readonly(func, path, _excinfo):
-    """Error handler for shutil.rmtree on Windows read-only files."""
-    import os  # noqa: PLC0415
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
 
 
 def _is_transient_windows_lock(exc: OSError) -> bool:
@@ -215,7 +208,10 @@ class SequentialExecutor:
             # Thread-routed stdout/stderr for the whole run: concurrent tasks each
             # capture their own output instead of fighting over the global stream
             # (see engine/logcapture.py). A no-op for a single-threaded run.
-            with install_router():
+            # ``preserve_backend`` hands the caller's matplotlib backend back
+            # afterwards, so an in-process API call does not lose it to the
+            # headless backend plotting ops select.
+            with preserve_backend(), install_router():
                 PipelineRunner(self._make_backend()).run(
                     ctx=ctx,
                     result=result,
@@ -232,6 +228,30 @@ class SequentialExecutor:
             status = "failed"
             raise
         finally:
+            # Scratch cleanup runs before the log is closed and uploaded so a
+            # cleanup warning still reaches standard_out.txt and the bucket.
+            # The log lives under outputs_dir, never under temp_dir, so nothing
+            # here depends on the handle being closed first.
+            if keep_temp:
+                # Diagnostic: leave the run-scoped scratch (per-file zarr
+                # intermediates, etc.) in place so a slow step can be profiled
+                # against real inputs after the run.
+                if resolved_temp_loc is not None:
+                    result.logs.append(f"kept temp dir: {resolved_temp_loc}")
+            else:
+                try:
+                    self._cleanup_temp_dir(resolved_temp_loc)
+                except Exception as exc:  # never mask the run's own error
+                    # Scratch left on disk is a warning, never a run outcome.
+                    # Raising here replaces whatever the run was already
+                    # failing with, which is how a cleanup permission error
+                    # can stand in for the step error that caused it.
+                    warning = (
+                        f"warning: failed to remove temp dir "
+                        f"{resolved_temp_loc}: {type(exc).__name__}: {exc}"
+                    )
+                    result.logs.append(warning)
+                    log_sink.write(f"{warning}\n")
             if log_file_handle is not None:
                 log_file_handle.close()
             # Upload the full captured log to a remote outputs dir once (object
@@ -243,14 +263,6 @@ class SequentialExecutor:
                     remote_log_loc.write_text(log_buffer.getvalue())
                 except Exception:  # never mask the original error
                     pass
-            if keep_temp:
-                # Diagnostic: leave the run-scoped scratch (per-file zarr
-                # intermediates, etc.) in place so a slow step can be profiled
-                # against real inputs after the run.
-                if resolved_temp_loc is not None:
-                    result.logs.append(f"kept temp dir: {resolved_temp_loc}")
-            else:
-                self._cleanup_temp_dir(resolved_temp_loc)
             result.elapsed_seconds = time.perf_counter() - run_start
             # Best-effort run manifest (written on failure too, status="failed").
             self._write_manifest(
@@ -402,9 +414,14 @@ class SequentialExecutor:
         """Remove the run-scoped scratch directory if it exists.
 
         Windows can briefly hold open NetCDF-backed temp files after the last
-        step returns, so the local path retries a few times before surfacing
-        the error. Remote scratch has no such locking and is removed in one
+        step returns, so a transient lock is retried a few times before the
+        error is surfaced. Any other ``OSError`` is raised on the first attempt:
+        a POSIX ``EACCES`` is not transient, and retrying only repeats the
+        failed removal. Remote scratch has no such locking and is removed in one
         ``fs.rm`` call.
+
+        The caller is responsible for keeping a failure here from deciding the
+        run's outcome; see the ``finally`` block in :meth:`execute`.
         """
         if temp_loc is None:
             return
@@ -419,7 +436,7 @@ class SequentialExecutor:
         last_error: OSError | None = None
         for attempt in range(_TEMP_DIR_CLEANUP_RETRIES):
             try:
-                shutil.rmtree(temp_dir, onerror=_remove_readonly)
+                rmtree(temp_dir)
                 return
             except FileNotFoundError:
                 return

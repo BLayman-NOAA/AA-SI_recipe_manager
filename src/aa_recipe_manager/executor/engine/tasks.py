@@ -205,6 +205,25 @@ def _task_temp_dir(wctx: WorkerContext, discriminator: str) -> str | None:
     return f"{base}{sep}{discriminator}"
 
 
+#: Attribute holding a failed task's captured stdout, read by the runner.
+TASK_LOG_ATTR = "aa_task_log"
+
+
+def attach_task_log(exc: BaseException, text: str) -> None:
+    """Stash a failed task's captured output on the exception it raised.
+
+    A task hands back its :class:`TaskResult` (and with it ``log_text``) only on
+    success, so the output of the step that actually failed would otherwise be
+    dropped -- exactly the output needed to tell how far it got.
+    """
+    if not text or getattr(exc, TASK_LOG_ATTR, None):
+        return
+    try:
+        setattr(exc, TASK_LOG_ATTR, text)
+    except AttributeError:  # an exception type using __slots__
+        pass
+
+
 def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
     """Execute one non-mapped data step inside a worker."""
     node = wctx.dag.nodes[task.step_id]
@@ -222,29 +241,33 @@ def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
     # (checkpoint.py's _stage_parent_dir) sees this task's own temp_dir rather
     # than silently falling back to the system default -- get_execution_context()
     # returns the zero-value context once this `with` exits.
-    with execution_context(
-        mode="direct",
-        user_cache_dir=wctx.user_cache_dir,
-        step_id=task.step_id,
-        artifacts_dir=wctx.outputs_dir,
-        temp_dir=_task_temp_dir(wctx, task.step_id),
-        storage_options=wctx.storage_options,
-        artifact_sink=artifact_paths,
-    ), capture_output(log_buffer):
-        outputs = execute_step(node, runtime, wctx.pipeline_inputs)
+    try:
+        with execution_context(
+            mode="direct",
+            user_cache_dir=wctx.user_cache_dir,
+            step_id=task.step_id,
+            artifacts_dir=wctx.outputs_dir,
+            temp_dir=_task_temp_dir(wctx, task.step_id),
+            storage_options=wctx.storage_options,
+            artifact_sink=artifact_paths,
+        ), capture_output(log_buffer):
+            outputs = execute_step(node, runtime, wctx.pipeline_inputs)
 
-        if task.checkpoint and store is not None and outputs:
-            save_start = time.perf_counter()
-            store.save(
-                task.step_id,
-                outputs,
-                artifacts=artifact_paths,
-                write_token=task.write_token,
-                raw_inputs=task.raw_inputs,
-            )
-            save_seconds = time.perf_counter() - save_start
-            checkpointed = True
-            tier = store.write_tier
+            if task.checkpoint and store is not None and outputs:
+                save_start = time.perf_counter()
+                store.save(
+                    task.step_id,
+                    outputs,
+                    artifacts=artifact_paths,
+                    write_token=task.write_token,
+                    raw_inputs=task.raw_inputs,
+                )
+                save_seconds = time.perf_counter() - save_start
+                checkpointed = True
+                tier = store.write_tier
+    except BaseException as exc:
+        attach_task_log(exc, log_buffer.getvalue())
+        raise
     elapsed = time.perf_counter() - start
     return TaskResult(
         members=[
@@ -277,6 +300,23 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
 
     log_buffer = io.StringIO()
     members: list[MemberResult] = []
+    try:
+        _run_chain_members(task, wctx, store, elem_ctx, log_buffer, members)
+    except BaseException as exc:
+        attach_task_log(exc, log_buffer.getvalue())
+        raise
+    return TaskResult(members=members, log_text=log_buffer.getvalue())
+
+
+def _run_chain_members(
+    task: ChainInstanceTask,
+    wctx: WorkerContext,
+    store: Any,
+    elem_ctx: _ElementContext,
+    log_buffer: io.StringIO,
+    members: list[MemberResult],
+) -> None:
+    """Run every member of one chain instance, appending to ``members``."""
     with capture_output(log_buffer):
         for mid in task.member_ids:
             member = wctx.dag.nodes[mid]
@@ -372,4 +412,3 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
                     save_seconds=save_seconds,
                 )
             )
-    return TaskResult(members=members, log_text=log_buffer.getvalue())

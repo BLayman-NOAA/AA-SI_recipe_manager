@@ -39,8 +39,12 @@ _PROCESSES = "processes"
 
 def _dispatch(task: StepTask | ChainInstanceTask, wctx: WorkerContext) -> TaskResult:
     """Worker entry point: run the task in whatever process Dask placed it."""
-    # A process worker never initializes Tk (mapped sinks render headless).
-    os.environ.setdefault("MPLBACKEND", "Agg")
+    # A freshly spawned worker process must not initialize Tk (mapped sinks
+    # render headless). Skipped for a thread worker: that runs in the caller's
+    # own process, where the environment belongs to the caller and outlives the
+    # run, and where the run-scoped backend guard already keeps plotting safe.
+    if not wctx.in_client_process():
+        os.environ.setdefault("MPLBACKEND", "Agg")
     if isinstance(task, ChainInstanceTask):
         return run_chain_instance(task, wctx)
     return run_step_task(task, wctx)

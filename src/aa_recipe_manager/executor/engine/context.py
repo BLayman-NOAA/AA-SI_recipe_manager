@@ -17,6 +17,7 @@ thread and a spawned process without a second code path.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,12 @@ if TYPE_CHECKING:
 
 EXE_TEMP_DIRNAME = "exe_temp"
 DEFAULT_OUTPUTS_DIRNAME = "outputs"
+
+# Serializes ``WorkerContext.open_store`` construction. Module-level rather than
+# a field because a WorkerContext must stay picklable for a process backend, and
+# a lock is not; the critical section runs once per process, so sharing one lock
+# across contexts costs nothing.
+_STORE_BUILD_LOCK = threading.Lock()
 
 
 def resolve_temp_dir(
@@ -123,6 +130,14 @@ class WorkerContext:
     force: bool = False
     provenance_ref: str | None = None
     policy: frozenset[str] = frozenset()
+    #: PID of the process that built this context. A worker compares it against
+    #: its own to tell a spawned process (where the environment is ours to set)
+    #: from a thread running in the caller's process (where it is not).
+    client_pid: int = field(default_factory=os.getpid)
+
+    def in_client_process(self) -> bool:
+        """Whether the caller is running this task in its own process."""
+        return os.getpid() == self.client_pid
 
     def __getstate__(self) -> dict[str, Any]:
         # A memoized ``_store_cache`` is a live TieredCheckpointStore holding a
@@ -142,39 +157,50 @@ class WorkerContext:
 
         Returns ``None`` when the run has checkpointing disabled, which is the
         same signal the client-side :attr:`RunContext.checkpoints` carries.
+
+        Under a threaded backend every task shares one context, so the memoized
+        build is double-checked under a lock. Two stores would each keep their
+        own hit-tier bookkeeping, and whichever lost the race would take its
+        step's tier with it: the manifest would report a survey hit as a user
+        one, and ``recovered_raw_inputs`` could miss the sidecar it was meant
+        to find.
         """
         cached = getattr(self, "_store_cache", None)
         if cached is not None:
             return cached
         if self.cache_root is None:
             return None
-        user = CheckpointManager(
-            self.cache_root,
-            self.step_hashes,
-            preferred_format=self.checkpoint_format,
-            storage_options=self.storage_options,
-            payloads=self.payloads,
-            run_id=self.run_id,
-            recipe_info=self.recipe_info,
-        )
-        survey: CheckpointManager | None = None
-        if self.survey_root is not None:
-            survey = CheckpointManager(
-                self.survey_root,
+        with _STORE_BUILD_LOCK:
+            cached = getattr(self, "_store_cache", None)
+            if cached is not None:
+                return cached
+            user = CheckpointManager(
+                self.cache_root,
                 self.step_hashes,
                 preferred_format=self.checkpoint_format,
                 storage_options=self.storage_options,
                 payloads=self.payloads,
                 run_id=self.run_id,
                 recipe_info=self.recipe_info,
-                provenance_ref=self.provenance_ref,
             )
-        store = TieredCheckpointStore(
-            user=user, survey=survey, write_tier=self.write_tier
-        )
-        # frozen dataclass: bypass __setattr__ to memoize.
-        object.__setattr__(self, "_store_cache", store)
-        return store
+            survey: CheckpointManager | None = None
+            if self.survey_root is not None:
+                survey = CheckpointManager(
+                    self.survey_root,
+                    self.step_hashes,
+                    preferred_format=self.checkpoint_format,
+                    storage_options=self.storage_options,
+                    payloads=self.payloads,
+                    run_id=self.run_id,
+                    recipe_info=self.recipe_info,
+                    provenance_ref=self.provenance_ref,
+                )
+            store = TieredCheckpointStore(
+                user=user, survey=survey, write_tier=self.write_tier
+            )
+            # frozen dataclass: bypass __setattr__ to memoize.
+            object.__setattr__(self, "_store_cache", store)
+            return store
 
 
 @dataclass

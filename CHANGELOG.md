@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a failed run reports the error that actually failed it
+
+A run that failed inside a step could report an unrelated `PermissionError`
+naming a scratch directory, with no step attribution and nothing in the log
+about how far the step got. Three separate defects combined to produce that.
+
+- Temp-dir cleanup ran unguarded in the run's `finally` block, so an error
+  raised while removing the scratch dir replaced whatever the run was already
+  failing with. It is now caught and recorded as a warning in `result.logs` and
+  the run log; scratch left on disk never decides a run's outcome. Cleanup also
+  moved ahead of the log close and upload so its warning still reaches
+  `standard_out.txt` and the bucket.
+- The `shutil.rmtree` error handler assigned `stat.S_IWRITE` to the failing
+  path. That is `0o200` exactly: on POSIX it strips read and execute from a
+  directory, so the immediately following retry of `os.scandir` fails with
+  EACCES naming that path, converting any transient removal error into a
+  permanent one and discarding the original. The handler now grants read and
+  write (plus execute for directories only) by OR-ing onto the existing mode,
+  and fixes up the parent as well, since unlinking needs write and execute
+  there. Shared as `aa_recipe_manager.fsutil`.
+- `_cleanup_temp_dir` retried only the transient Windows lock but raised every
+  other `OSError` on the first attempt; that behaviour is kept, and is now the
+  documented contract rather than an accident of the `winerror` check.
+
+### Added — failure diagnostics
+
+- A failing task's captured stdout is no longer discarded. Tasks return their
+  `log_text` only on success, so the output of the step that actually failed
+  never reached the log. It is now attached to the exception and flushed to the
+  run log under a `=== step <id> FAILED ===` header.
+- Failed steps report their real elapsed time instead of a hardcoded `0.00s`,
+  which had made a step that ran for minutes look like it failed instantly.
+- `aa-recipe run` prints the original exception behind a
+  `PipelineExecutionError`, the `__cause__`/`__context__` chain behind any
+  error, and a full traceback under `--log-level DEBUG`.
+
+### Added — `aa-recipe doctor`
+
+Environment report for comparing a machine where a recipe works against one
+where it does not. Prints each AA-SI package's version and, for git installs,
+its commit id; python and platform; uid, gid and umask; total and available RAM
+alongside echopype's swap threshold (`total * 0.4`), which decides whether large
+arrays are converted in memory or through a temporary zarr store; the resolved
+run config; and for every local configured path the free space, filesystem, and
+a write probe that creates the same nested directory shape a zarr store does
+(`<store>.zarr/Sonar/Beam_group1/backscatter_r`), reports the resulting modes,
+and removes it again.
+
 ### Added — `read_seafloor_line` op (Echoview `.evl` seabed lines)
 
 Takes the seafloor from a hand-verified Echoview line file instead of detecting
@@ -69,6 +117,38 @@ falling back to path-only keying. This also catches ordinary typos in those
 blocks. Not yet migrated: the AA-SI_Workbench builtin recipes
 (`byo_folder_example.yaml`, `gcs_bucket_example.yaml`, `pipeline_modified.yaml`,
 `processing_levels_pipeline_gcs.yaml`) still carry the old key.
+
+### Fixed — a run no longer leaves process-global state behind
+
+Under the CLI the process belongs to the run, so a leaked matplotlib backend or
+a mutated environment cost nothing. Called in-process through `api.execute` (a
+notebook, or a long-lived service embedding the executor) they are the caller's,
+and they used to survive the run.
+
+- **matplotlib backend is restored.** Plotting ops switch the process-global
+  backend to a headless one so a figure never touches a GUI toolkit from a
+  worker thread; that switch was permanent and `force=True`. The run now hands
+  the caller's backend back on the way out, including handing back matplotlib's
+  "not chosen yet" sentinel when matplotlib is first imported mid-run, so the
+  next plot auto-selects instead of silently inheriting `Agg`. The guard reads
+  the setting without resolving the sentinel, which would itself select a GUI
+  toolkit. No-op when matplotlib was never imported (the CLI case).
+- **`MPLBACKEND` is only set inside a spawned worker process.** The Dask and
+  Prefect dispatchers set it unconditionally, which for a *thread* worker meant
+  writing it into the caller's own environment, permanently. `WorkerContext`
+  now carries the client PID so a worker can tell the two apart.
+- **`sys.stdout` / `sys.stderr` routing is reference-counted.** Save/restore per
+  run only survived strictly nested runs: two runs overlapping on different
+  threads had the first to finish restore the real stream out from under the
+  second, which then left its own dead router installed for good. Overlapping
+  runs now share one router (routing is per thread, so this is correct) and the
+  streams are restored once the last of them exits.
+- **The tiered store is built once per process.** `WorkerContext.open_store`
+  memoized without a lock, so under a threaded backend two tasks could each
+  build a store. Each kept its own hit-tier bookkeeping, and the one that lost
+  the race took its step's tier with it: `manifest.json` could report a survey
+  hit as a user hit, and `recovered_raw_inputs` could miss the sidecar it was
+  meant to find. Now double-checked under a lock.
 
 ### Added — faster remote checkpoint upload (staged parallel put)
 
