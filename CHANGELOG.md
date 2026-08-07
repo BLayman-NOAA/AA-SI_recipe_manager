@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `read_seafloor_line` selects its line files by the run's time window
+
+`evl_path` now accepts a folder of Echoview exports as well as a single `.evl`
+file, and the op takes `file_time_start` / `file_time_end` — the same window that
+already selects the raw files. The line files whose names span that window are
+read and concatenated into one line before interpolation, so changing the window
+no longer leaves the seafloor pinned to whichever file the recipe happened to
+name. Both params are optional and a single `.evl` path keeps working unchanged
+(the window is ignored for it — naming one file is an override, not a candidate
+set).
+
+Selection is name-based, from the `d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS}` stamp
+Echoview writes, so no line data is read or downloaded to filter. A file's span
+runs from its own start stamp to the **next** file's, not to the end stamp in its
+own name: that end stamp under-reports the line's real last point by about one
+raw file's duration, so trusting it would drop the export straddling the window
+start and leave the leading pings with a NaN seafloor — which
+`create_seafloor_mask` masks away entirely. The chronologically last file, which
+no later file can bound, falls back to its own end stamp.
+
+For a folder, `fingerprint_mode: checksum` hashes every `.evl` in it rather than
+just the selected subset, so adding an unrelated line file invalidates the step —
+the same trade-off `raw_input_folder` already makes.
+
+The HB2407 example recipes are wired accordingly: `processing_lvl_2.yaml` takes
+`seabed_line_folder` in place of `seabed_line_path`, plus `file_time_start` /
+`file_time_end` and a `seabed_line_max_gap_s` (default 600 s) that stops a
+combined line from interpolating a straight seafloor across a survey-leg gap.
+The four parent recipes declare the window as a top-level input and pass it to
+both the level-1 and level-2 includes. `min_coverage` on that step goes from
+`0.0` to `0.99`: with the line selected by the same window as the raw files,
+full coverage is now the expectation and a shortfall should fail the run.
+
 ### Fixed — a failed run reports the error that actually failed it
 
 A run that failed inside a step could report an unrelated `PermissionError`
@@ -41,7 +74,13 @@ about how far the step got. Three separate defects combined to produce that.
   which had made a step that ran for minutes look like it failed instantly.
 - `aa-recipe run` prints the original exception behind a
   `PipelineExecutionError`, the `__cause__`/`__context__` chain behind any
-  error, and a full traceback under `--log-level DEBUG`.
+  error, and a full traceback under `--log-level DEBUG`. The traceback is gated
+  on the level actually requested on the command line, not on
+  `logging.isEnabledFor`: importing echopype calls
+  `logging.disable(logging.WARNING)`, a process-global mute that makes that
+  check return False even at root level DEBUG, so a run launched with
+  `--log-level DEBUG` was told to re-run with `--log-level DEBUG` and never got
+  its traceback.
 
 ### Added — `aa-recipe doctor`
 

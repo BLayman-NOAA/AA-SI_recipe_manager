@@ -7,6 +7,9 @@ category: masking
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Sv Dataset the mask is shaped to. Supplies the nominal channel
+      frequencies matched against frequencies_to_mask.
 outputs:
   mask:
     type: DataArray
@@ -15,6 +18,11 @@ params:
   frequencies_to_mask:
     type: list
     units: kHz
+    description: >
+      Nominal channel frequencies to exclude, as numbers in kHz
+      (e.g. [70, 120, 200]). Every sample on a listed channel is marked
+      invalid and every other channel is left untouched. The default empty
+      list masks nothing.
     required: false
     default: []
 implementations:

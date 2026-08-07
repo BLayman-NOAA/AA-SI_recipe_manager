@@ -306,6 +306,12 @@ def _validate_params(
         if value is None or param_decl.type is None:
             continue
 
+        # An unresolved ${...} reference is still a placeholder string here; its
+        # real value (or its absence, which lets the callable default apply)
+        # is only known once pipeline inputs are supplied at execution time.
+        if isinstance(value, str) and "${" in value:
+            continue
+
         if param_decl.type == "path":
             _validate_path_param(step, param_name, param_decl, value, errors)
             continue

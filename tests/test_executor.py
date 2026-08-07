@@ -731,6 +731,75 @@ class TestBuildKwargs:
         kwargs = build_kwargs(node, RuntimeContext(), {"seed": 5})
         assert kwargs == {"x": 5}
 
+    def test_missing_optional_param_is_skipped(self, helper_module):
+        """An input left unset lets the callable's own default apply.
+
+        This is how a recipe asks a plotting op for the full ping extent:
+        declare ping_max with no value and the kwarg never reaches the call.
+        """
+        spec = Spec(
+            op="opt_param",
+            description="",
+            outputs={"out": PortDeclaration(type="int")},
+            params={
+                "ping_min": ParamDeclaration(type="int", required=False, default=0),
+                "ping_max": ParamDeclaration(type="int", required=False),
+            },
+        )
+        impl = Implementation(
+            op="opt_param",
+            key="default",
+            callable_path=f"{_HELPER_MODULE_NAME}.add_one",
+            dependency=_dep(),
+        )
+        node = DAGNode(
+            step=Step(
+                id="plot",
+                op="opt_param",
+                params={
+                    "ping_min": "${inputs.ping_min}",
+                    "ping_max": "${inputs.ping_max}",
+                },
+            ),
+            spec=spec,
+            implementation=impl,
+            resolved_params={"ping_min": 0, "ping_max": "${inputs.ping_max}"},
+        )
+        kwargs = build_kwargs(node, RuntimeContext(), {"ping_min": 0})
+        assert kwargs == {"ping_min": 0}
+
+    def test_missing_input_inside_list_param_becomes_none(self, helper_module):
+        """List params are positional, so an unset slot stays as None.
+
+        Dropping it would shift plot_window's later entries, and leaking the
+        internal sentinel would hand a bare object to the callable.
+        """
+        spec = Spec(
+            op="windowed",
+            description="",
+            outputs={"out": PortDeclaration(type="int")},
+            params={
+                "plot_window": ParamDeclaration(
+                    type="list", required=False, default=[]
+                )
+            },
+        )
+        impl = Implementation(
+            op="windowed",
+            key="default",
+            callable_path=f"{_HELPER_MODULE_NAME}.add_one",
+            dependency=_dep(),
+        )
+        window = [0, 25, "${inputs.ping_min}", "${inputs.ping_max}"]
+        node = DAGNode(
+            step=Step(id="report", op="windowed", params={"plot_window": window}),
+            spec=spec,
+            implementation=impl,
+            resolved_params={"plot_window": window},
+        )
+        kwargs = build_kwargs(node, RuntimeContext(), {"ping_min": 0})
+        assert kwargs == {"plot_window": [0, 25, 0, None]}
+
 
 # ---------------------------------------------------------------------------
 # Output extraction (Stage 6a)

@@ -42,6 +42,7 @@ steps:
 
   - id: mask_sparse
     op: mask_sparse_bins
+    checkpoint: always
     inputs:
       ds_Sv: ${inputs.sv_clean_unmasked}
     params:

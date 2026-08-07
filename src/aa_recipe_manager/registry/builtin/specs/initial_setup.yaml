@@ -52,6 +52,10 @@ params:
     default: []
   clear_previous_json_logs:
     type: bool
+    description: >
+      Delete the calibration_flags.json left by a previous run before this
+      one starts, so the flags reflect this run alone. Set false to let the
+      flags accumulate across runs.
     required: false
     default: true
   file_time_start:

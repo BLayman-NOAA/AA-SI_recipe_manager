@@ -1,0 +1,154 @@
+# Processing Level 1 (Per-File) - Raw Ingest and Per-File Calibration
+#
+# Per-file variant of processing_lvl_1_parallel.yaml. That file fans out the
+# raw reads and then fans back in to one survey-wide EchoData; this one never
+# combines. Each raw file is opened, materialized and calibrated as its own
+# instance, and the survey stays split until the fan-in in
+# processing_lvl_2_per_file.yaml.
+#
+#   initial_setup
+#     |-- gen_cal_mapping (once, survey-wide) ----+
+#     +-- read_raw          (per file)            |
+#           combine_raw     (per file) -----------+
+#           extract_cal_params (per file, picks this file's mapping)
+#
+# gen_cal_mapping is independent of the per-file chain, so a concurrent
+# executor overlaps them with no extra directives. The chain continues without
+# interruption into processing_lvl_2_per_file.yaml, which must be included
+# immediately after this level.
+
+recipe:
+  name: "processing_lvl_1_per_file"
+  description: "Per-file raw ingest with per-file calibration parameter selection (gs:// inputs)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+  cal_input_folder:
+    type: path
+    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK80"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder".
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime restricting processing to raw files whose
+      filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound.
+      Applied to both the processed file set and the calibration scan; leave
+      unset to process every file. This bound also sets the fan-out width: one
+      mapped instance per selected file.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+  ping_time_chunk:
+    type: int
+    default: 10000
+    description: >
+      Chunk length along ping_time for each file's EchoData (and therefore its
+      zarr checkpoint). A single raw file holds far fewer pings than this, so
+      the default writes each file's checkpoint as one chunk, which is the
+      cheapest shape for a gs://-backed cache. Lower it if a per-file chunk
+      does not fit in memory.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # Runs once for the whole survey: builds calibration_dict (parsed cal data)
+  # and mapping_dict, which is keyed per raw filename. Each per-file
+  # extract_cal_params instance below selects its own file's entry out of these
+  # shared dicts, so the calibration files are parsed once, not once per raw
+  # file.
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # --- Per-file fan-out starts here --------------------------------------
+  # Every step from here through remove_noise in processing_lvl_2_per_file.yaml
+  # shares this same map_over source, forming one mapped chain: each raw file
+  # runs the whole chain as an isolated instance, checkpointed under its own
+  # content-addressed instance hash. Adding a file to the survey later only
+  # runs the chain for that file.
+
+  # checkpoint: never -- the output is an exe_temp store path that is deleted
+  # at the end of the run, so it must not be cached under any checkpoint mode
+  # (a cached path would dangle on the next run).
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      raw_file_paths:
+        - ${_item}          # a single-element list: just this file
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: false
+      intermediate_format: "zarr"
+
+  # Materializes THIS file's store as an EchoData object. Not a survey-wide
+  # fan-in: combine_raw_files accepts a single-file list and simply opens it
+  # (see its docstring, which documents this per-file map_over usage).
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+    params:
+      ping_time_chunk: ${inputs.ping_time_chunk}
+
+  # Selects (does not recompute) this file's channel-to-calibration mapping
+  # from the shared dicts built once above, so each file is calibrated with the
+  # parameters that actually match its own channel configuration.
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}
+    params:
+      raw_file_path: ${_item}

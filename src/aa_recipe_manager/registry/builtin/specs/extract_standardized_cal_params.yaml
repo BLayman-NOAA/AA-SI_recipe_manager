@@ -8,10 +8,22 @@ category: calibration
 inputs:
   calibration_dict:
     type: dict
+    description: >
+      Parsed standardized calibration data keyed by calibration key, from
+      generate_standardized_cal_mapping. Holds the values themselves.
   mapping_dict:
     type: dict
+    description: >
+      Raw channel to calibration key mapping, from
+      generate_standardized_cal_mapping. Says which entry of
+      calibration_dict belongs to each channel of each file.
   echodata:
     type: EchoData
+    description: >
+      EchoData whose channel labels the calibration values are aligned to,
+      normally the combined object from combine_raw_files. The outputs are
+      keyed by that object's channels, so they can be passed straight to
+      compute_sv.
 outputs:
   cal_params:
     type: dict

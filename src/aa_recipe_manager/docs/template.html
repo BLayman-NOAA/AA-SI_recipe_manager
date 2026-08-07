@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AA-SI recipe manager op reference</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f7f9;
+  --bg-sunk: #eceef1;
+  --fg: #1c1f23;
+  --fg-muted: #5b6470;
+  --border: #d8dce1;
+  --accent: #12507e;
+  --accent-soft: #e4eef7;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --bg-soft: #1b1f24;
+    --bg-sunk: #23282e;
+    --fg: #e6e8ea;
+    --fg-muted: #99a3ae;
+    --border: #333a42;
+    --accent: #7db6e8;
+    --accent-soft: #1e2b38;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--fg);
+  background: var(--bg);
+}
+a { color: var(--accent); }
+code, pre, .mono { font-family: var(--mono); font-size: 0.88em; }
+
+.layout { display: grid; grid-template-columns: 19rem 1fr; height: 100vh; }
+
+aside {
+  border-right: 1px solid var(--border);
+  background: var(--bg-soft);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+aside .head { padding: 1rem 1rem 0.6rem; border-bottom: 1px solid var(--border); }
+aside h1 { font-size: 1rem; margin: 0 0 0.6rem; letter-spacing: 0.02em; }
+#filter {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+#filter:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#count { margin: 0.5rem 0 0.2rem; font-size: 0.76rem; color: var(--fg-muted); }
+
+nav { overflow-y: auto; flex: 1; min-height: 0; padding: 0.4rem 0; }
+nav ul { list-style: none; margin: 0; padding: 0; }
+nav li.hidden { display: none; }
+nav a {
+  display: block;
+  padding: 0.3rem 1rem;
+  text-decoration: none;
+  color: var(--fg);
+  border-left: 3px solid transparent;
+}
+nav a:hover { background: var(--bg-sunk); }
+nav a[aria-current="page"] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+nav .name { font-family: var(--mono); font-size: 0.84rem; }
+nav .cat { display: block; font-size: 0.7rem; color: var(--fg-muted); }
+aside .foot {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+
+main { overflow-y: auto; padding: 1.6rem 2rem 5rem; min-height: 0; }
+main:focus { outline: none; }
+.wrap { max-width: 62rem; }
+h2 { font-size: 1.02rem; margin: 1.8rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--border); }
+h3 { font-size: 0.92rem; margin: 1.1rem 0 0.4rem; }
+.op-title { font-family: var(--mono); font-size: 1.5rem; margin: 0 0 0.5rem; }
+.desc { white-space: pre-wrap; margin: 0.4rem 0 0; }
+.muted { color: var(--fg-muted); }
+.small { font-size: 0.82rem; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+.chip {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+}
+.chip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 0.6rem 0 0; font-size: 0.86rem; }
+dl.facts dt { color: var(--fg-muted); }
+dl.facts dd { margin: 0; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); }
+th { color: var(--fg-muted); font-weight: 600; white-space: nowrap; }
+td.mono, th.mono { font-family: var(--mono); white-space: nowrap; }
+td.wide { min-width: 18rem; }
+
+.impl { border: 1px solid var(--border); border-radius: 6px; padding: 0.9rem 1.1rem; margin-top: 0.8rem; background: var(--bg-soft); }
+.impl h3 { margin-top: 0; }
+pre.doc {
+  white-space: pre-wrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.3rem 0 0;
+  max-height: 32rem;
+  overflow: auto;
+}
+code.sig {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.5rem 0.7rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.index-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }
+.index-groups ul { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+.index-groups a { font-family: var(--mono); font-size: 0.84rem; text-decoration: none; }
+.index-groups a:hover { text-decoration: underline; }
+
+@media (max-width: 780px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  aside { height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  nav { max-height: 16rem; }
+}
+@media print {
+  aside { display: none; }
+  .layout { display: block; height: auto; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="head">
+      <h1>Op reference</h1>
+      <input id="filter" type="search" placeholder="Filter ops (press /)" autocomplete="off" spellcheck="false" aria-controls="op-list">
+      <p id="count" aria-live="polite"></p>
+    </div>
+    <nav aria-label="Ops"><ul id="op-list"></ul></nav>
+    <div class="foot" id="generator"></div>
+  </aside>
+  <main id="detail" tabindex="-1"></main>
+</div>
+
+<script id="op-data" type="application/json">__AA_RECIPE_OP_PAYLOAD__</script>
+<script>
+(function () {
+  "use strict";
+
+  var DATA = JSON.parse(document.getElementById("op-data").textContent);
+  // A bare object so an op named like an Object.prototype member cannot
+  // resolve to an inherited function during hash routing.
+  var BY_OP = Object.create(null);
+  DATA.ops.forEach(function (op) { BY_OP[op.op] = op; });
+
+  var listEl = document.getElementById("op-list");
+  var filterEl = document.getElementById("filter");
+  var countEl = document.getElementById("count");
+  var detailEl = document.getElementById("detail");
+  var items = [];
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (text !== undefined && text !== null) { node.textContent = text; }
+    return node;
+  }
+
+  // Spec prose is written in the RST style the Python docstrings use, so
+  // ``name`` marks a code span. Rendered as real <code> rather than left as
+  // visible backticks. Still no innerHTML: every piece is a text node.
+  var CODE_SPAN = /``([^`]+)``|`([^`]+)`/g;
+
+  function richText(node, text) {
+    var last = 0;
+    var match;
+    CODE_SPAN.lastIndex = 0;
+    while ((match = CODE_SPAN.exec(text)) !== null) {
+      if (match.index > last) {
+        node.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+      node.appendChild(el("code", null, match[1] || match[2]));
+      last = match.index + match[0].length;
+    }
+    if (last < text.length) {
+      node.appendChild(document.createTextNode(text.slice(last)));
+    }
+    return node;
+  }
+
+  function show(value) {
+    if (value === null || value === undefined || value === "") { return "-"; }
+    if (value === true) { return "yes"; }
+    if (value === false) { return "no"; }
+    if (Array.isArray(value)) { return value.length ? value.join(", ") : "-"; }
+    if (typeof value === "object") {
+      var keys = Object.keys(value);
+      if (!keys.length) { return "-"; }
+      return keys.map(function (k) { return k + ": " + show(value[k]); }).join(", ");
+    }
+    return String(value);
+  }
+
+  function buildSidebar() {
+    DATA.ops.forEach(function (op) {
+      var li = el("li");
+      var link = el("a");
+      link.href = "#" + op.op;
+      link.appendChild(el("span", "name", op.op));
+      link.appendChild(el("span", "cat", op.category || "uncategorized"));
+      li.appendChild(link);
+      listEl.appendChild(li);
+      items.push({ op: op.op, li: li, link: link, search: op.search });
+    });
+    document.getElementById("generator").textContent =
+      DATA.counts.ops + " ops, generated by " + DATA.generator;
+  }
+
+  function applyFilter() {
+    var tokens = filterEl.value.toLowerCase().split(/\s+/).filter(Boolean);
+    var visible = 0;
+    items.forEach(function (item) {
+      var match = tokens.every(function (token) {
+        return item.search.indexOf(token) !== -1;
+      });
+      item.li.classList.toggle("hidden", !match);
+      if (match) { visible += 1; }
+    });
+    countEl.textContent = tokens.length
+      ? visible + " of " + items.length + " ops"
+      : items.length + " ops";
+  }
+
+  function visibleItems() {
+    return items.filter(function (item) { return !item.li.classList.contains("hidden"); });
+  }
+
+  function table(columns, rows) {
+    var wrap = el("div", "scroll");
+    var tbl = el("table");
+    var head = el("tr");
+    columns.forEach(function (column) {
+      var th = el("th", column.mono ? "mono" : null, column.label);
+      head.appendChild(th);
+    });
+    tbl.appendChild(el("thead")).appendChild(head);
+    var body = el("tbody");
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      columns.forEach(function (column) {
+        var classes = [];
+        if (column.mono) { classes.push("mono"); }
+        if (column.wide) { classes.push("wide"); }
+        var cell = el("td", classes.join(" ") || null);
+        if (column.rich && row[column.key]) {
+          richText(cell, String(row[column.key]));
+        } else {
+          cell.textContent = show(row[column.key]);
+        }
+        tr.appendChild(cell);
+      });
+      body.appendChild(tr);
+    });
+    tbl.appendChild(body);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  function any(rows, test) {
+    return rows.some(test);
+  }
+
+  function portTable(rows) {
+    var columns = [
+      { key: "name", label: "name", mono: true },
+      { key: "type", label: "type", mono: true },
+      { key: "required", label: "required" },
+    ];
+    if (any(rows, function (r) { return r.many; })) {
+      columns.push({ key: "many", label: "many" });
+    }
+    if (any(rows, function (r) { return r.default !== null; })) {
+      columns.push({ key: "default", label: "default", mono: true });
+    }
+    columns.push({ key: "description", label: "description", wide: true, rich: true });
+    if (any(rows, function (r) { return r.expected_variables.length; })) {
+      columns.push({ key: "expected_variables", label: "expected variables" });
+    }
+    if (any(rows, function (r) { return r.expected_coords.length; })) {
+      columns.push({ key: "expected_coords", label: "expected coords" });
+    }
+    if (any(rows, function (r) { return r.provenance_role; })) {
+      columns.push({ key: "provenance_role", label: "provenance role" });
+    }
+    return table(columns, rows);
+  }
+
+  function paramTable(rows) {
+    var columns = [
+      { key: "name", label: "name", mono: true },
+      { key: "type", label: "type", mono: true },
+    ];
+    if (any(rows, function (r) { return r.units; })) {
+      columns.push({ key: "units", label: "units" });
+    }
+    columns.push({ key: "required", label: "required" });
+    columns.push({ key: "default", label: "default", mono: true });
+    columns.push({ key: "description", label: "description", wide: true, rich: true });
+    if (any(rows, function (r) { return Object.keys(r.constraints).length; })) {
+      columns.push({ key: "constraints", label: "constraints" });
+    }
+    if (any(rows, function (r) { return r.fingerprint_mode !== "off"; })) {
+      columns.push({ key: "fingerprint_mode", label: "fingerprint mode" });
+    }
+    return table(columns, rows);
+  }
+
+  function heading(text) {
+    return el("h2", null, text);
+  }
+
+  function facts(pairs) {
+    var dl = el("dl", "facts");
+    pairs.forEach(function (pair) {
+      if (pair[1] === null || pair[1] === undefined) { return; }
+      dl.appendChild(el("dt", null, pair[0]));
+      var dd = el("dd", pair[2] ? "mono" : null);
+      if (pair[1] instanceof Node) { dd.appendChild(pair[1]); }
+      else { dd.textContent = show(pair[1]); }
+      dl.appendChild(dd);
+    });
+    return dl;
+  }
+
+  function sourceCell(source) {
+    if (!source.github_url) {
+      return el("span", "muted", source.note || "not available");
+    }
+    var cell = el("span");
+    var link = el("a", null, source.repo + " " + (source.repo_relative_path || ""));
+    link.href = source.github_url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.title = "line " + source.line + " on ref " + source.ref;
+    cell.appendChild(link);
+    if (source.note) {
+      cell.appendChild(el("span", "muted small", " (" + source.note + ")"));
+    }
+    return cell;
+  }
+
+  function implSection(impl) {
+    var box = el("div", "impl");
+    var title = el("h3", null, "implementation: " + impl.key);
+    box.appendChild(title);
+    if (impl.default) {
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(el("span", "chip on", "default"));
+    }
+
+    var source = impl.source;
+    var dependency = impl.dependency;
+    box.appendChild(facts([
+      ["callable", impl.callable_path, true],
+      ["source", sourceCell(source)],
+      ["package", dependency ? dependency.name + " " + dependency.version : null],
+      ["installed", source.installed_version],
+      ["behavior version", impl.version],
+    ]));
+
+    if (source.signature) {
+      box.appendChild(el("h3", null, "signature"));
+      box.appendChild(el("code", "sig", source.signature));
+    }
+    if (source.doc) {
+      box.appendChild(el("h3", null, "docstring"));
+      box.appendChild(el("pre", "doc", source.doc));
+    }
+    if (impl.param_map.length) {
+      box.appendChild(el("h3", null, "parameter mapping"));
+      box.appendChild(table([
+        { key: "spec", label: "spec name", mono: true },
+        { key: "callable", label: "callable argument", mono: true },
+      ], impl.param_map));
+    }
+    if (impl.output_map.length) {
+      box.appendChild(el("h3", null, "output extraction"));
+      box.appendChild(table([
+        { key: "spec", label: "spec output", mono: true },
+        { key: "expression", label: "extracted from", mono: true },
+      ], impl.output_map));
+    }
+    return box;
+  }
+
+  function renderOp(op) {
+    var wrap = el("div", "wrap");
+    wrap.appendChild(el("h1", "op-title", op.op));
+
+    var chips = el("div", "chips");
+    chips.appendChild(el("span", "chip", op.category || "uncategorized"));
+    if (op.sink) { chips.appendChild(el("span", "chip on", "sink step")); }
+    if (!op.implementations.length) {
+      chips.appendChild(el("span", "chip", "no implementation"));
+    }
+    wrap.appendChild(chips);
+
+    if (op.description) { wrap.appendChild(richText(el("p", "desc"), op.description)); }
+    wrap.appendChild(facts([
+      ["cache key", op.cache_key, true],
+      ["version", op.version, true],
+    ]));
+
+    wrap.appendChild(heading("Inputs"));
+    wrap.appendChild(op.inputs.length
+      ? portTable(op.inputs)
+      : el("p", "muted small", "This op takes no wired inputs."));
+
+    wrap.appendChild(heading("Outputs"));
+    wrap.appendChild(op.outputs.length
+      ? portTable(op.outputs)
+      : el("p", "muted small", op.sink
+        ? "None. This is a sink step: it writes artifacts rather than returning data."
+        : "This op declares no outputs."));
+
+    wrap.appendChild(heading("Parameters"));
+    wrap.appendChild(op.params.length
+      ? paramTable(op.params)
+      : el("p", "muted small", "This op takes no parameters."));
+
+    wrap.appendChild(heading("Implementation"));
+    if (op.implementations.length) {
+      op.implementations.forEach(function (impl) {
+        wrap.appendChild(implSection(impl));
+      });
+    } else {
+      wrap.appendChild(el("p", "muted small",
+        "No implementation is registered for this op, so a recipe cannot run it yet."));
+    }
+    return wrap;
+  }
+
+  function renderIndex() {
+    var wrap = el("div", "wrap");
+    wrap.appendChild(el("h1", null, "Op reference"));
+    wrap.appendChild(el("p", "muted",
+      "Pick an op on the left, or start typing to filter. " +
+      DATA.counts.ops + " ops, " + DATA.counts.implementations + " implementations, " +
+      DATA.counts.sources_resolved + " with a resolved source link."));
+
+    var groups = {};
+    DATA.ops.forEach(function (op) {
+      var key = op.category || "uncategorized";
+      (groups[key] = groups[key] || []).push(op);
+    });
+
+    wrap.appendChild(heading("By category"));
+    var container = el("div", "index-groups");
+    Object.keys(groups).sort().forEach(function (category) {
+      var block = el("div");
+      block.appendChild(el("strong", null, category + " (" + groups[category].length + ")"));
+      var ul = el("ul");
+      groups[category].forEach(function (op) {
+        var li = el("li");
+        var link = el("a", null, op.op);
+        link.href = "#" + op.op;
+        li.appendChild(link);
+        ul.appendChild(li);
+      });
+      block.appendChild(ul);
+      container.appendChild(block);
+    });
+    wrap.appendChild(container);
+    return wrap;
+  }
+
+  function route() {
+    var raw = window.location.hash.slice(1);
+    var name;
+    try { name = decodeURIComponent(raw); } catch (err) { name = raw; }
+    var op = BY_OP[name];
+    detailEl.textContent = "";
+    detailEl.appendChild(op ? renderOp(op) : renderIndex());
+    detailEl.scrollTop = 0;
+    document.title = op
+      ? op.op + " - AA-SI op reference"
+      : "AA-SI recipe manager op reference";
+    items.forEach(function (item) {
+      if (op && item.op === op.op) {
+        item.link.setAttribute("aria-current", "page");
+        if (item.li.scrollIntoView) { item.li.scrollIntoView({ block: "nearest" }); }
+      } else {
+        item.link.removeAttribute("aria-current");
+      }
+    });
+  }
+
+  filterEl.addEventListener("input", applyFilter);
+  filterEl.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      filterEl.value = "";
+      applyFilter();
+    } else if (event.key === "Enter" || event.key === "ArrowDown") {
+      var first = visibleItems()[0];
+      if (first) {
+        event.preventDefault();
+        if (event.key === "Enter") { window.location.hash = "#" + first.op; }
+        first.link.focus();
+      }
+    }
+  });
+
+  document.addEventListener("keydown", function (event) {
+    var tag = (event.target.tagName || "").toLowerCase();
+    if (event.key === "/" && tag !== "input" && tag !== "textarea") {
+      event.preventDefault();
+      filterEl.focus();
+      filterEl.select();
+    }
+  });
+
+  window.addEventListener("hashchange", route);
+
+  buildSidebar();
+  applyFilter();
+  route();
+})();
+</script>
+</body>
+</html>

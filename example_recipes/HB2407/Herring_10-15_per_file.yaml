@@ -1,0 +1,184 @@
+# HB2407 Herring 10-15 - Per-Raw-File Pipeline, Recombined After Masking
+#
+# Per-file variant of Herring_10-15.yaml. The survey is never combined into one
+# EchoData up front. Every raw file selected by the time window is read,
+# calibrated, Sv-computed and masked as its own instance (map_over), and the
+# survey is reassembled once, by merge_sv, after masking.
+#
+#   level 1    per file: read -> materialize -> select this file's calibration
+#   level 2    per file: Sv -> transducer depth -> depth -> EVL seafloor
+#              -> masks -> apply
+#              FAN-IN: merge_sv concatenates the per-file masked Sv on ping_time
+#              survey:  rechunk -> remove background noise
+#   level 3    survey: sparse masking, MVBS, per-cell statistics (unchanged)
+#   level 4    survey: ML reshape, clustering, reporting (unchanged)
+#
+# Everything from remove_noise onward is survey-wide and produces the same
+# result as the non-parallel pipeline -- remove_noise is the first step whose
+# estimate spans a ping window, so the fan-in deliberately sits before it.
+# See processing_lvl_2_per_file.yaml for the full reasoning.
+#
+# Run sequentially (one file at a time, same results, no extra setup):
+#   aa-recipe run Herring_10-15_per_file.yaml
+#
+# Run with per-file instances distributed across worker processes:
+#   aa-recipe run Herring_10-15_per_file.yaml --executor dask
+#
+# Usage: aa-recipe dry-run Herring_10-15_per_file.yaml --visualize
+
+recipe:
+  name: "herring_10_15_per_file"
+  description: "HB2407 Herring 10-15 pipeline with per-raw-file processing and a pre-MVBS fan-in."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+  seabed_line_folder:
+    type: path
+    default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
+
+  # Data time range. Selects the raw files to process AND the Echoview seabed
+  # line exports to read, so the line always spans the pings. It also sets the
+  # fan-out width here: one mapped chain instance per selected raw file.
+  file_time_start:
+    type: str
+    default: "2024-10-15T13:38:52"
+  file_time_end:
+    type: str
+    default: "2024-10-15T23:43:36"
+
+  # Default display window shared by every plotting step in this pipeline
+  # You can override these by hardcoding values for a specific step or sub-recipe
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    # default: 50
+  ping_min:
+    type: int
+    default: 0
+  # With no default, ping_max plots every ping. Restore the default below to
+  # window the echograms instead.
+  ping_max:
+    type: int
+    # default: 500
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cruise_id: "HB2407"
+      record_author: "<Your Name>"
+      sonar_model: "EK80"
+
+  # Must follow level 1 (per-file) directly: its steps continue the same mapped
+  # chain, and its merge_sv fan-in reassembles the survey.
+  - include: sub_recipes/processing_lvl_2_per_file.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Transducer depth is derived per file from the raw file's drop keel offset (e.g. 7.5 m), heave and
+      # and manually derived datum_correction_m which assumes the recorded offset is waterline referenced.
+      datum_correction_m: -1.0
+      use_heave: true
+      heave_sign: 1.0
+      # surface mask
+      surface_depth_m: 5.0
+      seafloor_buffer_m: 1
+      # Range crop by outlier rejection. A single anomalous ping
+      # (2024-10-16T00:34:34, 200 kHz) keeps finite samples down to 507 m and
+      # defeats a plain "keep every finite sample" trim. 1.5 x (mean + 3 sd)
+      # over the per-ping deepest sample puts the reject threshold at 424 m
+      # against a deepest retained ping of 214 m, so it flags that one ping
+      # and nothing else. Set crop_max_range_m as well for a hard ceiling.
+      crop_outlier_sigma: 3.0
+      crop_outlier_margin: 1.5
+      # parameters for echopype's remove_background_noise
+      noise_ping_num: 5
+      noise_range_sample_num: 10
+      seabed_line_folder: ${inputs.seabed_line_folder}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 100
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "2m"
+      ping_time_bin: "2s"
+      nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${compute_mvbs.ds_MVBS}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+
+  # Neither echodata nor seafloor_depth is wired: this pipeline never builds a
+  # survey-wide EchoData, and level 4 only needs either one for the
+  # 'seafloor_depth'/'altitude' auxiliary features, which features: [cell_cv]
+  # does not use.
+  #
+  # Do NOT wire seafloor_depth: ${detect_seafloor.seafloor_depth} here. It
+  # resolves on a cold run but breaks on a resumed one: detect_seafloor is a
+  # member of the per-file mapped chain, and when any member of that chain is
+  # pruned (which happens as soon as merge_sv is a cache hit and the chain is
+  # no longer needed to rebuild it), the runner skips every member without
+  # recording outputs -- so a survey-wide consumer outside the chain fails with
+  # "step 'detect_seafloor' has not produced outputs yet". A survey-wide
+  # seafloor line would need its own collect step.
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs: ${compute_mvbs.ds_MVBS}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}

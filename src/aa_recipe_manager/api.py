@@ -27,6 +27,8 @@ from aa_recipe_manager.storage import StorageLocation
 from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
 
 
@@ -38,6 +40,17 @@ class EnvCreateResult:
     installed: list[str] = field(default_factory=list)
     skipped_local: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OpDocsResult:
+    """Result of export_op_docs()."""
+
+    html: str
+    output: Path | None = None
+    counts: dict[str, int] = field(default_factory=dict)
+    unresolved: list[str] = field(default_factory=list)
+    stale_links: list[str] = field(default_factory=list)
 
 
 def _apply_recipe_overrides(
@@ -263,6 +276,59 @@ def export_schema() -> dict[str, Any]:
     from aa_recipe_manager.model.types import Recipe
 
     return Recipe.model_json_schema()
+
+
+def export_op_docs(
+    output: str | Path | None = None,
+    *,
+    resolve_sources: bool = True,
+    registry_files: Sequence[str | Path] = (),
+) -> OpDocsResult:
+    """Generate the single-file HTML reference for the op registry.
+
+    Args:
+        output: Path to write the page to. When None the HTML is only
+            returned.
+        resolve_sources: Import each implementation's package to attach a
+            source link, signature, and docstring. Importing the scientific
+            packages is slow, so pass False for a fast, import-free page.
+        registry_files: Extra spec YAML files to document alongside the
+            built-in registry.
+
+    Returns:
+        An OpDocsResult carrying the HTML, the written path, and a summary of
+        how many ops and source links the page ended up with.
+    """
+    from aa_recipe_manager.docs.html import render_html
+    from aa_recipe_manager.docs.payload import (
+        build_payload,
+        stale_link_ops,
+        unresolved_ops,
+    )
+    from aa_recipe_manager.registry.loader import (
+        load_builtin_registry,
+        load_registry_file,
+    )
+
+    registry = load_builtin_registry()
+    for path in registry_files:
+        load_registry_file(path, registry)
+
+    payload = build_payload(registry, resolve_sources=resolve_sources)
+    html = render_html(payload)
+
+    written: Path | None = None
+    if output is not None:
+        written = Path(output)
+        written.write_text(html, encoding="utf-8")
+
+    return OpDocsResult(
+        html=html,
+        output=written,
+        counts=payload["counts"],
+        unresolved=unresolved_ops(payload),
+        stale_links=stale_link_ops(payload),
+    )
 
 
 def create_env(

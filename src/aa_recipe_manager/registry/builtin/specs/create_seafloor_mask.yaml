@@ -8,8 +8,16 @@ category: masking
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Sv Dataset the mask is shaped to. Supplies the meter-valued range
+      variable that each sample's depth is compared against.
   seafloor_depth:
     type: DataArray
+    description: >
+      Seafloor depth per ping, shape (ping_time,), from detect_seafloor,
+      ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN
+      produce no valid samples, so an undetected stretch is masked out
+      entirely rather than guessed at.
 outputs:
   mask:
     type: DataArray
@@ -18,6 +26,10 @@ params:
   seafloor_buffer_m:
     type: float
     units: m
+    description: >
+      Height above the detected seafloor line to also mask out. Widens the
+      exclusion zone to cover detection error and the near-bottom dead zone,
+      at the cost of discarding real backscatter just above the bottom.
     required: false
     default: 0.0
   range_var:

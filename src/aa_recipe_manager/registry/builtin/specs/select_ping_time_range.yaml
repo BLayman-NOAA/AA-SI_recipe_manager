@@ -1,0 +1,63 @@
+op: select_ping_time_range
+cache_key: select_ping_time_range  # pinned cache identity - keep stable across op renames
+description: >
+  Narrow a Dataset to a ping_time window. The user-facing entry point into a
+  survey-wide Sv store: a survey-level recipe computes and checkpoints Sv once
+  for the whole cruise, and a user recipe reuses that checkpoint and calls this
+  to work on its own segment.
+
+  Cheap on a zarr-backed Dataset. ``sel`` narrows the dask graph to the chunks
+  the window touches, so only those are read - measured on a 39570-ping store
+  with 3305-ping chunks, a 4001-ping window read 4 of 24 partitions in 1.5 s
+  and 1.4 GB against 16.5 s and 8.9 GB for the whole array. Chunk the survey
+  store along ping_time (see ``rechunk_dataset``) at roughly the window size
+  users ask for.
+
+  PLACEMENT MATTERS. Step hashes are a Merkle chain: each step folds in its
+  parents' hashes. Wiring a user's window into an upstream step's params - for
+  example ``initial_setup``'s file_time_start - changes that step's hash and
+  every hash below it, so no two windows ever share a cached Sv. Keep the
+  window on this step, downstream of everything whose checkpoint you want
+  shared, and give the survey-level steps a fixed survey-wide window instead.
+category: preprocessing
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Dataset carrying a ping_time coordinate, normally the merged survey Sv
+      loaded from a shared checkpoint.
+    expected_coords:
+      - ping_time
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: The ping_time slice of the input, lazy when the input is lazy.
+    expected_coords:
+      - ping_time
+params:
+  start:
+    type: str
+    description: >
+      Inclusive ISO datetime lower bound (e.g. "2024-10-15T13:38:52"). Leave
+      unset to leave the start open.
+    required: false
+    default: null
+  end:
+    type: str
+    description: >
+      Inclusive ISO datetime upper bound. Leave unset to leave the end open.
+      The step fails rather than returning an empty Dataset when the window
+      selects no pings.
+    required: false
+    default: null
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.select_ping_time_range
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      ds_Sv: __return__

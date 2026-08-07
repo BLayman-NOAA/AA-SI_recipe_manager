@@ -9,6 +9,10 @@ category: ml_clustering
 inputs:
   ds_normalized:
     type: Dataset
+    description: >
+      Normalized ML Dataset from normalize_ml_data, or the single-cluster
+      subset from filter_normalized_by_cluster for a second-pass run. Only
+      the feature matrix is read; the Dataset is not modified.
 outputs:
   clustering_results:
     type: Dataset
@@ -43,13 +47,22 @@ outputs:
 params:
   dataset_name:
     type: str
+    description: >
+      ML dataset to cluster. Must match the dataset_name used by
+      reshape_for_ml.
     required: true
   normalization_name:
     type: str
+    description: >
+      Normalized feature set to cluster. Must match the normalization_name
+      used by normalize_ml_data.
     required: true
   ml_result_name:
     type: str
-    description: Label assigned to this clustering result for downstream tracking
+    description: >
+      Name this clustering result is stored under. embed_clustering_results
+      and plot_clustering_report take the same name to find it, so a recipe
+      can keep several clusterings of one dataset side by side.
     required: true
   min_cluster_size:
     type: int
@@ -65,11 +78,20 @@ params:
     default: null
   min_samples:
     type: int
+    description: >
+      Neighbourhood size HDBSCAN uses to judge how dense a point is. Higher
+      values make the run more conservative, pushing sparse points into noise
+      instead of into a cluster.
     required: false
     default: 2
   sample_size:
     type: int
-    description: Maximum number of samples drawn for clustering; 
+    description: >
+      Cap on how many samples are clustered. A survey flattens to more points
+      than HDBSCAN can handle in memory, so when the dataset is larger than
+      this a random subset of this size is clustered and the remaining points
+      receive no label at all. Set it above the sample count to cluster
+      everything.
     required: false
     default: 100000
   cluster_selection_method:

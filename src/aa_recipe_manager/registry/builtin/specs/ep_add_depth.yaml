@@ -1,8 +1,9 @@
 op: ep_add_depth
 cache_key: ep_add_depth  # pinned cache identity - keep stable across op renames
 description: >
-  Add a surface-referenced ``depth`` data variable to an Sv Dataset using
-  echopype's ``consolidate.add_depth``. The result preserves all existing
+  Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step
+  is echopype.consolidate.add_depth called directly, so the depth computation
+  and its parameters are echopype's. The result preserves all existing
   variables (including ``echo_range``) and adds ``depth`` on
   ``(channel, ping_time, range_sample)`` in metres below surface.
 

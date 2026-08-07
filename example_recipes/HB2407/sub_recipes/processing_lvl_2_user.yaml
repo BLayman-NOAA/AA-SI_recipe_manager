@@ -1,0 +1,176 @@
+# Processing Level 2b (User) - Window Selection, Masking and Noise Removal
+#
+# The user half of level 2. It starts from the shared survey Sv store that
+# processing_lvl_2_survey.yaml produced, narrows to this user's segment, and
+# then does everything a user would reasonably want to vary: seabed line,
+# masking, and background noise removal.
+#
+#   select_window -> detect_seafloor (EVL line) -> seafloor/surface masks
+#                 -> combine -> apply_mask -> rechunk -> remove_noise
+#
+# select_window is the first step here for a reason. Step hashes are a Merkle
+# chain, so every step below the window is re-keyed per window (correct -- they
+# genuinely operate on different data), while everything above it, in levels 1
+# and 2a, keeps one hash across all users and stays a cache hit.
+#
+# There is no map_over in this file. The per-file fan-out ended at the survey
+# merge, so these steps run once on the windowed dataset. That also means the
+# seabed line's coverage check is back to a whole-window fraction rather than a
+# per-file one, so the default min_coverage behaves as it reads.
+#
+# All of this is lazy until remove_noise forces it: the survey checkpoint loads
+# zarr-backed, and select_window narrows the dask graph to the chunks the
+# window touches. On a 39570-ping store chunked at 3305, a 4001-ping window
+# read 4 of 24 partitions in 1.5 s and 1.4 GB, against 16.5 s and 8.9 GB for
+# the whole array.
+
+recipe:
+  name: "processing_lvl_2_user"
+  description: "Select a ping_time window from the survey Sv, then mask and denoise it."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  survey_sv:
+    type: dataset
+    description: "Merged, chunked survey-wide Sv from processing_lvl_2_survey.yaml."
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Inclusive ISO datetime lower bound for THIS user's segment. Selects the
+      ping_time window and the Echoview .evl line files to read, so the line
+      always spans the pings. Leave unset to take the whole survey.
+  file_time_end:
+    type: str
+    required: false
+    description: "Inclusive ISO datetime upper bound; see file_time_start."
+  seabed_line_folder:
+    type: path
+    description: >
+      Folder of Echoview .evl seabed line exports; the ones covering
+      file_time_start to file_time_end are combined into the seafloor used for
+      masking. A single .evl file also works, and is read whole.
+  seabed_line_max_gap_s:
+    type: float
+    default: 600
+    description: >
+      Widest hole in the combined seabed line, in seconds, to interpolate
+      across. Consecutive line files butt up against each other to within a
+      second, so this only bites across a survey-leg gap.
+  seabed_line_min_coverage:
+    type: float
+    default: 0.99
+    description: >
+      Fraction of the window's pings that must land on the line before the step
+      fails, rather than letting create_seafloor_mask drop every sample of an
+      uncovered ping.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth in meters above which the surface mask excludes samples."
+  seafloor_buffer_m:
+    type: float
+    default: 1.0
+    description: "Height of buffer above seabed line to mask."
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Number of range samples per bin used for background noise estimation."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Number of pings per bin used for background noise estimation."
+  noise_chunk_ping_time:
+    type: int
+    default: 1000
+    description: >
+      Ping-time chunk size applied before remove_noise so its coarsen()-based
+      estimate runs in dask-parallel chunks. Keep it a multiple of
+      noise_ping_num so coarsen() dispatches across chunks cleanly.
+
+steps:
+
+  # The user's entry point into the shared survey store. Everything above this
+  # step is survey-level and shared; everything below is this user's.
+  - id: select_window
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.survey_sv}
+    params:
+      start: ${inputs.file_time_start}
+      end: ${inputs.file_time_end}
+
+  - id: detect_seafloor
+    op: read_seafloor_line
+    checkpoint: save
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      evl_path: ${inputs.seabed_line_folder}
+      # The same window that selected the pings, so the line spans them. A line
+      # file's span runs from its own name stamp to the next file's, which is
+      # what pulls in the export straddling the window start.
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      # No extrapolation past the line's ends: uncovered pings come back NaN
+      # and create_seafloor_mask drops them entirely, so min_coverage fails the
+      # run rather than letting that happen quietly.
+      edge_extend_s: 0.0
+      max_gap_s: ${inputs.seabed_line_max_gap_s}
+      min_coverage: ${inputs.seabed_line_min_coverage}
+
+  # ds_Sv must carry 'depth' to match the surface-referenced line
+  # detect_seafloor produced; without it create_seafloor_mask silently falls
+  # back to 'echo_range' and offsets the mask by the transducer depth. The
+  # survey store has been through ep_add_depth, so select_window's output does.
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  # create_surface_mask always compares against echo_range.
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: rechunk_before_noise
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      ping_time_chunk: ${inputs.noise_chunk_ping_time}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_noise.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+      # Must be a dB string, not a bare number. Lower it to keep more weak data.
+      # SNR_threshold: "0dB"

@@ -6,6 +6,10 @@ description: >
   single combined EchoData object. Mark this step checkpoint: always in your
   recipe so the checkpoint system writes the combined output once and reuses it
   on subsequent runs.
+
+  The reading and the combine itself are echopype.open_converted and
+  echopype.combine_echodata. Around them this step adds store-path handling,
+  input ordering, and the ping_time chunking of the combined result.
 category: io
 inputs:
   raw_stores:
@@ -23,7 +27,7 @@ params:
     description: >
       Target chunk length along ping_time for the combined EchoData, which
       directly sets the chunking of the downstream zarr checkpoint. Larger
-      values mean fewer, bigger objects — faster remote (gs://) checkpoint
+      values mean fewer, bigger objects: faster remote (gs://) checkpoint
       writes and fewer read requests, at the cost of more RAM per computed
       chunk and coarser lazy-read granularity for windowed access. 1000 is a
       balanced default; try 2000-4000 for bucket-backed caches if the combined

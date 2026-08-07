@@ -12,6 +12,11 @@ category: ml_preprocessing
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv
+      from remove_background_noise. Take it from before mask_sparse_bins:
+      the within-cell spread is the signal here, and dropping sparse bins
+      first would hide the cells whose variability is most informative.
     expected_variables:
       - Sv
 outputs:
@@ -25,11 +30,11 @@ outputs:
 params:
   range_bin:
     type: str
-    description: "Range bin size — must match mask_sparse_bins and compute_mvbs (e.g. '2m')"
+    description: "Range bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '2m')"
     required: true
   ping_time_bin:
     type: str
-    description: "Ping-time bin size — must match mask_sparse_bins and compute_mvbs (e.g. '10s')"
+    description: "Ping-time bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '10s')"
     required: true
   statistics:
     type: list

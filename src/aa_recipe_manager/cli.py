@@ -24,6 +24,13 @@ from aa_recipe_manager.exceptions import (
 from aa_recipe_manager.executor.checkpoint import DEFAULT_OUTPUT_ROOT
 
 
+#: Log level asked for on the command line. Tracked explicitly because
+#: ``logging.getLogger().isEnabledFor(DEBUG)`` cannot answer the question:
+#: importing echopype calls ``logging.disable(logging.WARNING)``, a global mute
+#: that makes the check return False even when the root level is DEBUG.
+_REQUESTED_LOG_LEVEL = "INFO"
+
+
 def _fail(message: str) -> None:
     """Print an error message to stderr and exit with code 1."""
     click.echo(f"Error: {message}", err=True)
@@ -53,8 +60,8 @@ def _echo_cause_chain(exc: BaseException) -> None:
 
 
 def _echo_traceback(exc: BaseException) -> None:
-    """Print a full traceback when the root logger is at DEBUG."""
-    if not logging.getLogger().isEnabledFor(logging.DEBUG):
+    """Print a full traceback when ``--log-level DEBUG`` was requested."""
+    if _REQUESTED_LOG_LEVEL != "DEBUG":
         click.echo(
             "  (re-run with `aa-recipe --log-level DEBUG run ...` for a full "
             "traceback)",
@@ -118,6 +125,8 @@ def _handle_recipe_errors(exc: Exception) -> None:
 )
 def main(log_level: str) -> None:
     """aa-recipe-manager: define, share, generate, and execute scientific workflow recipes."""
+    global _REQUESTED_LOG_LEVEL
+    _REQUESTED_LOG_LEVEL = log_level
     logging.basicConfig(level=getattr(logging, log_level))
 
 
@@ -267,6 +276,83 @@ def schema_cmd(output: str | None) -> None:
         click.echo(f"Schema written to: {output}")
     else:
         click.echo(content)
+
+
+@main.command("docs")
+@click.option(
+    "--output",
+    "-o",
+    default="op_reference.html",
+    show_default=True,
+    help="Path for the generated HTML file. Use '-' to write to stdout.",
+)
+@click.option(
+    "--source-links/--no-source-links",
+    default=True,
+    show_default=True,
+    help=(
+        "Import each implementation's package to link its source on GitHub "
+        "and show its signature and docstring. This takes about a minute; "
+        "disable it for a fast page or in an environment without the "
+        "scientific packages installed."
+    ),
+)
+@click.option(
+    "--spec-file",
+    "spec_files",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Extra spec YAML file to document alongside the built-in registry.",
+)
+@click.option(
+    "--open",
+    "open_browser",
+    is_flag=True,
+    default=False,
+    help="Open the generated page in the default browser.",
+)
+def docs_cmd(
+    output: str,
+    source_links: bool,
+    spec_files: tuple[str, ...],
+    open_browser: bool,
+) -> None:
+    """Generate a browsable HTML reference for the built-in op registry."""
+    import webbrowser
+    from pathlib import Path as _Path
+
+    to_stdout = output == "-"
+    try:
+        result = api.export_op_docs(
+            None if to_stdout else output,
+            resolve_sources=source_links,
+            registry_files=spec_files,
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    if to_stdout:
+        click.echo(result.html)
+        return
+
+    counts = result.counts
+    click.echo(f"Docs written to: {result.output}")
+    summary = f"{counts['ops']} ops, {counts['implementations']} implementations"
+    if source_links:
+        summary += f", {counts['sources_resolved']} source links resolved"
+    click.echo(summary)
+    if source_links and result.unresolved:
+        click.echo("No source link for: " + ", ".join(result.unresolved), err=True)
+    if source_links and result.stale_links:
+        click.echo(
+            f"{len(result.stale_links)} link(s) point at files with uncommitted "
+            "changes; commit and push for exact line numbers.",
+            err=True,
+        )
+
+    if open_browser:
+        webbrowser.open(_Path(result.output).resolve().as_uri())
 
 
 @main.group("env")

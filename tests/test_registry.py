@@ -183,6 +183,8 @@ EXPECTED_BUILTIN_OPS = {
     "remove_background_noise",
     "mask_sparse_bins",
     "rechunk_dataset",
+    "crop_range",
+    "select_ping_time_range",
     "compute_mvbs",
     "add_line_overlay",
     "plot_sv_echogram",
@@ -242,6 +244,19 @@ class TestBuiltinLoader:
         assert "ds_Sv" not in spec.inputs
         assert spec.outputs["gridded_results"].type == "DataArray"
         assert spec.outputs["gridded_results"].many is True
+
+    def test_read_seafloor_line_takes_the_file_time_window(self):
+        reg = load_builtin_registry()
+        spec = reg.get_spec("read_seafloor_line")
+
+        # evl_path may name a folder of Echoview exports, narrowed by the same
+        # window that selects the raw files. Both bounds stay optional so a
+        # single .evl path keeps working on its own.
+        for name in ("file_time_start", "file_time_end"):
+            assert spec.params[name].type == "str"
+            assert spec.params[name].required is False
+            assert spec.params[name].default is None
+        assert spec.params["evl_path"].fingerprint_mode == "checksum"
 
     def test_plot_clustering_report_is_sink_spec(self):
         reg = load_builtin_registry()
@@ -335,7 +350,10 @@ class TestBuiltinLoader:
 
         plot_sv_impl = reg.get_implementation("plot_sv_echogram")
         assert plot_sv_impl.callable_path == "aa_si_visualization.echogram.plot_sv_echogram"
-        assert plot_sv_impl.param_map == {"ds_Sv_source": "ds_Sv_original"}
+        assert plot_sv_impl.param_map == {
+            "ds_Sv_source": "ds_Sv_original",
+            "panel_width_to_height": "y_to_x_aspect_ratio_override",
+        }
 
         plot_ml_impl = reg.get_implementation("plot_ml_echogram")
         assert plot_ml_impl.callable_path == (

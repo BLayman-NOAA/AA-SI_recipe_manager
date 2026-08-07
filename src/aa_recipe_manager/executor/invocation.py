@@ -258,10 +258,15 @@ def _resolve_value(
 ) -> Any:
     """Resolve an input/param value, expanding fan-in lists element-wise."""
     if isinstance(raw, list):
-        return [
-            _resolve_single_ref(item, runtime, pipeline_inputs)
-            for item in raw
-        ]
+        resolved = []
+        for item in raw:
+            value = _resolve_single_ref(item, runtime, pipeline_inputs)
+            # List params are positional (e.g. plot_window is
+            # [min_depth, max_depth, ping_min, ping_max]), so a reference with
+            # no pipeline value keeps its slot as None instead of dropping out
+            # or leaking the sentinel; the callable then defaults that slot.
+            resolved.append(None if value is _SENTINEL_MISSING else value)
+        return resolved
     return _resolve_single_ref(raw, runtime, pipeline_inputs)
 
 

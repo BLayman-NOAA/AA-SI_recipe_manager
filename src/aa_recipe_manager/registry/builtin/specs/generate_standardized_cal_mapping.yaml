@@ -41,17 +41,34 @@ params:
       create_if_missing: true
   output_base:
     type: path
+    description: >
+      Root directory the standardized calibration files, mapping files, and
+      logs are written under. Normally wired to
+      ${initial_setup.calibration_output_dir} so calibration artifacts land
+      beside the run's other outputs. Subdirectories are created as needed.
     required: true
     constraints:
       must_exist: false
   cruise_id:
     type: str
+    description: >
+      Cruise identifier recorded in every generated single-channel
+      calibration file (e.g. "HB1603"), so a standardized file stays
+      traceable to the survey it came from.
     required: true
   record_author:
     type: str
+    description: >
+      Name recorded as the author of every generated single-channel
+      calibration file. Part of the provenance the standardized format
+      carries, not something the calculation uses.
     required: true
   short_filenames:
     type: bool
+    description: >
+      Use compact names for the generated single-channel files and the keys
+      in mapping_dict. Set false for fully descriptive names, which are
+      easier to read and longer.
     required: false
     default: true
   keep_unused:

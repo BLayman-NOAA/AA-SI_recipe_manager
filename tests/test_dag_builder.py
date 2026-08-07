@@ -276,8 +276,8 @@ class TestDanglingRefs:
                 inputs:
                   ds_Sv: ${upstream.ds_Sv}
                 params:
-                  noise_range_sample_num: 10
-                  noise_ping_num: 5
+                  range_sample_num: 10
+                  ping_num: 5
               - id: upstream
                 op: apply_sv_mask
                 inputs:
@@ -964,7 +964,8 @@ class TestBuiltinIntegration:
       "aa_si_visualization.echogram.plot_sv_echogram"
     )
     assert dag.nodes["plot_mvbs"].implementation.param_map == {
-      "ds_Sv_source": "ds_Sv_original"
+      "ds_Sv_source": "ds_Sv_original",
+      "panel_width_to_height": "y_to_x_aspect_ratio_override",
     }
     assert dag.nodes["plot_mvbs"].spec.sink is True
     assert elapsed < 1.0

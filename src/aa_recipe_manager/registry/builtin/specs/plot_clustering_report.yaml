@@ -33,9 +33,16 @@ outputs: {}
 params:
   dataset_name:
     type: str
+    description: >
+      ML dataset to report on. Must match the dataset_name used by
+      reshape_for_ml.
     required: true
   ml_result_name:
     type: str
+    description: >
+      Clustering result to report on. Must match the ml_result_name used by
+      embed_clustering_results, which is the name the labels were stored
+      under in ds_normalized.
     required: true
   plot_window:
     type: list
@@ -74,9 +81,18 @@ params:
     default: "Sv"
   cluster_stats_compute_pairwise_differences:
     type: bool
-    description: Compute inter-channel pairwise diffs in cluster statistics
+    description: >
+      Compute inter-channel diffs in cluster statistics, taken against the
+      second-lowest-frequency channel
     required: false
     default: true
+  cluster_stats_dpi:
+    type: int
+    description: >
+      DPI for the cluster statistics figure, which holds much smaller text
+      than the echogram. Null falls back to dpi.
+    required: false
+    default: 200
   save_image:
     type: bool
     description: Save the rendered figures to image files; null uses runtime defaults

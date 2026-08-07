@@ -8,37 +8,63 @@ sink: true
 inputs:
   ds_normalized:
     type: Dataset
+    description: >
+      Normalized ML Dataset from normalize_ml_data. Its flattened features
+      are folded back onto the ping and range grid for display, which is the
+      quickest way to see what the clustering will actually be given.
   ds_Sv:
     type: Dataset
-    description: Original Sv dataset used for depth and coordinate reference
+    description: >
+      Original Sv Dataset supplying the depth and ping coordinates the axes
+      are drawn against. Use the same Sv the MVBS grid was built from, so
+      this plot lines up with the Sv echograms next to it.
 outputs: {}
 params:
   dataset_name:
     type: str
+    description: >
+      ML dataset to plot. Must match the dataset_name used by
+      reshape_for_ml.
     required: true
   normalization_name:
     type: str
+    description: >
+      Normalized feature set to plot. Must match the normalization_name used
+      by normalize_ml_data.
     required: true
   min_depth:
     type: float
+    description: Minimum depth (y-axis) in meters
     required: false
     default: 0
   max_depth:
     type: float
-    required: true
+    description: >
+      Maximum depth (y-axis) in meters. Omit to use the deepest depth present
+      in the data.
+    required: false
   ping_min:
     type: int
+    description: First ping index to display
     required: false
     default: 0
   ping_max:
     type: int
-    required: true
+    description: Last ping index to display. Omit to display through the last ping.
+    required: false
   x_axis_units:
     type: str
+    description: >
+      Units for the x-axis: 'seconds' (default), 'pings', 'meters' (distance
+      travelled, derived from the GPS track), or 'bins' (MVBS-derived data
+      only).
     required: false
     default: "seconds"
   y_axis_units:
     type: str
+    description: >
+      Units for the y-axis: 'meters' (default), 'range_sample', or 'bins'
+      (MVBS-derived data only).
     required: false
     default: "meters"
   save_image:

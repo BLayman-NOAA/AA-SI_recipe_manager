@@ -234,8 +234,8 @@ steps:
     inputs:
       ds_Sv: ${apply_mask.ds_Sv}
     params:
-      noise_range_sample_num: 10
-      noise_ping_num: 5
+      range_sample_num: 10
+      ping_num: 5
 
   - id: mask_sparse
     op: mask_sparse_bins

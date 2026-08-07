@@ -5,10 +5,16 @@ description: >
   When cal_params and env_params are supplied they are applied to the
   computation. When omitted, echopype uses default environmental and
   calibration values embedded in the raw file.
+
+  This step is echopype.calibrate.compute_Sv called directly, so the
+  calibration model and its defaults are echopype's.
 category: level 2
 inputs:
   echodata:
     type: EchoData
+    description: >
+      Raw EchoData to calibrate, normally the single survey-wide object from
+      combine_raw_files.
   cal_params:
     type: dict
     description: Optional calibration parameter overrides. When null, echopype uses values from the raw file.

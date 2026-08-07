@@ -10,11 +10,17 @@ category: preprocessing
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step
+      produced it.
     expected_variables:
       - Sv
 outputs:
   ds_Sv:
     type: Dataset
+    description: >
+      The same Dataset backed by dask arrays chunked along ping_time, so the
+      steps wired after it can run chunk-parallel.
     expected_variables:
       - Sv
 params:

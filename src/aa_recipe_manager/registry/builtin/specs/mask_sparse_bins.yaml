@@ -7,11 +7,18 @@ category: preprocessing
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Sv Dataset to screen, normally the noise-removed Sv from
+      remove_background_noise. Masking has already emptied parts of the grid,
+      which is what leaves some bins with too few samples to average.
     expected_variables:
       - Sv
 outputs:
   ds_Sv:
     type: Dataset
+    description: >
+      The same Dataset with samples in under-populated bins set to NaN.
+      Feed this to compute_mvbs using the same bin sizes.
     expected_variables:
       - Sv
 params:

@@ -1,8 +1,9 @@
 op: ep_detect_seafloor
 cache_key: ep_detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
-  Detect seafloor depth using echopype's bottom detection dispatcher and
-  return a 1-D (ping_time,) DataArray. Dispatches to one of echopype's
+  Detect seafloor depth and return a 1-D (ping_time,) DataArray. This step is
+  echopype.mask.api.detect_seafloor called directly, so the detection itself
+  is entirely echopype's. It dispatches to one of echopype's
   built-in implementations ("basic" Sv-threshold or "blackwell" Sv +
   split-beam angle) selected by the ``method`` parameter, with the
   method-specific keyword arguments passed via ``method_params``.

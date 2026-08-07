@@ -3,8 +3,9 @@
 *.raw
 *.zarr
 recipe_cache/
-example_recipes/outputs
-exe_temp
+
+outputs/
+exe_temp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -222,3 +223,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated op reference (aa-recipe docs)
+op_reference.html

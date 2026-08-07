@@ -8,8 +8,15 @@ category: ml_preprocessing
 inputs:
   ds_ml:
     type: Dataset
+    description: >
+      Flattened ML Dataset from reshape_for_ml. The new features are appended
+      as extra columns on its feature matrix.
   echodata:
     type: EchoData
+    description: >
+      Raw EchoData supplying the echosounder's own bottom pick, used for the
+      'seafloor_depth' and 'altitude' features when the seafloor_depth input
+      is not wired. Ignored when it is.
     required: false
   ds_sv:
     type: Dataset
@@ -46,6 +53,9 @@ outputs:
 params:
   dataset_name:
     type: str
+    description: >
+      ML dataset to append the features to. Must match the dataset_name used
+      by reshape_for_ml.
     required: true
   features:
     type: list

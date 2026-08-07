@@ -188,8 +188,8 @@ steps:
     inputs:
       ds_Sv: ${apply_mask.ds_Sv}
     params:
-      noise_range_sample_num: 10
-      noise_ping_num: 5
+      range_sample_num: 10
+      ping_num: 5
 
   - id: compute_cell_stats
     op: compute_per_cell_statistics

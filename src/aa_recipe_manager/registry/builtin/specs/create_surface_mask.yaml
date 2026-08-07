@@ -6,6 +6,9 @@ category: masking
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Sv Dataset the mask is shaped to. Supplies the range variable each
+      sample's depth is read from.
 outputs:
   mask:
     type: DataArray
@@ -14,6 +17,10 @@ params:
   surface_depth_m:
     type: float
     units: m
+    description: >
+      Depth above which samples are masked out, removing the transmit pulse
+      ringdown and near-surface bubble layer. The default of 0.0 masks
+      nothing.
     required: false
     default: 0.0
 implementations:

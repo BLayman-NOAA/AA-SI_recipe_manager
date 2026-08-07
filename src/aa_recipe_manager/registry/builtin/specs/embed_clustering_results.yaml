@@ -30,9 +30,17 @@ outputs:
 params:
   dataset_name:
     type: str
+    description: >
+      ML dataset the labels are embedded into. Must match the dataset_name
+      used by reshape_for_ml.
     required: true
   ml_result_name:
     type: str
+    description: >
+      Name the embedded cluster labels are stored under. Normally the
+      ml_result_name from run_hdbscan, so plot_clustering_report finds the
+      same result. For a collected list of results this is the stem the
+      per-result variable names are derived from.
     required: true
 implementations:
   - key: default

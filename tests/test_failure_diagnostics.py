@@ -12,6 +12,7 @@ named a directory but no cause.
 
 from __future__ import annotations
 
+import logging
 import os
 import stat
 import sys
@@ -343,6 +344,52 @@ def test_doctor_probe_leaves_no_trace(tmp_path):
     # A directory the probe created is removed again, so running doctor never
     # changes what the next run sees.
     assert not temp_dir.exists()
+
+
+def test_traceback_prints_when_debug_was_requested(monkeypatch, capsys):
+    from aa_recipe_manager import cli
+
+    monkeypatch.setattr(cli, "_REQUESTED_LOG_LEVEL", "DEBUG")
+    try:
+        raise OSError(28, "No space left on device")
+    except OSError as exc:
+        cli._echo_traceback(exc)
+
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" in err
+    assert "No space left on device" in err
+
+
+def test_traceback_is_not_gated_on_logging_being_enabled(monkeypatch, capsys):
+    # Importing echopype calls logging.disable(logging.WARNING), a process-wide
+    # mute that makes isEnabledFor(DEBUG) return False even at root level DEBUG.
+    # Gating on it printed "re-run with --log-level DEBUG" to someone who had
+    # already passed exactly that, and withheld the traceback they asked for.
+    from aa_recipe_manager import cli
+
+    monkeypatch.setattr(cli, "_REQUESTED_LOG_LEVEL", "DEBUG")
+    logging.disable(logging.WARNING)
+    try:
+        assert not logging.getLogger().isEnabledFor(logging.DEBUG)
+        try:
+            raise OSError(28, "No space left on device")
+        except OSError as exc:
+            cli._echo_traceback(exc)
+    finally:
+        logging.disable(logging.NOTSET)
+
+    assert "Traceback (most recent call last)" in capsys.readouterr().err
+
+
+def test_traceback_hint_shown_without_debug(monkeypatch, capsys):
+    from aa_recipe_manager import cli
+
+    monkeypatch.setattr(cli, "_REQUESTED_LOG_LEVEL", "INFO")
+    cli._echo_traceback(OSError(28, "No space left on device"))
+
+    err = capsys.readouterr().err
+    assert "--log-level DEBUG" in err
+    assert "Traceback (most recent call last)" not in err
 
 
 def test_doctor_reports_an_unprobeable_directory(tmp_path):

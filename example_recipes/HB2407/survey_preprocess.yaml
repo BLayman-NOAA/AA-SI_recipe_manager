@@ -1,0 +1,88 @@
+# HB2407 Survey Pre-Processing - Build the Shared Sv Store
+#
+# Runs levels 1 and 2a only, producing one chunked, survey-wide Sv store that
+# every user recipe starts from. Slow and run rarely; the per-user recipes that
+# read it are fast.
+#
+#   level 1   per file: read -> materialize -> select this file's calibration
+#   level 2a  per file: Sv -> transducer depth -> depth -> fixed range crop
+#             FAN-IN:   merge on ping_time -> rechunk -> checkpoint
+#
+# The boundary is deliberate. Everything here is a property of the raw data and
+# its calibration; nothing above the line is something a user would vary per
+# analysis. Seabed detection, masking, noise removal, MVBS and ML all are, and
+# they live in the user recipes (see Herring_10-15_windowed.yaml).
+#
+# THIS RECIPE HAS NO USER WINDOW, ON PURPOSE. Step hashes are a Merkle chain,
+# so a window wired into initial_setup would re-key every downstream
+# checkpoint and no two user segments would ever share cached work. The window
+# belongs on select_ping_time_range in processing_lvl_2_user.yaml instead.
+#
+# MEMORY. Nothing here needs the survey in memory. The per-file chain is
+# bounded by one file's working set, and the checkpoint write streams chunk by
+# chunk. The steps that do scale badly with survey length -- sparse masking,
+# MVBS and per-cell statistics -- are all downstream of the user's window.
+#
+# Publish to the shared cache tier so user runs read it:
+#   aa-recipe run survey_preprocess.yaml --cache-write-tier survey
+#
+# Run it where the bucket is. A survey-scale store over a 2.8 MiB/s uplink is
+# measured in days, not hours.
+#
+# Usage: aa-recipe dry-run survey_preprocess.yaml --visualize
+
+recipe:
+  name: "hb2407_survey_preprocess"
+  description: "HB2407 survey-wide Sv store: per-file calibration and depth, merged and chunked."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # fingerprint_mode: auto puts the folder's CONTENTS in the hash and scrubs
+  # its location, so a local copy and the gs:// original give the same survey
+  # hash. Adding a raw file changes it, which is correct.
+  raw_input_folder:
+    type: path
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+
+  # Fixed range ceiling. Every file crops to the same depth so they share a
+  # range_sample length and concatenate without NaN padding. 250 m clears the
+  # deepest seabed seen on this survey (214 m of real data in the 10-15
+  # window); confirm against the .evl line files before changing it.
+  crop_max_range_m:
+    type: float
+    default: 250.0
+
+  # Chunking of the shared store, and therefore the granularity a user's
+  # window reads at. ~21 chunks for a 15-raw-file segment.
+  survey_chunk_ping_time:
+    type: int
+    default: 2000
+
+steps:
+
+  - include: sub_recipes/processing_lvl_1_survey.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      cruise_id: "HB2407"
+      record_author: "<Your Name>"
+      sonar_model: "EK80"
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Transducer depth comes from the raw file's drop keel offset (e.g. 7.5 m)
+      # plus heave, with datum_correction_m assuming the recorded offset is
+      # waterline referenced.
+      datum_correction_m: -1.0
+      use_heave: true
+      heave_sign: 1.0
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}

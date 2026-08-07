@@ -38,13 +38,41 @@ inputs:
       Sign applied to platform heave. Determined empirically for this survey
       by correlating raw heave against the hand-verified EVL seabed line
       (0.14 m residual for +1.0 vs 0.75 m for -1.0).
-  seabed_line_path:
+  seabed_line_folder:
     type: path
-    description: "Echoview .evl seabed line used as the seafloor for masking."
+    description: >
+      Folder of Echoview .evl seabed line exports; the ones covering
+      file_time_start to file_time_end are combined into the seafloor used for
+      masking. A single .evl file also works, and is then read whole regardless
+      of the window.
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime selecting which seabed line files to read,
+      by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same
+      window that selected the raw files in processing level 1; leave unset to
+      read every line file in the folder.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+  seabed_line_max_gap_s:
+    type: float
+    default: 600
+    description: >
+      Widest hole in the combined seabed line, in seconds, to interpolate
+      across. Consecutive line files butt up against each other to within a
+      second, so this only bites across a survey-leg gap, where interpolating
+      would otherwise draw a straight seafloor over days of missing line.
   surface_depth_m:
     type: float
     default: 10.0
-    description: "Depth in meters above which the surface mask excludes samples."  
+    description: "Depth in meters above which the surface mask excludes samples." 
+  seafloor_buffer_m:
+    type: float
+    default: 1.0
+    description: "Height of buffer above seabed line to mask."    
   noise_range_sample_num:
     type: int
     default: 10
@@ -110,12 +138,6 @@ steps:
       encode_mode: "power"
       to_disk: false
 
-  # The seafloor line comes from a hand-verified Echoview export rather than
-  # from detection. To go back to detecting it from the Sv data instead, swap
-  # the op and params below for the commented ep_detect_seafloor block — the
-  # step id and the seafloor_depth output port are the same either way, so
-  # create_seafloor_mask needs no edit.
-  #
   # - id: detect_seafloor
   #   op: ep_detect_seafloor
   #   checkpoint: save
@@ -133,12 +155,18 @@ steps:
     inputs:
       ds_Sv: ${ep_add_depth.ds_Sv}
     params:
-      evl_path: ${inputs.seabed_line_path}
-      # The line covers 2024-10-12 00:51:44 to 12:48:18. Pings outside that
-      # span come back NaN and are masked away entirely, which the step reports
-      # as its ping coverage — raise min_coverage to fail the run instead.
+      evl_path: ${inputs.seabed_line_folder}
+      # Same window that selects the raw files, so the line always spans the
+      # pings. A line file's span runs from its own name stamp to the next
+      # file's, which is what pulls in the export straddling the window start.
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      # No extrapolation past the line's ends: pings outside it come back NaN
+      # and create_seafloor_mask drops them entirely, so min_coverage below
+      # fails the run rather than letting that happen quietly.
       edge_extend_s: 0.0
-      min_coverage: 0.0
+      max_gap_s: ${inputs.seabed_line_max_gap_s}
+      min_coverage: 0.99
 
   - id: create_seafloor_mask
     op: create_seafloor_mask
@@ -148,7 +176,7 @@ steps:
     params:
       # The seabed sits at 55-71 m in this line; a buffer anywhere near that
       # depth keeps nothing at all.
-      seafloor_buffer_m: 0.5
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
 
   - id: create_surface_mask
     op: create_surface_mask
@@ -185,5 +213,7 @@ steps:
     inputs:
       ds_Sv: ${rechunk_before_noise.ds_Sv}
     params:
-      noise_range_sample_num: ${inputs.noise_range_sample_num}
-      noise_ping_num: ${inputs.noise_ping_num}
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+      # Must be a dB string, not a bare number. Lower it to keep more weak data.
+      # SNR_threshold: "0dB"

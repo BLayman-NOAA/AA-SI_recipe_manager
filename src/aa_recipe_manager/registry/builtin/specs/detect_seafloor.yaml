@@ -12,9 +12,18 @@ category: detection
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Calibrated Sv used by Sv-based detection methods, and the source of the
+      vertical reference: when it carries depth, the returned line is
+      surface-referenced rather than transducer-referenced. Optional, since
+      detection from the echosounder's own bottom pick reads echodata alone.
     required: false
   echodata:
     type: EchoData
+    description: >
+      Raw EchoData carrying the pings and any bottom detection the
+      echosounder recorded (the .bot data read by read_raw_files when
+      include_bot is true).
 outputs:
   seafloor_depth:
     type: DataArray

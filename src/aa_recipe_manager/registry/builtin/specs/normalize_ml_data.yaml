@@ -7,6 +7,11 @@ category: ml_preprocessing
 inputs:
   ds_ml:
     type: Dataset
+    description: >
+      Flattened ML Dataset to normalize, from reshape_for_ml, or from
+      add_auxiliary_features when auxiliary columns were appended. Those
+      columns are on unrelated scales (metres, seconds, a coefficient of
+      variation), which is what per_group_methods exists to handle.
 outputs:
   ds_normalized:
     type: Dataset
@@ -18,10 +23,16 @@ params:
     required: true
   dataset_name:
     type: str
+    description: >
+      ML dataset to normalize. Must match the dataset_name used by
+      reshape_for_ml.
     required: true
   normalization_name:
     type: str
-    description: Label assigned to this normalization for downstream tracking
+    description: >
+      Name this normalized result is stored under. run_hdbscan, the ML plots,
+      and filter_normalized_by_cluster take the same name to find it, so
+      several normalizations of one dataset can coexist and be compared.
     required: true
   shift_positive:
     type: bool

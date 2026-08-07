@@ -129,5 +129,5 @@ steps:
     inputs:
       ds_Sv: ${rechunk_before_noise.ds_Sv}
     params:
-      noise_range_sample_num: 10
-      noise_ping_num: 5
+      range_sample_num: 10
+      ping_num: 5

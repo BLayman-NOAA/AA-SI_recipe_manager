@@ -7,6 +7,11 @@ category: ml_preprocessing
 inputs:
   ds_MVBS:
     type: Dataset
+    description: >
+      Gridded MVBS Dataset to flatten, from compute_mvbs, or from
+      add_line_overlay when a line variable should travel with it. One MVBS
+      cell becomes one ML sample, with the channels of that cell as its
+      features.
 outputs:
   ds_ml_ready:
     type: Dataset
@@ -18,7 +23,12 @@ params:
     required: true
   dataset_name:
     type: str
-    description: Label assigned to this ML dataset for tracking
+    description: >
+      Name this ML dataset is stored under inside the returned Dataset. Every
+      later ML step (add_auxiliary_features, normalize_ml_data, run_hdbscan,
+      the ML plots) takes the same dataset_name to find the feature matrix
+      again, so a recipe can carry several independent ML datasets side by
+      side.
     required: true
   feature_strategy:
     type: str

@@ -6,6 +6,11 @@ description: >
   when a hand-verified Echoview bottom line is more trustworthy than running
   detection over the Sv data.
 
+  Echoview exports a survey as a series of part-day line files, so ``evl_path``
+  may be a folder: the files whose names span ``file_time_start`` to
+  ``file_time_end`` are selected and concatenated into one line before
+  interpolation. Give it the same window that selected the raw files.
+
   Drop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the
   output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so
   downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe
@@ -39,16 +44,19 @@ params:
   evl_path:
     type: path
     description: >
-      Path to the Echoview ``.evl`` line file. May be a local path or a remote
-      fsspec URL (e.g. gs://bucket/survey/seabed_lines/line.evl); remote files
-      are read in place (no download) since line files are small. The must_exist
-      check is skipped at validation time for remote URLs and enforced by the
-      step at run time instead.
+      A single Echoview ``.evl`` line file, or a folder of them to select from
+      with file_time_start / file_time_end. May be a local path or a remote
+      fsspec URL (e.g. gs://bucket/survey/seabed_lines); remote files are read
+      in place (no download) since line files are small. The must_exist check is
+      skipped at validation time for remote URLs and enforced by the step at run
+      time instead.
     required: true
     constraints:
       must_exist: true
-    # Content-addressed so re-exporting or hand-editing the line invalidates the
-    # cached step, while merely moving the file does not.
+    # Content-addressed so re-exporting or hand-editing a line invalidates the
+    # cached step, while merely moving the file does not. For a folder the hash
+    # covers every .evl in it, not just the ones the window selects, so adding an
+    # unrelated line file also invalidates the step (same as raw_input_folder).
     fingerprint_mode: checksum
   vertical_reference:
     type: str
@@ -106,6 +114,27 @@ params:
       away. Default 0.0 never fails.
     required: false
     default: 0.0
+  file_time_start:
+    type: str
+    description: >
+      Optional inclusive ISO datetime (e.g. "2024-10-12T00:15") selecting which
+      line files in an evl_path folder to read, by the
+      d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same window
+      that selected the raw files so the line and the pings stay in step.
+
+      A file's span runs from its own name stamp to the *next* file's, not to
+      the end stamp in its own name - Echoview's end stamp under-reports the
+      line's real last point by about one raw file's duration, so trusting it
+      would drop the export straddling the window start and leave the leading
+      pings with no seafloor. Selection is name-based, so no line data is read
+      (or downloaded) to filter. Ignored when evl_path names a single file.
+    required: false
+  file_time_end:
+    type: str
+    description: >
+      Optional inclusive ISO datetime upper bound for line file selection.
+      See file_time_start.
+    required: false
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.read_seafloor_line_evl

@@ -1,0 +1,148 @@
+# Processing Level 1 (Survey) - Raw Ingest and Per-File Calibration
+#
+# Same steps as processing_lvl_1_per_file.yaml, with one difference that is the
+# whole point of the survey/user split: the time window here is a SURVEY-WIDE
+# constant, defaulted in this file, not the window a user asks for.
+#
+# WHY THAT MATTERS
+#
+#   Step hashes are a Merkle chain -- each step folds in its parents' hashes.
+#   initial_setup and gen_cal_mapping take file_time_start / file_time_end as
+#   params, so a user's window wired in here changes their hashes and every
+#   hash below them. Two users asking for different segments would then share
+#   no cached work at all, even for byte-identical per-file processing of the
+#   same raw files. Verified: changing only the window changed initial_setup,
+#   read_raw, combine_raw, compute_sv and ep_add_depth hashes.
+#
+#   Leaving the window fixed here means every user recipe that includes this
+#   file with the same overrides computes the same hashes, hits the shared
+#   survey cache, and narrows to its own segment later via
+#   select_ping_time_range in processing_lvl_2_user.yaml.
+#
+# So: do not wire ${inputs.file_time_start} into this include from a user
+# recipe. Override survey_time_start / survey_time_end only when the survey
+# itself changes.
+#
+# Included by survey_preprocess.yaml and by every user recipe built on it.
+
+recipe:
+  name: "processing_lvl_1_survey"
+  description: "Per-file raw ingest and calibration over a fixed survey-wide window."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: >
+      Folder containing the raw acoustic files (local path or gs:// URL).
+      Declare it with fingerprint_mode: auto in the parent recipe so the
+      folder's contents, not its location, enter the hash -- that way a local
+      copy and the bucket produce the same survey hash.
+  cal_input_folder:
+    type: path
+    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK80"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder".
+  survey_time_start:
+    type: str
+    required: false
+    description: >
+      Inclusive ISO datetime bounding the SURVEY, not a user's segment. Leave
+      unset to ingest every raw file in the folder, which is the usual choice
+      for a survey-level run. Changing it re-keys every downstream checkpoint.
+  survey_time_end:
+    type: str
+    required: false
+    description: "Inclusive ISO datetime upper bound; see survey_time_start."
+  ping_time_chunk:
+    type: int
+    default: 10000
+    description: >
+      Chunk length along ping_time for each file's EchoData. A single raw file
+      holds far fewer pings than this, so the default writes each file's
+      checkpoint as one chunk.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.survey_time_start}
+      file_time_end: ${inputs.survey_time_end}
+
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+      file_time_start: ${inputs.survey_time_start}
+      file_time_end: ${inputs.survey_time_end}
+
+  # --- Per-file fan-out starts here --------------------------------------
+  # One mapped instance per raw file in the survey, each checkpointed under its
+  # own content-addressed instance hash. Adding a file to the survey later runs
+  # the chain for that file only.
+
+  # checkpoint: never -- the output is an exe_temp store path deleted at the end
+  # of the run, so it must not be cached under any checkpoint mode.
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      raw_file_paths:
+        - ${_item}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: false
+      intermediate_format: "zarr"
+
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+    params:
+      ping_time_chunk: ${inputs.ping_time_chunk}
+
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}
+    params:
+      raw_file_path: ${_item}

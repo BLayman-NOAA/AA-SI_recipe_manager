@@ -2,14 +2,23 @@ op: apply_sv_mask
 cache_key: apply_sv_mask  # pinned cache identity - keep stable across op renames
 description: >
   Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.
+
+  Thin wrapper over echopype.mask.apply_mask, calling it against the Sv
+  variable with NaN as the fill value. It adds nothing of its own, so the
+  broadcasting and alignment rules are echopype's.
 category: masking
 inputs:
   ds_Sv:
     type: Dataset
+    description: Sv Dataset to mask, normally straight from compute_sv.
     expected_variables:
       - Sv
   mask:
     type: DataArray
+    description: >
+      Boolean mask broadcastable against ds_Sv["Sv"], where True marks a
+      sample to keep. Normally the single mask from combine_masks, so every
+      exclusion rule the recipe built is applied in one pass.
 outputs:
   ds_Sv:
     type: Dataset

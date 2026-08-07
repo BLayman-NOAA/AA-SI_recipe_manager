@@ -25,8 +25,10 @@ params:
     default: 0
   max_depth:
     type: float
-    description: Maximum depth (y-axis) in meters
-    required: true
+    description: >
+      Maximum depth (y-axis) in meters. Omit to use the deepest depth present
+      in the data.
+    required: false
   ping_min:
     type: int
     description: First ping index to display
@@ -34,18 +36,29 @@ params:
     default: 0
   ping_max:
     type: int
-    description: Last ping index to display
-    required: true
+    description: Last ping index to display. Omit to display through the last ping.
+    required: false
   x_axis_units:
     type: str
-    description: "Units for the x-axis ('seconds' or 'datetime')"
+    description: >
+      Units for the x-axis: 'seconds' (default), 'pings', 'meters' (distance
+      travelled, derived from the GPS track), or 'bins' (MVBS input only).
     required: false
     default: "seconds"
   y_axis_units:
     type: str
-    description: "Units for the y-axis ('meters' or 'samples')"
+    description: >
+      Units for the y-axis: 'meters' (default), 'range_sample', or 'bins'
+      (MVBS input only).
     required: false
     default: "meters"
+  panel_width_to_height:
+    type: float
+    description: >
+      Force each frequency panel to be this many times wider than tall
+      (for example 8 for a long strip). Omit for automatic sizing.
+    required: false
+    default: null
   overlay_lines:
     type: list
     description: >
@@ -89,3 +102,4 @@ implementations:
       url: https://github.com/BLayman-NOAA/AA-SI_Visualization.git
     param_map:
       ds_Sv_source: ds_Sv_original
+      panel_width_to_height: y_to_x_aspect_ratio_override

@@ -46,9 +46,16 @@ params:
     required: true
   dataset_name:
     type: str
+    description: >
+      ML dataset both passes were clustered from. Must match the
+      dataset_name used by reshape_for_ml.
     required: true
   normalization_name:
     type: str
+    description: >
+      Normalized feature set both passes were clustered from, matching the
+      normalization_name used by normalize_ml_data. Recorded on the merged
+      result so it stays traceable to the features it came from.
     required: false
     default: null
   retain_parent_labels:

@@ -6,7 +6,12 @@ description: >
   or a list of in-memory EchoData objects when intermediate_format is "none".
   This is the future map_over target for parallel per-file processing.
   NOTE: use intermediate_format "netcdf" (default) or "none". The "zarr" option
-  is not recommended — see the intermediate_format parameter description below.
+  is not recommended; see the intermediate_format parameter description below.
+
+  The per-file conversion is echopype.open_raw, and sonar_model, include_bot,
+  and use_swap are forwarded to it. Around that call this step adds remote
+  file staging, .bot companion handling, and writing each result to an
+  intermediate store.
 category: io
 inputs:
   raw_file_paths:
@@ -15,8 +20,8 @@ inputs:
       Paths to .raw files to open. Entries may be local paths or remote fsspec
       URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded
       to a local scratch directory, converted, and the local copy deleted
-      before the next file is fetched — the machine only ever holds ~1 raw
-      file at a time; bucket objects are never modified or deleted.
+      before the next file is fetched, so the machine only ever holds ~1 raw
+      file at a time. Bucket objects are never modified or deleted.
     # Harvested into run provenance for recipes that read raw files directly
     # (no initial_setup step that materializes the list as an output).
     provenance_role: raw_file_list

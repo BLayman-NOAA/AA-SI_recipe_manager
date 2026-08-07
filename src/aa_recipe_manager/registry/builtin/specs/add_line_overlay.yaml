@@ -8,6 +8,10 @@ category: annotation
 inputs:
   ds:
     type: Dataset
+    description: >
+      Dataset the line is joined onto, normally the gridded MVBS from
+      compute_mvbs. The line is aligned to this Dataset's ping_time, so join
+      it after the grid the plot or the ML reshape will actually use.
 outputs:
   ds:
     type: Dataset

@@ -32,6 +32,11 @@ SPECS_DIR = REPO_ROOT / "src" / "aa_recipe_manager" / "registry" / "builtin" / "
 # (notebook runtime essentials).
 NON_SPEC_EXTRAS = {"ipykernel", "ipywidgets"}
 
+# Ports and params allowed to ship without a description. The generated op
+# reference renders these as blanks, so the list is empty and should stay that
+# way; add an entry only for a field that is deliberately undocumented.
+KNOWN_MISSING_DESCRIPTIONS: set[str] = set()
+
 
 def _spec_dep_names() -> set[str]:
     yaml = YAML(typ="safe")
@@ -67,6 +72,40 @@ def test_extra_covers_every_builtin_spec_dependency():
         "Built-in spec dependencies missing from "
         "[project.optional-dependencies].all-builtin-specs in pyproject.toml: "
         f"{sorted(missing)}"
+    )
+
+
+def _undescribed_fields() -> set[str]:
+    """Every spec, port, and param that ships without a description."""
+    yaml = YAML(typ="safe")
+    missing: set[str] = set()
+    for path in sorted(SPECS_DIR.glob("*.yaml")):
+        spec = yaml.load(path.read_text(encoding="utf-8")) or {}
+        op = spec.get("op", path.stem)
+        if not str(spec.get("description") or "").strip():
+            missing.add(op)
+        for group in ("inputs", "outputs", "params"):
+            for name, declaration in (spec.get(group) or {}).items():
+                text = (declaration or {}).get("description")
+                if not str(text or "").strip():
+                    missing.add(f"{op}.{group}.{name}")
+    return missing
+
+
+def test_no_new_undescribed_spec_fields():
+    missing = _undescribed_fields()
+    new = missing - KNOWN_MISSING_DESCRIPTIONS
+    assert not new, (
+        "These spec fields have no description. Add one, or extend "
+        f"KNOWN_MISSING_DESCRIPTIONS if that is deliberate: {sorted(new)}"
+    )
+
+
+def test_known_missing_descriptions_has_no_stale_entries():
+    stale = KNOWN_MISSING_DESCRIPTIONS - _undescribed_fields()
+    assert not stale, (
+        "These entries now have descriptions and should be removed from "
+        f"KNOWN_MISSING_DESCRIPTIONS: {sorted(stale)}"
     )
 
 

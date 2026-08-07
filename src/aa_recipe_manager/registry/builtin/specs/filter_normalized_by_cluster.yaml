@@ -40,9 +40,16 @@ params:
     default: -1
   dataset_name:
     type: str
+    description: >
+      ML dataset to subset. Must match the dataset_name used by
+      reshape_for_ml.
     required: true
   normalization_name:
     type: str
+    description: >
+      Normalized feature set to subset, matching the normalization_name used
+      by normalize_ml_data. The filtered copy keeps this name, so the
+      second-pass run_hdbscan takes the same value.
     required: true
 implementations:
   - key: default

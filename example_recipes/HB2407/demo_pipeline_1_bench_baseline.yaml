@@ -23,7 +23,7 @@
 
 recipe:
   name: "processing_levels_pipeline_gcs_bench_baseline"
-  description: "HB1603 processing levels pipeline reading all inputs from a GCS bucket."
+  description: "HB2407 processing levels pipeline reading all inputs from a GCS bucket."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -35,6 +35,18 @@ inputs:
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+  seabed_line_folder:
+    type: path
+    default: "./seabed_lines"
+
+  # Data time range. Selects the raw files to process AND the Echoview seabed
+  # line exports to read, so the line always spans the pings.
+  file_time_start:
+    type: str
+    default: "2024-10-12T00:15"
+  file_time_end:
+    type: str
+    default: "2024-10-12T11:15"
 
   # Default display window shared by every plotting step in this pipeline
   # You can override these by hardcoding values for a specific step or sub-recipe
@@ -64,10 +76,9 @@ steps:
     input_overrides:
       raw_input_folder: ${inputs.raw_input_folder}
       cal_input_folder: ${inputs.cal_input_folder}
-      # Data time range:
-      file_time_start: "2024-10-12T00:15"
-      file_time_end: "2024-10-12T11:15"
-      cruise_id: "HB1603"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cruise_id: "HB2407"
       record_author: "<Your Name>"
       sonar_model: "EK80"
       # Fixed in both benchmark variants: this only controls combine_raw's own
@@ -90,7 +101,9 @@ steps:
       # parameters for echopype's remove_background_noise:
       noise_range_sample_num: 10
       noise_ping_num: 5
-      seabed_line_path: "./seabed_lines/HDD_Henry_B_Bigelow_HB2407_Auxiliary_EV_seabedlines_d20241012_t005144-t115311_evseabed.evl"
+      seabed_line_folder: ${inputs.seabed_line_folder}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
       # Benchmark: oversized -> clamps to a single ping_time chunk feeding
       # remove_noise (via the standalone rechunk_before_noise step).
       noise_chunk_ping_time: 999999999

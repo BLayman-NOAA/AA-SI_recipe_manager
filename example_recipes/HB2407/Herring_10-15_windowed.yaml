@@ -1,0 +1,188 @@
+# HB2407 Herring 10-15 - User Recipe over the Shared Survey Sv Store
+#
+# The user-facing half of the survey/user split. Levels 1 and 2a are included
+# verbatim from survey_preprocess.yaml, so they hash identically and come back
+# as cache hits; select_window narrows the shared store to this analyst's
+# segment; everything below that is this analyst's own parameters.
+#
+#   level 1   [cache hit]  per file: read -> calibration params
+#   level 2a  [cache hit]  per file: Sv -> depth -> crop; merged, chunked store
+#   level 2b  select_window -> EVL seafloor -> masks -> apply -> remove_noise
+#   level 3   sparse masking, MVBS, per-cell statistics
+#   level 4   ML reshape, clustering, reporting
+#
+# THE ONE RULE THAT MAKES THIS WORK
+#
+#   The two survey-level include blocks below must stay byte-identical to the
+#   ones in survey_preprocess.yaml, and must never be handed
+#   ${inputs.file_time_start}. Step hashes are a Merkle chain: a user window
+#   wired into initial_setup changes its hash and every hash beneath it, so the
+#   shared Sv store would be recomputed per analyst instead of reused.
+#   Verified -- changing only the window changed the hashes of initial_setup,
+#   read_raw, combine_raw, compute_sv and ep_add_depth.
+#
+#   The window enters at select_window in level 2b and nowhere else. Steps below
+#   it are re-keyed per window, which is correct: they operate on different
+#   data. Steps above it are not.
+#
+# Two analysts wanting different noise or MVBS settings over the same segment
+# share everything through select_window and diverge after it.
+#
+# Read the shared tier that survey_preprocess.yaml wrote:
+#   aa-recipe run Herring_10-15_windowed.yaml --survey-cache-dir gs://.../survey_cache
+#
+# Usage: aa-recipe dry-run Herring_10-15_windowed.yaml --visualize
+
+recipe:
+  name: "herring_10_15_windowed"
+  description: "HB2407 Herring 10-15 analysis over a window of the shared survey Sv store."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # --- Survey-level. Must match survey_preprocess.yaml. -------------------
+  raw_input_folder:
+    type: path
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+  crop_max_range_m:
+    type: float
+    default: 250.0
+  survey_chunk_ping_time:
+    type: int
+    default: 2000
+
+  # --- User-level. Vary these freely; nothing above is affected. ----------
+  seabed_line_folder:
+    type: path
+    default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
+
+  # This analyst's segment. Selects the ping_time window out of the shared
+  # store AND the .evl line files to read, so the line spans the pings.
+  file_time_start:
+    type: str
+    default: "2024-10-15T13:38:52"
+  file_time_end:
+    type: str
+    default: "2024-10-15T23:43:36"
+
+  # Default display window shared by every plotting step in this pipeline.
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    default: 25
+  ping_min:
+    type: int
+    default: 0
+  # With no default, ping_max plots every ping.
+  ping_max:
+    type: int
+    # default: 500
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  # ======================================================================
+  # SURVEY LEVEL - keep byte-identical to survey_preprocess.yaml.
+  # No ${inputs.file_time_start} anywhere in these two blocks.
+  # ======================================================================
+
+  - include: sub_recipes/processing_lvl_1_survey.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      cruise_id: "HB2407"
+      record_author: "<Your Name>"
+      sonar_model: "EK80"
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      datum_correction_m: -1.0
+      use_heave: true
+      heave_sign: 1.0
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
+
+  # ======================================================================
+  # USER LEVEL - the window enters here and nowhere above.
+  # ======================================================================
+
+  - include: sub_recipes/processing_lvl_2_user.yaml
+    input_overrides:
+      survey_sv: ${rechunk_survey_sv.ds_Sv}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      seabed_line_folder: ${inputs.seabed_line_folder}
+      surface_depth_m: 5.0
+      seafloor_buffer_m: 1
+      noise_ping_num: 5
+      noise_range_sample_num: 10
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 100
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "2m"
+      ping_time_bin: "2s"
+      nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${compute_mvbs.ds_MVBS}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+
+  # Neither echodata nor seafloor_depth is wired: level 4 only needs either for
+  # the 'seafloor_depth'/'altitude' features, which features: [cell_cv] does
+  # not use. Unlike the per-file pipeline, detect_seafloor here is a plain
+  # survey-wide step, so ${detect_seafloor.seafloor_depth} WOULD resolve safely
+  # on a resume if you ever want those features.
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs: ${compute_mvbs.ds_MVBS}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}

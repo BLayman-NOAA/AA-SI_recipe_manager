@@ -16,7 +16,22 @@ inputs:
     description: "MVBS dataset with line overlay variables added."
   echodata:
     type: echodata
-    description: "EchoData object used for auxiliary ML features."
+    required: false
+    description: >
+      EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML
+      features. Only needed when seafloor_depth below is not wired, and not at
+      all for the features list this recipe currently uses.
+  seafloor_depth:
+    type: dataarray
+    required: false
+    description: >
+      Pre-detected seafloor line, 1-D over ping_time, wired from a
+      detect_seafloor step. Takes precedence over echodata for the
+      'seafloor_depth' and 'altitude' features, so the ML features use the same
+      line the masking stack used rather than a channel mean recomputed
+      internally. In a per-file map_over pipeline, wire it straight from the
+      mapped step: the reference resolves to the list of per-file lines, which
+      is concatenated along ping_time in segment order.
   overlay_line_var:
     type: str
     default: "overlay_line"
@@ -43,8 +58,7 @@ inputs:
     description: "First ping index shown by the ML and clustering echograms."
   ping_max:
     type: int
-    default: 515
-    description: "Last ping index shown by the ML and clustering echograms."
+    description: "Last ping index shown by the ML and clustering echograms. Omit for every ping."
   x_axis_units:
     type: str
     default: "seconds"
@@ -72,6 +86,7 @@ steps:
       ds_ml: ${reshape_ml.ds_ml_ready}
       echodata: ${inputs.echodata}
       ds_sv: ${inputs.cell_stats_sv}
+      seafloor_depth: ${inputs.seafloor_depth}
     params:
       dataset_name: "ml_dataset"
       features:
@@ -113,11 +128,12 @@ steps:
       dataset_name: "ml_dataset"
       normalization_name: "normalized_flatten_mean_centered"
       ml_result_name: "hdbscan_results"
-      min_cluster_size_fraction: 0.01
+      min_cluster_size_fraction: .005 
       min_samples: 2
       sample_size: 1000000
-      cluster_selection_method: "leaf"
+      cluster_selection_method: "eom"
       use_hdbscan: true
+      soft_membership_threshold: 0.6
 
   - id: embed_results
     op: embed_clustering_results
@@ -149,6 +165,7 @@ steps:
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
+      cluster_stats_dpi: 200
       overlay_line_var: ${inputs.overlay_line_var}
       cluster_colors:
         - "#9D00FF"

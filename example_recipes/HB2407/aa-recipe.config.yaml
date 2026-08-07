@@ -43,7 +43,8 @@ survey_cache_dir: ./survey_cache
 
 inputs:
   # raw_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/raw
-  raw_input_folder: ./raw
+  # raw_input_folder: ./raw
+  raw_input_folder: gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Echosounder/Data/Raw
   # cal_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/calibration
   # line_file_path:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/line_files/your_line_file.csv
 

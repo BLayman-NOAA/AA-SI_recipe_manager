@@ -3,10 +3,20 @@ cache_key: remove_background_noise  # pinned cache identity - keep stable across
 description: >
   Estimate and remove background noise from Sv using the De Robertis and
   Higginbottom method. Returns a cleaned Sv Dataset.
+
+  Thin wrapper over echopype.clean.remove_background_noise. Every parameter
+  below is forwarded to it unchanged, so its behavior is echopype's. The one
+  thing the wrapper adds is that the corrected values are copied over the Sv
+  variable, so downstream steps reading Sv get the cleaned data without
+  having to know about Sv_corrected. Both variables are present on the
+  result.
 category: noise_removal
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Sv Dataset to denoise, normally the masked Sv from apply_sv_mask so the
+      seafloor and surface returns are not folded into the noise estimate.
     expected_variables:
       - Sv
 outputs:
@@ -16,16 +26,26 @@ outputs:
     expected_variables:
       - Sv
 params:
-  noise_range_sample_num:
-    type: int
-    description: Number of range samples used to estimate the noise level
-    required: false
-    default: 10
-  noise_ping_num:
+  ping_num:
     type: int
     description: Number of pings used to estimate the noise level
     required: false
     default: 5
+  range_sample_num:
+    type: int
+    description: Number of range samples used to estimate the noise level
+    required: false
+    default: 10
+  background_noise_max:
+    type: str
+    description: "Upper limit on the estimated noise level (e.g. '-125dB'); omit to leave it unbounded"
+    required: false
+    default: null
+  SNR_threshold:
+    type: str
+    description: "Signal-to-noise ratio below which corrected samples are masked out (e.g. '3.0dB')"
+    required: false
+    default: "3.0dB"
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.remove_noise

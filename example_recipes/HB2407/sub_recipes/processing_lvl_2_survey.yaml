@@ -1,0 +1,164 @@
+# Processing Level 2a (Survey) - Per-File Sv and Depth, then the Survey Fan-In
+#
+# The survey half of level 2, and the boundary of the shared artifact. It runs
+# once per cruise; every user recipe includes it verbatim, hits the cache, and
+# picks up from merge_survey_sv.
+#
+#   [per file] compute_sv -> compute_transducer_depth -> ep_add_depth
+#              -> crop_range (fixed ceiling, so every file ends the same length)
+#   [fan-in]   merge_survey_sv (collect, concat along ping_time)
+#   [survey]   rechunk_survey_sv -> the shared, chunked Sv store
+#
+# WHY THE MERGE SITS AFTER ep_add_depth
+#
+#   Everything up to here is a property of the raw data and its calibration:
+#   Sv, the vertical reference, and the range axis. Nothing above this line is
+#   something a user would reasonably want to vary per analysis. Seabed
+#   detection, masking, noise removal and MVBS all are, so they live in
+#   processing_lvl_2_user.yaml and below.
+#
+#   compute_transducer_depth and ep_add_depth also need this file's EchoData,
+#   so they cannot move past the merge without reintroducing a survey-wide
+#   combine_raw. The merge is the last point where per-file EchoData is still
+#   in hand.
+#
+# WHY THE CROP IS PER FILE AND USES A FIXED CEILING
+#
+#   Concatenating along ping_time needs every segment to share a range_sample
+#   length. HB2407's files do not: they run 2783, 2795, 2799 and 2806 samples,
+#   and merge_datasets resolves that by outer-joining to the longest and
+#   NaN-padding the rest -- which leaves NaN in echo_range, where downstream
+#   range binning reads it. Their sample interval IS uniform (0.18804 m), so a
+#   fixed crop_max_range_m puts every file on the same length and removes the
+#   padding. The data-driven crop modes cannot be used here: they would each
+#   pick a different depth per file.
+#
+# ep_add_splitbeam_angle is omitted: HB2407's calibration mapping supplies no
+# angle_sensitivity, so echopype's add_splitbeam_angle divides by an all-None
+# array and raises TypeError. Nothing downstream consumes split-beam angles.
+#
+# Must be included immediately after processing_lvl_1_survey.yaml: its steps
+# continue that file's mapped chain over ${initial_setup.raw_file_paths}.
+
+recipe:
+  name: "processing_lvl_2_survey"
+  description: "Per-file Sv and depth, fan-in to the shared survey Sv store."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Per-file EchoData object from the survey raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters selected for this file."
+  env_params:
+    type: dict
+    description: "Environmental parameters selected for this file."
+  datum_correction_m:
+    type: float
+    default: 0.0
+    description: >
+      Metres added to the file's recorded drop keel offset to reach depth below
+      the waterline. 0 takes the recorded offset as already waterline referenced.
+  use_heave:
+    type: bool
+    default: true
+    description: "Add the per-ping platform heave term to transducer depth."
+  heave_sign:
+    type: float
+    default: 1.0
+    description: >
+      Sign applied to platform heave. Determined empirically for this survey by
+      correlating raw heave against the hand-verified EVL seabed line (0.14 m
+      residual for +1.0 vs 0.75 m for -1.0).
+  crop_max_range_m:
+    type: float
+    default: 250.0
+    description: >
+      Fixed range ceiling, in metres, applied per file before the merge. Must
+      be a constant, not derived from the data, or files end up with different
+      range_sample lengths. Pick it from the deepest seabed anywhere in the
+      survey plus a margin -- the .evl line files give you that without reading
+      any Sv. Too shallow silently discards real echoes, so check the step's
+      reported "deepest kept" against the seabed line.
+  survey_chunk_ping_time:
+    type: int
+    default: 2000
+    description: >
+      Ping-time chunk size of the shared survey Sv store, and therefore the
+      granularity a user's select_ping_time_range reads at. Set it near the
+      window users typically ask for: a 15-raw-file segment is roughly 42000
+      pings, so 2000 makes such a window about 21 chunks. Larger chunks mean
+      fewer, bigger reads and more read amplification on a narrow window.
+
+steps:
+
+  # --- Per-file chain (continues the map_over from level 1) ---------------
+
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+      waveform_mode: "CW"
+      encode_mode: "power"
+
+  - id: compute_transducer_depth
+    op: compute_transducer_depth
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      datum_correction_m: ${inputs.datum_correction_m}
+      use_heave: ${inputs.use_heave}
+      heave_sign: ${inputs.heave_sign}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      depth_offset: ${compute_transducer_depth.transducer_depth}
+
+  # Fixed ceiling only. See the header for why the data-driven modes cannot be
+  # used per file.
+  - id: crop_survey_range
+    op: crop_range
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+    params:
+      max_range_m: ${inputs.crop_max_range_m}
+      drop_trailing_all_nan: false
+
+  # --- Fan-in: the shared survey artifact --------------------------------
+
+  - id: merge_survey_sv
+    op: merge_datasets
+    collect: ${crop_survey_range.ds_Sv}
+    inputs:
+      datasets: ${crop_survey_range.ds_Sv}
+    params:
+      dim: "ping_time"
+
+  # Chunked along ping_time and checkpointed: this is the store users read.
+  # The checkpoint write streams chunk by chunk, so building it does not need
+  # the survey in memory -- the memory-hungry steps (sparse masking, MVBS,
+  # per-cell statistics) all live downstream of the user's window.
+  - id: rechunk_survey_sv
+    op: rechunk_dataset
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_survey_sv.merged}
+    params:
+      ping_time_chunk: ${inputs.survey_chunk_ping_time}

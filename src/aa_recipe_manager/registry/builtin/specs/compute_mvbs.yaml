@@ -3,10 +3,18 @@ cache_key: compute_mvbs  # pinned cache identity - keep stable across op renames
 description: >
   Compute Mean Volume Backscattering Strength by averaging Sv over range and
   time bins. Returns a gridded MVBS Dataset.
+
+  This step is echopype.commongrid.compute_MVBS called directly, so the bin
+  edges and the averaging (in the linear domain, converted back to dB) are
+  echopype's.
 category: processing
 inputs:
   ds_Sv:
     type: Dataset
+    description: >
+      Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins,
+      so bins that failed the sparsity check are already NaN and do not pull
+      the bin means toward the noise floor.
     expected_variables:
       - Sv
 outputs:

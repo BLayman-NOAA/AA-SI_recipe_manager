@@ -1,7 +1,7 @@
 
 recipe:
   name: "processing_levels_pipeline_gcs"
-  description: "HB1603 processing levels pipeline reading all inputs from a GCS bucket."
+  description: "HB2407 processing levels pipeline reading all inputs from a GCS bucket."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -13,12 +13,19 @@ inputs:
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
-  # file_time_start:
-  #   type: str
-  #   default: "2024-09-04T12:15"
-  # file_time_end:
-  #   type: str
-  #   default: "2024-09-04T17:20"
+  seabed_line_folder:
+    type: path
+    default: "./seabed_lines"
+
+  # Data time range. Selects the raw files to process AND the Echoview seabed
+  # line exports to read, so the line always spans the pings. Leave both unset
+  # to process the whole folder and read every line file.
+  file_time_start:
+    type: str
+    default: "2024-10-12T00:15"
+  file_time_end:
+    type: str
+    default: "2024-10-12T11:15"
   range_bin:
     type: str
     default: "5m"
@@ -48,13 +55,13 @@ inputs:
 
 steps:
 
-  - include: sub_recipes/processing_lvl_1_gcs_parallel.yaml
+  - include: sub_recipes/processing_lvl_1_parallel.yaml
     input_overrides:
       raw_input_folder: ${inputs.raw_input_folder}
       cal_input_folder: ${inputs.cal_input_folder}
-      # file_time_start: ${inputs.file_time_start}
-      # file_time_end: ${inputs.file_time_end}
-      cruise_id: "HB1603"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cruise_id: "HB2407"
       record_author: "<Your Name>"
       sonar_model: "EK80"
 
@@ -63,7 +70,9 @@ steps:
       echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
-      seabed_line_path: "./seabed_lines/HDD_Henry_B_Bigelow_HB2407_Auxiliary_EV_seabedlines_d20241012_t005144-t115311_evseabed.evl"
+      seabed_line_folder: ${inputs.seabed_line_folder}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
       surface_depth_m: 10.0
       noise_range_sample_num: 10
       noise_ping_num: 5
