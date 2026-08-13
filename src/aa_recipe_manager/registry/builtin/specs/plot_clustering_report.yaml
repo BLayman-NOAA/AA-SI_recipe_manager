@@ -49,11 +49,30 @@ params:
     description: "[min_depth, max_depth, ping_min, ping_max] for echogram display"
     required: false
     default: []
+  time_min:
+    type: str
+    description: >
+      Start of the displayed window as a UTC timestamp, for example
+      "2024-10-15T12:30". Resolved to the closest ping and used instead of the
+      ping_min entry in plot_window. Omit to window by ping index.
+    required: false
+    default: null
+  time_max:
+    type: str
+    description: >
+      End of the displayed window as a UTC timestamp. Resolved to the closest
+      ping and used instead of the ping_max entry in plot_window. Omit to
+      window by ping index.
+    required: false
+    default: null
   x_axis_units:
     type: str
-    description: "Units for the clustering echogram x-axis ('seconds', 'pings', 'bins', or 'meters')"
+    description: >
+      Units for the clustering echogram x-axis: 'datetime' (default, absolute
+      UTC clock times), 'seconds' from the first ping shown, 'pings', 'bins',
+      or 'meters'.
     required: false
-    default: "seconds"
+    default: "datetime"
   y_axis_units:
     type: str
     description: "Units for the clustering echogram y-axis ('meters', 'range_sample', or 'bins')"

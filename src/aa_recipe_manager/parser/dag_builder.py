@@ -436,18 +436,23 @@ def _check_port_type_compatibility(
         return
     if tgt_port.type == "list":
         return
+    # A port may name several accepted types as "A | B"; the edge is compatible
+    # when the two sides share one. Applied to both sides so an op that really
+    # handles either (merge_datasets concatenates Datasets or DataArrays) can
+    # declare that on its output as well as its input.
+    src_types = {t.strip() for t in src_port.type.split("|")}
+    target_types = {t.strip() for t in tgt_port.type.split("|")}
     # If the target port has many=True it accepts a single element or a collected
     # list of that element type. Compare element types, not the wrapper.
     if tgt_port.many:
-        if src_port.type != tgt_port.type:
+        if not (src_types & target_types):
             warn_msgs.append(
                 f"Type mismatch on edge '{edge.source_step_id}.{edge.source_output}' -> "
                 f"'{edge.target_step_id}.{edge.target_input}': "
                 f"element type '{src_port.type}' is not compatible with '{tgt_port.type}'."
             )
         return
-    target_types = {t.strip() for t in tgt_port.type.split("|")}
-    if src_port.type not in target_types:
+    if not (src_types & target_types):
         warn_msgs.append(
             f"Type mismatch on edge '{edge.source_step_id}.{edge.source_output}' -> "
             f"'{edge.target_step_id}.{edge.target_input}': "

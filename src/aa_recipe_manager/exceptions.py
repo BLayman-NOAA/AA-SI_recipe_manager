@@ -42,6 +42,24 @@ class DependencyVersionError(Exception):
     """Raised when an implementation's dependency is missing or outside the declared version range."""
 
 
+class DependencyConflictError(Exception):
+    """Raised when a recipe's steps require irreconcilable versions of a package.
+
+    A Python environment holds one build of any package, so a recipe whose
+    steps disagree has no valid environment. Installing one of the two anyway
+    would silently give some step something other than what it declared.
+
+    Attributes:
+        conflicts: One message per package that could not be reconciled.
+    """
+
+    def __init__(self, conflicts: list[str]) -> None:
+        self.conflicts = conflicts
+        lines = [f"{len(conflicts)} dependency conflict(s):"]
+        lines.extend(f"  - {c}" for c in conflicts)
+        super().__init__("\n".join(lines))
+
+
 class PipelineExecutionError(Exception):
     """Raised when a step callable fails during direct pipeline execution.
 

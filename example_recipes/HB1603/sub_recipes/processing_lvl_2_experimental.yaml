@@ -1,0 +1,189 @@
+# Processing Level 2 (experimental seafloor detection)
+#
+# Identical to processing_lvl_2.yaml except that the seafloor line comes from
+# HDBSCAN clustering rather than the algorithmic detector. Everything else,
+# including the masking stack and noise removal, is unchanged.
+#
+# This recipe needs its own environment. Two of its steps come from
+# specs/experimental/, and ep_resample_to_geometry requires a build of echopype
+# that is not on PyPI, pinned to a commit. One environment holds one build of a
+# package, so this cannot share an env with a stable recipe:
+#
+#   aa-recipe env create processing_levels_pipeline_experimental.yaml #       --path ./hb1603_experimental_env
+#
+# How the seafloor branch works. Clustering cost grows with pings times range
+# samples, and HB1603 is 1548 x 15207, so the native grid means 23.5 million
+# points, which exhausts memory after about 26 minutes on a 16 GB machine.
+# build_range_grid plus ep_resample_to_geometry coarsen the vertical axis to
+# 5 m and cap it at 2100 m, leaving 421 samples per ping and 652 thousand
+# points: about 6 s to resample and under two minutes to cluster, with a line
+# that tracks log_seafloor_stats within roughly 30 m at every decile.
+#
+# It is a branch off compute_sv rather than an edit to the main chain because
+# the resampler returns only Sv, echo_range, frequency_nominal and water_level,
+# dropping the beam and calibration variables the rest of the pipeline needs.
+# ep_add_depth runs again on the branch with the same parameters the main chain
+# uses, so the seafloor line keeps the vertical reference create_seafloor_mask
+# compares it against. Only the 1-D line rejoins.
+#
+# On HB1603 the resampling is purely a size reduction: its five channels are
+# already on identical geometry (0.1949 m spacing, zero spread). On an EK80
+# survey it is also a correctness fix, since channels recorded at different
+# sample intervals put the same range_sample index at different depths, and the
+# detector differences channels against each other.
+#
+# The clustering sizes are not tuned. Smaller values have been seen to select a
+# bottom multiple, at roughly twice the real depth, since the deepest cluster
+# always wins. Check the line against log_seafloor_stats before trusting a run.
+
+recipe:
+  name: "processing_lvl_2_experimental"
+  description: "Compute Sv with HDBSCAN seafloor detection, build masks, and remove noise."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Combined EchoData object from the raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters extracted from the standardized mapping."
+  env_params:
+    type: dict
+    description: "Environmental parameters extracted from the standardized mapping."
+  noise_chunk_ping_time:
+    type: int
+    default: 100
+    description: >
+      Ping-time chunk size to apply before remove_noise, so its coarsen()-based
+      noise estimate can run in dask-parallel chunks instead of as one
+      in-memory block. Confirmed via isolated benchmark (2026-07-31, real
+      compute_sv checkpoint, 1548-ping window) to be a genuine ~40% win here,
+      despite echopype's add_remove_background_noise_attrs redundant-recompute
+      inefficiency. Kept a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly.
+
+steps:
+
+  - id: compute_sv
+    op: compute_sv
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      use_platform_vertical_offsets: true
+
+  - id: ep_add_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  - id: log_seafloor_stats
+    op: log_seafloor_detection_stats
+    inputs:
+      echodata: ${inputs.echodata}
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      min_valid_depth_m: 10.0
+
+  - id: seabed_grid
+    op: build_range_grid
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      spacing_m: 5.0
+      max_range_m: 2100.0
+
+  - id: seabed_resample
+    op: ep_resample_to_geometry
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      target_grid: ${seabed_grid.target_grid}
+
+  - id: seabed_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${seabed_resample.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      use_platform_vertical_offsets: true
+
+  - id: detect_seafloor
+    checkpoint: save
+    op: hdbscan_detect_seafloor
+    depends_on: [log_seafloor_stats]
+    inputs:
+      ds_Sv: ${seabed_depth.ds_Sv}
+    params:
+      min_cluster_size: 2000
+      min_samples: 500
+      num_feature_channels: 2
+      offset_m: 1.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: -10
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: 10.0
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      frequencies_to_mask: [70, 120, 200]
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: rechunk_before_noise
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      ping_time_chunk: ${inputs.noise_chunk_ping_time}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_noise.ds_Sv}
+    params:
+      range_sample_num: 10
+      ping_num: 5

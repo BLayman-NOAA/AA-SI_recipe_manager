@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
+    DependencyConflictError,
     DependencyVersionError,
     ImplementationNotFoundError,
     RecipeParseError,
@@ -222,6 +223,20 @@ def dry_run(
     return engine.run(dag, inputs=inputs, visualize=visualize, check_versions=check_versions)
 
 
+def _warn_dependency_conflicts(resolved: Any) -> None:
+    """Warn that an exported manifest omits packages that could not reconcile."""
+    if not resolved.has_conflicts:
+        return
+    import warnings
+
+    joined = "; ".join(resolved.conflict_messages)
+    warnings.warn(
+        f"Exported dependencies are incomplete: {joined} The manifest lists one "
+        "build per package, so it does not describe a working environment.",
+        stacklevel=3,
+    )
+
+
 def export_dependencies(
     recipe: str | Path | Recipe,
     *,
@@ -245,11 +260,18 @@ def export_dependencies(
     dag = _load_dag(recipe, check_versions=False)
     resolved = resolve_dependencies(dag)
 
+    # Inspecting a recipe whose dependencies do not reconcile is exactly when
+    # this command is useful, so report the conflicts rather than refusing. The
+    # machine formats have nowhere to put them and would otherwise be trusted
+    # as a complete answer, so those warn instead.
     if format == "requirements":
+        _warn_dependency_conflicts(resolved)
         content = resolved.to_requirements_txt()
     elif format == "conda":
+        _warn_dependency_conflicts(resolved)
         content = resolved.to_conda_env_yml()
     elif format == "pyproject":
+        _warn_dependency_conflicts(resolved)
         content = resolved.to_pyproject_snippet()
     else:
         lines = [f"Dependencies for recipe '{dag.recipe.name}':"]
@@ -261,6 +283,10 @@ def export_dependencies(
                 src = f"  [{dep.source}]" if dep.source != "pypi" else ""
                 steps = ", ".join(dep.requiring_steps)
                 lines.append(f"  {dep.name}{spec}{src}  (used by: {steps})")
+        if resolved.has_conflicts:
+            lines.append("")
+            lines.append("CONFLICTS (no single environment satisfies this recipe):")
+            lines.extend(f"  - {message}" for message in resolved.conflict_messages)
         content = "\n".join(lines)
 
     if output is not None:
@@ -364,6 +390,8 @@ def create_env(
 
     dag = _load_dag(recipe, input_values=inputs, check_versions=False)
     resolved = resolve_dependencies(dag)
+    if resolved.has_conflicts:
+        raise DependencyConflictError(resolved.conflict_messages)
 
     env_path = Path(env_path)
     local_overrides = local_overrides or {}

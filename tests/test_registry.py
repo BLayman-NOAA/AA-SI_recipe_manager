@@ -198,8 +198,18 @@ EXPECTED_BUILTIN_OPS = {
     "log_seafloor_detection_stats",
     "compute_per_cell_statistics",
     "filter_normalized_by_cluster",
+    "filter_normalized_by_feature",
     "merge_clustering_passes",
     "merge_datasets",
+    "build_range_grid",
+}
+
+# Ops from specs/experimental/. Registered like any other op so recipes can use
+# them, but excluded from the all-builtin-specs extra because they may pin an
+# unreleased dependency.
+EXPECTED_EXPERIMENTAL_OPS = {
+    "hdbscan_detect_seafloor",
+    "ep_resample_to_geometry",
 }
 
 
@@ -207,7 +217,19 @@ class TestBuiltinLoader:
     def test_all_builtin_specs_loaded(self):
         reg = load_builtin_registry()
         loaded = set(reg.list_ops())
-        assert loaded == EXPECTED_BUILTIN_OPS
+        assert loaded == EXPECTED_BUILTIN_OPS | EXPECTED_EXPERIMENTAL_OPS
+
+    def test_experimental_specs_are_registered_and_identifiable(self):
+        from aa_recipe_manager.registry.loader import experimental_ops
+
+        # Experimental ops resolve like any other, so a recipe can use them,
+        # but they stay separable so packaging can leave their pins out.
+        assert experimental_ops() == EXPECTED_EXPERIMENTAL_OPS
+        assert not (EXPECTED_EXPERIMENTAL_OPS & EXPECTED_BUILTIN_OPS)
+
+        reg = load_builtin_registry()
+        for op in EXPECTED_EXPERIMENTAL_OPS:
+            assert reg.get_spec(op).op == op
 
     def test_specs_are_valid_spec_objects(self):
         reg = load_builtin_registry()
@@ -321,6 +343,39 @@ class TestBuiltinLoader:
             "line_file_path": "csv_filepath",
             "line_name": "dive_profile_name",
         }
+
+    def test_hdbscan_detect_seafloor_implementation_resolves(self, monkeypatch):
+        original_version = importlib.metadata.version
+
+        def _version(name: str):
+            if name == "seabed-detection":
+                return "0.1.0"
+            return original_version(name)
+
+        monkeypatch.setattr(importlib.metadata, "version", _version)
+
+        reg = load_builtin_registry()
+
+        impl = reg.get_implementation("hdbscan_detect_seafloor")
+        assert impl.callable_path == "seabed_detection.detect_seafloor_hdbscan"
+        assert impl.output_map == {"seafloor_depth": "__return__"}
+        assert impl.dependency.name == "seabed-detection"
+
+    def test_seafloor_detection_ops_share_one_output_contract(self):
+        reg = load_builtin_registry()
+
+        # The four detection techniques are swapped by editing op/params alone,
+        # which only holds while they all emit the same output port.
+        for op in (
+            "detect_seafloor",
+            "ep_detect_seafloor",
+            "read_seafloor_line",
+            "hdbscan_detect_seafloor",
+        ):
+            spec = reg.get_spec(op)
+            assert set(spec.outputs) == {"seafloor_depth"}
+            assert spec.outputs["seafloor_depth"].type == "DataArray"
+            assert spec.inputs["ds_Sv"].type == "Dataset"
 
     def test_echopype_and_visualization_builtin_implementations_resolve(self):
         reg = load_builtin_registry()

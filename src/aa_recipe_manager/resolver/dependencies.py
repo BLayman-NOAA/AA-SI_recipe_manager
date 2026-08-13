@@ -37,6 +37,17 @@ class ResolvedDependencies:
     def has_conflicts(self) -> bool:
         return any(d.conflict for d in self.packages.values())
 
+    @property
+    def conflict_messages(self) -> list[str]:
+        """One message per unreconcilable package, naming the steps involved."""
+        messages: list[str] = []
+        for dep in self.packages.values():
+            if not dep.conflict:
+                continue
+            steps = ", ".join(dep.requiring_steps)
+            messages.append(f"{dep.conflict_message} Required by: {steps}.")
+        return messages
+
     def to_requirements_txt(self) -> str:
         lines: list[str] = []
         for dep in self.packages.values():
@@ -129,15 +140,29 @@ def _merge_dependency(
     existing = result.packages[name]
     existing.requiring_steps.append(step_id)
 
-    # Non-pypi sources: record URL; no version merging needed.
     if dep.source != "pypi" or existing.source != "pypi":
-        if existing.source != dep.source:
-            existing.conflict = True
-            existing.conflict_message = (
-                f"Package '{name}' required as both '{existing.source}' "
-                f"and '{dep.source}' source types."
-            )
-        elif dep.source == "git" and dep.url and existing.url and dep.url != existing.url:
+        _merge_pinned_dependency(existing, dep, name)
+        return
+
+    _merge_specifier(existing, dep.version, name)
+
+
+def _merge_pinned_dependency(
+    existing: ResolvedDependency,
+    dep: Dependency,
+    name: str,
+) -> None:
+    """Reconcile a package where at least one step pinned it to git or local.
+
+    A pin names an exact build, a pypi entry only a range, so the two are not
+    rival answers to the same question: the pin decides what gets installed and
+    the range stays on as a constraint that build still has to satisfy. This is
+    what lets one experimental step pull an unreleased package into a recipe
+    without every other step that merely tolerates the release having to agree.
+    Two pins that disagree are a real conflict and are recorded as one.
+    """
+    if existing.source == dep.source:
+        if dep.source == "git" and dep.url and existing.url and dep.url != existing.url:
             existing.conflict = True
             existing.conflict_message = (
                 f"Package '{name}' required from two different git URLs: "
@@ -145,15 +170,32 @@ def _merge_dependency(
             )
         return
 
-    # Merge pypi version specifiers.
-    combined = f"{existing.merged_specifier},{dep.version}".strip(",")
+    if existing.source != "pypi" and dep.source != "pypi":
+        existing.conflict = True
+        existing.conflict_message = (
+            f"Package '{name}' required as both '{existing.source}' "
+            f"and '{dep.source}' source types."
+        )
+        return
+
+    if dep.source == "pypi":
+        # The pin already won; keep its range as a constraint.
+        _merge_specifier(existing, dep.version, name)
+    else:
+        existing.source = dep.source
+        existing.url = dep.url
+
+
+def _merge_specifier(existing: ResolvedDependency, version: str, name: str) -> None:
+    """Intersect a version range into a package's accumulated constraint."""
+    combined = f"{existing.merged_specifier},{version}".strip(",")
     try:
         merged = SpecifierSet(combined)
         if not _specifier_is_satisfiable(merged):
             existing.conflict = True
             existing.conflict_message = (
                 f"Package '{name}' has incompatible version requirements: "
-                f"'{existing.merged_specifier}' and '{dep.version}'."
+                f"'{existing.merged_specifier}' and '{version}'."
             )
         else:
             existing.merged_specifier = str(merged)

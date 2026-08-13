@@ -1,0 +1,135 @@
+op: hdbscan_detect_seafloor
+cache_key: hdbscan_detect_seafloor  # pinned cache identity - keep stable across op renames
+description: >
+  Detect seafloor depth by clustering Sv features with HDBSCAN, returning a 1-D
+  (ping_time,) DataArray. Every non-NaN (ping_time, depth) cell is clustered on
+  its per-channel Sv values, the dB differences against the first channel, and
+  its ping and depth position. The cluster with the greatest median depth is
+  taken as the seabed and its shallowest point per ping becomes the line.
+
+  Drop-in swap with the ``detect_seafloor``, ``ep_detect_seafloor``, and
+  ``read_seafloor_line`` ops: the output port name (``seafloor_depth``) and
+  shape (1-D, ping_time) match, so downstream steps such as
+  ``create_seafloor_mask`` work unchanged. The ``params`` block takes the
+  clustering settings below instead of ``channel`` / ``min_valid_depth_m`` or
+  ``method`` / ``method_params``.
+
+  Two things make this op's output worth checking before it is trusted, both
+  consequences of "deepest cluster wins". A bottom multiple - the seabed's
+  second echo, at roughly twice its depth - is deeper than the seabed itself,
+  so whenever clustering resolves it as its own cluster it is taken as the
+  seafloor. And unlike ``read_seafloor_line`` there is no coverage guard: the
+  line is interpolated and then back- and forward-filled across the whole ping
+  range, so a run that only found the seabed under part of the survey still
+  returns a full, plausible-looking line. Expect to tune min_cluster_size and
+  min_samples per survey and to eyeball the result, rather than to take the
+  defaults and move on.
+
+  Treat this op as experimental. It clusters every ping against every range
+  sample at full resolution, so cost grows with the product of the two and a
+  survey-scale grid will exhaust memory rather than run slowly: HB1603 is 1548
+  pings by 15207 range samples, and all 23.5 million points went to HDBSCAN
+  before the worker was killed after 26 minutes. Roughly half a million points
+  runs in under a minute on a 16 GB machine. Use range_sample_start /
+  range_sample_end to get there, and expect to check the line by eye.
+category: detection
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset supplying the clustering features and the ping grid
+      the line is returned on. Pass a dataset that has been through
+      ``ep_add_depth`` so the line is surface-referenced; the vertical axis is
+      taken from the first channel and first ping of ``depth``.
+  echodata:
+    type: EchoData
+    description: >
+      Source EchoData, used only to add depth when ds_Sv carries none. Leave it
+      off when ``ep_add_depth`` already ran upstream.
+    required: false
+outputs:
+  seafloor_depth:
+    type: DataArray
+    description: >
+      Detected seafloor depth in metres, shape (ping_time,), on ds_Sv's exact
+      ping_time coordinate. Always 1-D (no channel dimension), matching the
+      output of the other seafloor detection ops so downstream masking steps
+      are interchangeable.
+params:
+  min_cluster_size:
+    type: int
+    description: >
+      Smallest number of points HDBSCAN accepts as a cluster. Too small and the
+      seabed fragments, or a bottom multiple becomes its own cluster and gets
+      picked as the seafloor for being deeper; too large and the seabed is
+      absorbed into the water column. The default is a starting point, not a
+      tuned value: on a 100 ping EK60 test file with a seabed at about 200 m,
+      values in the hundreds selected the multiple near 400 m and only a few
+      thousand recovered the true bottom. Tune it against a survey you can
+      check.
+    required: false
+    default: 300
+  min_samples:
+    type: int
+    description: >
+      HDBSCAN neighbourhood size. Larger values label more points as noise,
+      which tightens the seabed cluster's boundary and makes a weak bottom
+      multiple less likely to survive as its own cluster. Tune it alongside
+      min_cluster_size.
+    required: false
+    default: 300
+  num_feature_channels:
+    type: int
+    description: >
+      Number of frequency channels, taken in the dataset's channel order, used
+      as clustering features. The dB differences against the first of them are
+      added as features too.
+    required: false
+    default: 2
+  offset_m:
+    type: float
+    units: m
+    description: >
+      Metres subtracted from the detected line to move it up through the water
+      column, covering detection error and the near-bottom dead zone.
+    required: false
+    default: 1.0
+  range_sample_start:
+    type: int
+    description: >
+      First range sample to cluster. Indexes range_sample, not metres, matching
+      the range limit the detector's own feature builder documents as its
+      remedy for the memory cost of a full grid.
+    required: false
+    default: 0
+  range_sample_end:
+    type: int
+    description: >
+      One past the last range sample to cluster; null keeps everything below
+      range_sample_start. Cost grows with pings times range samples, and a
+      survey recorded well past the seabed spends most of that on water the
+      detector cannot use, so set this on anything large. See the note on
+      survey-scale runs in the description.
+    required: false
+    default: null
+  plot:
+    type: bool
+    description: >
+      Show the detector's diagnostic echogram and per-cluster plots. Off by
+      default because the plots block on an interactive window, which would
+      hang a headless or distributed run rather than fail it.
+    required: false
+    default: false
+implementations:
+  - key: default
+    callable_path: seabed_detection.detect_seafloor_hdbscan
+    default: true
+    dependency:
+      name: seabed-detection
+      version: ">=0.1.0"
+      source: git
+      # Points at the fork's feature branch while the change is in review.
+      # Switch to nmfs-ost once the pull request merges.
+      url: https://github.com/BLayman-NOAA/AA-SI_SeabedDetection.git@recipe-manager-compatibility
+    output_map:
+      seafloor_depth: __return__

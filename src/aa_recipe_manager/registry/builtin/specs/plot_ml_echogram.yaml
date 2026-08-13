@@ -52,14 +52,30 @@ params:
     type: int
     description: Last ping index to display. Omit to display through the last ping.
     required: false
+  time_min:
+    type: str
+    description: >
+      Start of the displayed window as a UTC timestamp, for example
+      "2024-10-15T12:30". Resolved to the closest ping and used instead of
+      ping_min. Omit to window by ping index.
+    required: false
+    default: null
+  time_max:
+    type: str
+    description: >
+      End of the displayed window as a UTC timestamp. Resolved to the closest
+      ping and used instead of ping_max. Omit to window by ping index.
+    required: false
+    default: null
   x_axis_units:
     type: str
     description: >
-      Units for the x-axis: 'seconds' (default), 'pings', 'meters' (distance
+      Units for the x-axis: 'datetime' (default, absolute UTC clock times),
+      'seconds' from the first ping shown, 'pings', 'meters' (distance
       travelled, derived from the GPS track), or 'bins' (MVBS-derived data
       only).
     required: false
-    default: "seconds"
+    default: "datetime"
   y_axis_units:
     type: str
     description: >

@@ -14,6 +14,7 @@ import click
 from aa_recipe_manager import api, config
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
+    DependencyConflictError,
     DependencyVersionError,
     ImplementationNotFoundError,
     PipelineExecutionError,
@@ -90,6 +91,16 @@ def _handle_recipe_errors(exc: Exception) -> None:
         click.echo(f"Unknown step operation: {exc}", err=True)
     elif isinstance(exc, (ImplementationNotFoundError, AmbiguousImplementationError)):
         click.echo(f"Implementation error: {exc}", err=True)
+    elif isinstance(exc, DependencyConflictError):
+        click.echo("Dependency conflict:", err=True)
+        for c in exc.conflicts:
+            click.echo(f"  - {c}", err=True)
+        click.echo(
+            "  A Python environment holds one build per package, so this recipe "
+            "has no valid environment. Split the conflicting steps into separate "
+            "recipes, or reconcile the specs.",
+            err=True,
+        )
     elif isinstance(exc, DependencyVersionError):
         click.echo(f"Dependency version error: {exc}", err=True)
     elif isinstance(exc, PipelineExecutionError):
@@ -119,9 +130,13 @@ def _handle_recipe_errors(exc: Exception) -> None:
 @click.version_option(package_name="aa-recipe-manager")
 @click.option(
     "--log-level",
-    default="INFO",
+    default="WARNING",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
     show_default=True,
+    help=(
+        "Root log level. Step progress is echoed independently of this, so "
+        "INFO only adds per-step detail from the op libraries."
+    ),
 )
 def main(log_level: str) -> None:
     """aa-recipe-manager: define, share, generate, and execute scientific workflow recipes."""

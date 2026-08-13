@@ -10,15 +10,18 @@ description: >
 category: processing
 inputs:
   datasets:
-    type: Dataset
+    type: Dataset | DataArray
     many: true
     description: >
       Collected list of Datasets (one per mapped/swept instance), supplied by a
       ``collect: ${mapped_step.output}`` directive on the recipe step.
 outputs:
   merged:
-    type: Dataset
-    description: Single concatenated Dataset.
+    type: Dataset | DataArray
+    description: >
+      Single concatenated result, matching the collected element type: a
+      Dataset for collected Datasets, a DataArray for collected DataArrays
+      (e.g. a per-file detect_seafloor line collected into a survey-wide one).
 params:
   dim:
     type: str

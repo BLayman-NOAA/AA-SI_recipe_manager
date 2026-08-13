@@ -909,7 +909,170 @@ ML_PLOT_RECIPE = """\
     """
 
 
+HDBSCAN_SEAFLOOR_RECIPE = """\
+    recipe:
+      name: hdbscan_seafloor_slice
+      version: "1.0"
+      schema_version: "1"
+    inputs:
+      ds_sv:
+        type: Dataset
+      echodata:
+        type: EchoData
+    steps:
+      - id: detect_seafloor
+        op: hdbscan_detect_seafloor
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+          echodata: ${inputs.echodata}
+        params:
+          min_cluster_size: 900
+          min_samples: 70
+          num_feature_channels: 2
+          offset_m: 1.0
+      - id: create_seafloor_mask
+        op: create_seafloor_mask
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+          seafloor_depth: ${detect_seafloor.seafloor_depth}
+        params:
+          seafloor_buffer_m: 100
+    """
+
+
+EXPERIMENTAL_SEAFLOOR_BRANCH_RECIPE = """\
+    recipe:
+      name: experimental_seafloor_branch
+      version: "1.0"
+      schema_version: "1"
+    inputs:
+      ds_sv:
+        type: Dataset
+      echodata:
+        type: EchoData
+    steps:
+      - id: seabed_grid
+        op: build_range_grid
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+        params:
+          spacing_m: 5.0
+          max_range_m: 2100.0
+      - id: resample
+        op: ep_resample_to_geometry
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+          target_grid: ${seabed_grid.target_grid}
+      - id: seabed_depth
+        op: ep_add_depth
+        inputs:
+          ds_Sv: ${resample.ds_Sv}
+          echodata: ${inputs.echodata}
+        params:
+          use_platform_vertical_offsets: true
+      - id: detect_seafloor
+        op: hdbscan_detect_seafloor
+        inputs:
+          ds_Sv: ${seabed_depth.ds_Sv}
+        params:
+          min_cluster_size: 2000
+          min_samples: 500
+      - id: create_seafloor_mask
+        op: create_seafloor_mask
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+          seafloor_depth: ${detect_seafloor.seafloor_depth}
+    """
+
+
 class TestBuiltinIntegration:
+  def test_experimental_seafloor_branch_builds_and_pins_echopype(self, tmp_path, monkeypatch):
+    """The coarsen-then-detect branch wires up and resolves to the pinned build.
+
+    The resampler drops depth, so the branch re-runs ep_add_depth rather than
+    reusing the main chain's dataset, and only the 1-D seafloor line rejoins it.
+    """
+    original_version = importlib.metadata.version
+
+    # What setuptools_scm reports for the pinned commit, 272 past the v0.11.1
+    # tag. It has to satisfy the resampler's >=0.11.1 and ep_add_depth's
+    # >=0.6.0 at once, which is the situation the pin creates in a real env.
+    def _version(name: str):
+      if name == "seabed-detection":
+        return "0.1.0"
+      if name == "echopype":
+        return "0.11.2.dev272+g5bb8298f"
+      return original_version(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", _version)
+
+    recipe_path = _write_recipe(tmp_path, EXPERIMENTAL_SEAFLOOR_BRANCH_RECIPE)
+    recipe = load_recipe(recipe_path)
+    reg = load_builtin_registry()
+    dag = build_dag(recipe, reg)
+
+    assert dag.topological_order == [
+      "seabed_grid",
+      "resample",
+      "seabed_depth",
+      "detect_seafloor",
+      "create_seafloor_mask",
+    ]
+
+    # The grid moves as a wired DataArray, which is the whole reason
+    # build_range_grid is a step rather than a parameter.
+    grid_edges = [e for e in dag.edges if e.target_input == "target_grid"]
+    assert len(grid_edges) == 1
+    assert grid_edges[0].source_step_id == "seabed_grid"
+    assert grid_edges[0].source_output == "target_grid"
+    assert dag.nodes["seabed_grid"].spec.outputs["target_grid"].type == "DataArray"
+
+    from aa_recipe_manager.resolver.dependencies import resolve_dependencies
+
+    resolved = resolve_dependencies(dag)
+    assert not resolved.has_conflicts
+    echopype = resolved.packages["echopype"]
+    assert echopype.source == "git"
+    assert "5bb8298f" in (echopype.url or "")
+    # ep_add_depth still declares the PyPI range; it survives as a constraint.
+    assert echopype.merged_specifier == ">=0.6.0"
+    assert "seabed_depth" in echopype.requiring_steps
+
+  def test_hdbscan_seafloor_slice_feeds_the_seafloor_mask(self, tmp_path, monkeypatch):
+    original_version = importlib.metadata.version
+
+    def _version(name: str):
+      if name == "seabed-detection":
+        return "0.1.0"
+      return original_version(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", _version)
+
+    recipe_path = _write_recipe(tmp_path, HDBSCAN_SEAFLOOR_RECIPE)
+
+    recipe = load_recipe(recipe_path)
+    reg = load_builtin_registry()
+    dag = build_dag(recipe, reg)
+
+    assert dag.topological_order == ["detect_seafloor", "create_seafloor_mask"]
+    assert dag.nodes["detect_seafloor"].implementation.callable_path == (
+      "seabed_detection.detect_seafloor_hdbscan"
+    )
+
+    seafloor_edges = [
+      edge for edge in dag.edges if edge.target_input == "seafloor_depth"
+    ]
+    assert len(seafloor_edges) == 1
+    edge = seafloor_edges[0]
+    assert edge.source_step_id == "detect_seafloor"
+    assert edge.source_output == "seafloor_depth"
+    assert edge.target_step_id == "create_seafloor_mask"
+
+    detect_spec = dag.nodes["detect_seafloor"].spec
+    mask_spec = dag.nodes["create_seafloor_mask"].spec
+    assert detect_spec.outputs["seafloor_depth"].type == "DataArray"
+    assert mask_spec.inputs["seafloor_depth"].type == "DataArray"
+
   def test_hb1603_style_recipe_builds_with_modular_masks(self, tmp_path, monkeypatch):
     original_version = importlib.metadata.version
 

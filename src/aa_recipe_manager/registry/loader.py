@@ -15,6 +15,7 @@ from aa_recipe_manager.registry.registry import Registry
 
 _yaml = YAML()
 _BUILTIN_SPECS_DIR = Path(__file__).parent / "builtin" / "specs"
+EXPERIMENTAL_SPECS_DIR = _BUILTIN_SPECS_DIR / "experimental"
 
 
 def load_builtin_registry() -> Registry:
@@ -22,11 +23,29 @@ def load_builtin_registry() -> Registry:
 
     Each .yaml file may contain a spec definition and an optional
     'implementations' list. Specs without implementations are valid.
+
+    Specs under ``experimental/`` are registered alongside the rest so recipes
+    can use them, but they are held to a different promise: they may depend on
+    unreleased packages, so the ``all-builtin-specs`` extra deliberately does
+    not cover them and a recipe using one needs its own environment from
+    ``aa-recipe env create``.
     """
     registry = Registry()
     for spec_path in sorted(_BUILTIN_SPECS_DIR.glob("*.yaml")):
         _load_spec_file(spec_path, registry)
+    for spec_path in sorted(EXPERIMENTAL_SPECS_DIR.glob("*.yaml")):
+        _load_spec_file(spec_path, registry)
     return registry
+
+
+def experimental_ops() -> set[str]:
+    """Return the op names whose specs live under ``experimental/``."""
+    names: set[str] = set()
+    for path in EXPERIMENTAL_SPECS_DIR.glob("*.yaml"):
+        with open(path, encoding="utf-8") as f:
+            raw = _yaml.load(f) or {}
+        names.add(raw.get("op", path.stem))
+    return names
 
 
 def load_registry_file(path: str | Path, registry: Registry) -> None:

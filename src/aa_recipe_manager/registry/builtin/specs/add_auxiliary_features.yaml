@@ -35,10 +35,14 @@ inputs:
       same line the masking stack used instead of a channel mean recomputed
       internally. Either this or echodata is required for those features.
 
-      In a per-file map_over pipeline, wire it straight from the mapped
-      detect_seafloor step (${detect_seafloor.seafloor_depth}): the reference
-      resolves to the list of per-file lines, which is concatenated along
-      ping_time in segment order. No separate collect step is needed.
+      In a per-file map_over pipeline, collect the per-file lines into one
+      survey-wide line and wire that, e.g. a merge_datasets step with
+      collect: ${detect_seafloor.seafloor_depth}. This input does accept the
+      raw list of per-file lines and concatenates it along ping_time in segment
+      order, but a recipe cannot reference a mapped step from outside its chain
+      and still resume: the runner prunes a mapped chain as a whole once the
+      downstream fan-in is a cache hit, so the direct reference resolves on a
+      cold run and fails on a resumed one.
 
       Vertical reference: 'altitude' is a difference (seafloor minus sample),
       so a constant offset shared by both terms cancels and the frame does not

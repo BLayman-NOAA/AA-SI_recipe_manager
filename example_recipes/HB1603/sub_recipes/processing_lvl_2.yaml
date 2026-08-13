@@ -30,8 +30,7 @@ inputs:
       in-memory block. Confirmed via isolated benchmark (2026-07-31, real
       compute_sv checkpoint, 1548-ping window) to be a genuine ~40% win here,
       despite echopype's add_remove_background_noise_attrs redundant-recompute
-      inefficiency -- see recipe_optimization_plan.md section 6. Kept a
-      multiple of noise_ping_num so coarsen() dispatches across chunks cleanly.
+      inefficiency. Kept a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly.
 
 steps:
 
@@ -68,6 +67,10 @@ steps:
       ds_Sv: ${compute_sv.ds_Sv}
     params:
       min_valid_depth_m: 10.0
+
+  # An experimental alternative to this step, clustering the Sv cells with
+  # HDBSCAN instead of thresholding, lives in processing_lvl_2_experimental.yaml
+  # beside this file. It needs its own environment; see the header there.
 
   - id: detect_seafloor
     op: detect_seafloor

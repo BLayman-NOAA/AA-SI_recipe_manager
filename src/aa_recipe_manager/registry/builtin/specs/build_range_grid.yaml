@@ -1,0 +1,72 @@
+op: build_range_grid
+cache_key: build_range_grid  # pinned cache identity - keep stable across op renames
+description: >
+  Build a uniformly spaced range grid for ``ep_resample_to_geometry`` to
+  resample every channel onto.
+
+  This step exists because echopype's resampler takes its target geometry as a
+  DataArray rather than a number, and a params block holds YAML values, not
+  arrays. Producing the grid as a step output lets the resampling step receive
+  it as a wired input, which is how any DataArray moves between steps.
+
+  Choosing the spacing decides two things. Putting every channel on one grid is
+  what makes sample-level arithmetic across channels valid when a sonar samples
+  each channel at a different interval. And because the grid sets the range
+  axis length, the spacing is the lever on the cost of anything scaling with
+  pings times range samples: HB1603 at its native 0.195 m is 15207 samples per
+  ping, and a 1 m grid is 2965.
+
+  This step needs nothing beyond aa-si-utils, but its only consumer today is
+  ``ep_resample_to_geometry``, which is experimental and pins an unreleased
+  echopype. A recipe wiring the two together therefore needs its own
+  environment, even though this step alone does not.
+category: preprocessing
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset supplying the range extent the grid has to cover,
+      read from its meter-valued range variable.
+outputs:
+  target_grid:
+    type: DataArray
+    description: >
+      Target ranges in metres on a ``range_sample`` dimension, ready to wire
+      into ``ep_resample_to_geometry``'s ``target_grid`` input.
+params:
+  spacing_m:
+    type: float
+    units: m
+    description: >
+      Distance between adjacent target samples. Below the source spacing this
+      interpolates without adding information; well above it, the seafloor line
+      a downstream detector can produce is quantised to roughly this figure.
+    required: true
+  max_range_m:
+    type: float
+    units: m
+    description: >
+      Deepest range the grid covers. When null (the default) it spans the
+      deepest finite sample in ds_Sv. Set it below the recorded extent to drop
+      the samples past it, which is worth doing when the sonar recorded well
+      past anything of interest.
+    required: false
+    default: null
+  range_var:
+    type: str
+    description: >
+      Meter-valued variable describing the source geometry. Normally
+      ``echo_range``; the grid is built in the same reference it names.
+    required: false
+    default: "echo_range"
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.build_range_grid
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      target_grid: __return__

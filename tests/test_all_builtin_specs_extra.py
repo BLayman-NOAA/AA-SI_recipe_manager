@@ -27,6 +27,7 @@ from ruamel.yaml import YAML
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 SPECS_DIR = REPO_ROOT / "src" / "aa_recipe_manager" / "registry" / "builtin" / "specs"
+EXPERIMENTAL_SPECS_DIR = SPECS_DIR / "experimental"
 
 # Packages the extra includes that don't come from a spec dependency block
 # (notebook runtime essentials).
@@ -39,6 +40,13 @@ KNOWN_MISSING_DESCRIPTIONS: set[str] = set()
 
 
 def _spec_dep_names() -> set[str]:
+    """Dependency names declared by the stable specs.
+
+    Experimental specs are excluded on purpose: they may pin a package to an
+    unreleased build, and the extra is meant to install one environment that
+    runs any stable recipe. Rolling those pins in would push every user onto
+    an unreleased dependency for ops most of them will never call.
+    """
     yaml = YAML(typ="safe")
     names: set[str] = set()
     for path in sorted(SPECS_DIR.glob("*.yaml")):
@@ -75,11 +83,36 @@ def test_extra_covers_every_builtin_spec_dependency():
     )
 
 
+def _experimental_dep_names() -> set[str]:
+    """Dependency names declared only by experimental specs."""
+    yaml = YAML(typ="safe")
+    names: set[str] = set()
+    for path in sorted(EXPERIMENTAL_SPECS_DIR.glob("*.yaml")):
+        spec = yaml.load(path.read_text(encoding="utf-8")) or {}
+        for impl in spec.get("implementations", []) or []:
+            dep = impl.get("dependency")
+            if isinstance(dep, dict) and dep.get("name"):
+                names.add(dep["name"])
+    return names
+
+
+def test_experimental_only_dependencies_stay_out_of_the_extra():
+    """The extra must not drag experimental-only pins into every install."""
+    extra_pkgs = _extra_pkg_names()
+    experimental_only = _experimental_dep_names() - _spec_dep_names()
+    leaked = experimental_only & extra_pkgs
+    assert not leaked, (
+        "These packages are required only by experimental specs and must not "
+        "appear in [project.optional-dependencies].all-builtin-specs, which is "
+        f"meant to install a working stable environment: {sorted(leaked)}"
+    )
+
+
 def _undescribed_fields() -> set[str]:
     """Every spec, port, and param that ships without a description."""
     yaml = YAML(typ="safe")
     missing: set[str] = set()
-    for path in sorted(SPECS_DIR.glob("*.yaml")):
+    for path in sorted([*SPECS_DIR.glob("*.yaml"), *EXPERIMENTAL_SPECS_DIR.glob("*.yaml")]):
         spec = yaml.load(path.read_text(encoding="utf-8")) or {}
         op = spec.get("op", path.stem)
         if not str(spec.get("description") or "").strip():

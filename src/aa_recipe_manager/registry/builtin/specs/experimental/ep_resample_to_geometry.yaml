@@ -1,0 +1,104 @@
+op: ep_resample_to_geometry
+cache_key: ep_resample_to_geometry  # pinned cache identity - keep stable across op renames
+description: >
+  Put every channel on one shared range geometry. This step is
+  echopype.commongrid.resample_to_geometry called directly, so the resampling
+  is entirely echopype's: sample centres are converted to bin edges and
+  overlap-integrated in the linear domain before returning to dB, which
+  conserves energy rather than interpolating between samples.
+
+  Why it is needed: a multi-frequency echosounder can record each channel at a
+  different sample interval, so the same ``range_sample`` index sits at a
+  different depth on each channel. HB2407 records at 240, 252, and 256 us, a
+  6.7% divergence that grows with range, which is tens of metres deep in the
+  water column. Any step doing sample-level arithmetic *across* channels is
+  wrong on such data unless this runs first. ``compute_mvbs`` is not affected,
+  since it bins each channel by its own ``echo_range`` into shared bins, so the
+  ML path needs nothing. The exposed case today is
+  ``hdbscan_detect_seafloor``, which differences channels against each other.
+
+  Pick the geometry one of two ways. ``target_channel`` adopts an existing
+  channel's grid, which aligns the channels but leaves the range axis about as
+  long as it was. Wiring the ``target_grid`` input from ``build_range_grid``
+  sets an explicit spacing instead, which is the only way to shorten the axis
+  substantially: HB1603 goes from 15207 range samples per ping to 2965 on a 1 m
+  grid.
+
+  Experimental: this op needs a version of echopype that is not on PyPI, so a
+  recipe using it needs its own environment (see the note on the experimental
+  spec folder in the README). It also returns a **reduced dataset** holding
+  only Sv, echo_range, frequency_nominal, and water_level; the beam,
+  calibration, and angle variables are dropped. Run it on a branch that feeds
+  seafloor detection rather than in the main chain, and re-run ``ep_add_depth``
+  after it with the same parameters the main chain uses, so the resulting
+  seafloor line shares the vertical reference the mask compares it against.
+category: preprocessing
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset whose channels are to be put on a common range
+      geometry. Must carry Sv on (channel, ping_time, range_sample) together
+      with echo_range.
+  target_grid:
+    type: DataArray
+    description: >
+      Range grid to resample onto, normally wired from ``build_range_grid``.
+      Supply this or ``target_channel``, not both. Use it when the spacing
+      itself matters, since a grid coarser than the source shortens the range
+      axis and is the only way to reduce it substantially.
+    required: false
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Sv on the target geometry, holding only Sv, echo_range,
+      frequency_nominal, and water_level. Every channel shares one
+      range_sample axis, so the same index is the same range on all of them.
+params:
+  target_channel:
+    type: str
+    description: >
+      Channel label whose range geometry every other channel is resampled onto,
+      matching the label as it appears in ds_Sv (e.g.
+      "GPT  38 kHz 0090720346bc 1-1 ES38B"). Supply this or the ``target_grid``
+      input, not both. This mode aligns channels but barely shortens the range
+      axis, since the saving is only the ratio of the sample intervals; wire a
+      coarser ``build_range_grid`` when the axis length is what matters.
+    required: false
+    default: null
+  target_variable:
+    type: str
+    description: >
+      Variable to resample. Only Sv is validated by echopype for this purpose;
+      anything else warns, and angle variables in particular are resampled
+      geometrically rather than recomputed from complex data.
+    required: false
+    default: "Sv"
+  is_log:
+    type: bool
+    description: >
+      Whether target_variable holds logarithmic values. When true the data is
+      taken to the linear domain for the weighted average and returned to dB
+      afterwards, which is what makes the resampling energy-conserving. Leave
+      it true for Sv.
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: echopype.commongrid.resample_to_geometry
+    default: true
+    dependency:
+      name: echopype
+      # Not on PyPI: resample_to_geometry landed after the 0.11.1 release.
+      # Pinned to a commit rather than a branch so a run stays reproducible
+      # and provenance records something that can be checked out again.
+      #
+      # Strictly greater than 0.11.1, not >=. The released 0.11.1 satisfies
+      # >= but does not have resample_to_geometry, so the version check would
+      # pass and the step would then fail at import instead.
+      version: ">0.11.1"
+      source: git
+      url: https://github.com/OSOceanAcoustics/echopype.git@5bb8298fd34614c248b9143ca4c01da88eb3e0be
+    output_map:
+      ds_Sv: __return__

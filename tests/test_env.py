@@ -392,3 +392,67 @@ class TestEnvCreateFromProvenanceCLI:
         assert "provenance" in result.output.lower()
         assert "recipe" in result.output.lower()
 
+
+
+@pytest.mark.e2e
+class TestCreateEnvRefusesConflicts:
+    """A conflicted recipe must fail loudly instead of installing one side.
+
+    The resolver keeps one entry per package name, so before this an
+    unreconcilable recipe quietly produced an environment holding a build some
+    step had not asked for.
+    """
+
+    @staticmethod
+    def _conflicted():
+        from aa_recipe_manager.resolver.dependencies import (
+            ResolvedDependencies,
+            ResolvedDependency,
+        )
+
+        resolved = ResolvedDependencies()
+        resolved.packages["echopype"] = ResolvedDependency(
+            name="echopype",
+            merged_specifier="",
+            source="git",
+            url="https://github.com/OSOceanAcoustics/echopype.git@abc123",
+            requiring_steps=["resample", "detect"],
+            conflict=True,
+            conflict_message="Package 'echopype' required from two different git URLs.",
+        )
+        return resolved
+
+    def test_create_env_raises_and_installs_nothing(self, tmp_path):
+        from aa_recipe_manager.exceptions import DependencyConflictError
+
+        with (
+            patch("aa_recipe_manager.api._load_dag", return_value=MagicMock()),
+            patch(
+                "aa_recipe_manager.resolver.dependencies.resolve_dependencies",
+                return_value=self._conflicted(),
+            ),
+            patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run,
+            pytest.raises(DependencyConflictError) as excinfo,
+        ):
+            api.create_env("fake_recipe.yaml", tmp_path / "env")
+
+        assert "two different git URLs" in str(excinfo.value)
+        # The venv is never even created, so there is no half-built env left.
+        assert mock_run.call_count == 0
+
+    def test_conflict_message_names_the_requiring_steps(self, tmp_path):
+        from aa_recipe_manager.exceptions import DependencyConflictError
+
+        with (
+            patch("aa_recipe_manager.api._load_dag", return_value=MagicMock()),
+            patch(
+                "aa_recipe_manager.resolver.dependencies.resolve_dependencies",
+                return_value=self._conflicted(),
+            ),
+            patch("subprocess.run", return_value=MagicMock(returncode=0)),
+            pytest.raises(DependencyConflictError) as excinfo,
+        ):
+            api.create_env("fake_recipe.yaml", tmp_path / "env")
+
+        message = str(excinfo.value)
+        assert "resample" in message and "detect" in message

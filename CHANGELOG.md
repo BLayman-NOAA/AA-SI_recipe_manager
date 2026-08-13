@@ -7,6 +7,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: an experimental spec folder, and a git pin now outranks a pypi range
+
+Specs under `src/aa_recipe_manager/registry/builtin/specs/experimental/` load
+into the registry like any other, so recipes use them unchanged, but they are
+held to a different promise: they may pin a package to an unreleased build. The
+`all-builtin-specs` extra deliberately does not cover them, since one
+environment holds one build of a package and rolling those pins in would push
+every user onto unreleased code for ops most will never call. A recipe using an
+experimental op needs its own environment from `aa-recipe env create`.
+`hdbscan_detect_seafloor` moves there, and `ep_resample_to_geometry` is added
+there.
+
+Making that work needed a resolver fix. `_merge_dependency` de-duplicates by
+package name and kept whichever source it saw first, so a recipe where
+`compute_sv` wanted `echopype` from PyPI and a later step pinned it to a commit
+resolved to PyPI, dropped the pin, and set a `conflict` flag that `create_env`
+never read. The pin lost purely because `compute_sv` sorts earlier. Now a git or
+local pin outranks a pypi range for the same package, regardless of step order,
+and the range is kept as a constraint the pinned build still has to satisfy. Two
+pins that disagree remain a conflict, as do incompatible pypi ranges.
+
+`create_env` now raises `DependencyConflictError` on a genuine conflict and
+creates nothing, rather than building an environment holding a package some step
+did not ask for. `aa-recipe deps` reports conflicts instead: inspecting a broken
+recipe is when that command is most useful, so the text format grows a
+`CONFLICTS` section and the machine formats warn, since a requirements file
+lists one build per package and would otherwise read as a complete answer.
+
+### Added: `ep_resample_to_geometry` (experimental)
+
+`echopype.commongrid.resample_to_geometry` called directly, putting every
+channel on one shared range geometry. Sample centres become bin edges and are
+overlap-integrated in the linear domain before returning to dB, so it conserves
+energy rather than interpolating.
+
+This matters because a multi-frequency echosounder can record each channel at a
+different sample interval, so the same `range_sample` index sits at a different
+depth per channel. HB2407 records at 240, 252 and 256 us, a 6.7% divergence that
+grows with range. Any step doing sample-level arithmetic across channels is
+wrong on such data without this. `compute_mvbs` is unaffected, since it bins each
+channel by its own `echo_range`, so the ML path needs nothing; the exposed case
+is `hdbscan_detect_seafloor`, which differences channels.
+
+Pick the geometry one of two ways. `target_channel` adopts an existing channel's
+grid, aligning the channels but leaving the range axis about as long as it was.
+Wiring the `target_grid` input from the new `build_range_grid` step sets an
+explicit spacing instead, which is the only way to shorten the axis
+substantially. `build_range_grid` exists because the resampler takes its target
+as a DataArray rather than a number, which a params block cannot express;
+producing it as a step output lets it move as a wired input.
+
+One constraint worth knowing: the resampler returns a reduced dataset holding
+only `Sv`, `echo_range`, `frequency_nominal` and `water_level`. It belongs on a
+branch feeding seafloor detection rather than in the main chain, with
+`ep_add_depth` re-run after it using the same parameters the main chain uses, so
+the seafloor line keeps the vertical reference `create_seafloor_mask` compares
+it against.
+
+Together these make the clustering detector usable on a full survey for the
+first time. HB1603 on a 5 m grid capped at 2100 m goes from 23.5 million points
+to 652 thousand, resampling in 6 s and clustering in 103 s, and the resulting
+line tracks `log_seafloor_detection_stats` within about 30 m at every decile
+(p10/p50/p90 of 1359/1614/1824 m against 1383/1645/1856 m) instead of the 140 to
+200 m overshoot seen without it.
+
+The dependency is pinned to echopype commit `5bb8298f`, not a branch, so runs
+stay reproducible and provenance records something checkoutable. That commit is
+272 commits past the v0.11.1 tag; `resample_to_geometry` is not on PyPI.
+
+### Added: `hdbscan_detect_seafloor`, a fourth swappable seafloor technique
+
+A detection op that finds the seabed by clustering rather than by thresholding.
+Every non-NaN `(ping_time, depth)` cell goes to HDBSCAN as a point described by
+its per-channel Sv values, the dB differences against the first of those
+channels, and its ping and depth position. The cluster with the greatest median
+depth is taken as the seabed, and its shallowest point per ping becomes the
+line.
+
+It is a drop-in swap with `detect_seafloor`, `ep_detect_seafloor`, and
+`read_seafloor_line`: same `seafloor_depth` output port, same 1-D `(ping_time,)`
+shape in metres on `ds_Sv`'s own ping grid, so `create_seafloor_mask` and
+everything after it are untouched. Only the step's `op:` and `params:` change.
+
+- `min_cluster_size` (300) and `min_samples` (300) are HDBSCAN's own knobs: the
+  smallest group of points that counts as a cluster, and how tightly packed a
+  point's neighbourhood must be before it is a member rather than noise.
+- `num_feature_channels` (2) is how many frequency channels, in the dataset's
+  channel order, become clustering features.
+- `offset_m` (1.0) moves the line up through the water column, covering
+  detection error and the near-bottom dead zone.
+- `range_sample_start` (0) and `range_sample_end` (null) narrow the vertical
+  axis before clustering. This is the range limit the detector's own feature
+  builder documents as its remedy for the memory cost of a full grid.
+- `plot` (false) shows the detector's diagnostic echogram and per-cluster plots.
+  It is off by default because those plots block on an open window, which would
+  hang a headless or Dask/Prefect/Batch run rather than fail it.
+
+The op reads its vertical axis from `ds_Sv`, taking the first channel and first
+ping of `depth`, so put it downstream of `ep_add_depth`. Pass `echodata` only if
+that step has not run. Per-ping variation in depth (heave) is not carried into
+the clustering either way.
+
+Backed by `seabed_detection.detect_seafloor_hdbscan`.
+
+**Known limitation: it does not scale to a full survey grid.** Clustering cost
+grows with pings times range samples, and the failure mode is memory
+exhaustion, not slowness. On HB1603, 1548 pings by 15207 range samples, all
+23.5 million points reached HDBSCAN and the worker was killed after 26 minutes
+on a 16 GB machine; around half a million points completes in under a minute
+using about 2 GB. `range_sample_start` / `range_sample_end` are the lever, and
+`crop_range` upstream helps too. Note that a survey recorded well past the
+seabed also gives the deepest-cluster rule a large field of below-bottom noise
+to choose from, so narrowing the window is a correctness measure as much as a
+performance one.
+
+**Known limitation: no coverage guard.** `read_seafloor_line` returns NaN for
+pings its line does not cover, and `create_seafloor_mask` masks those pings away
+entirely, so a partial line shows up as missing data and `min_coverage` can turn
+it into a hard failure. This op has no equivalent. It interpolates the detected
+line and then back- and forward-fills it across the whole ping range, so a run
+that only found the seabed under part of the survey still returns a full,
+plausible-looking line.
+
+**Known limitation: bottom multiples, and parameter sensitivity.** Because the
+seabed is the cluster with the greatest median depth, and a bottom multiple sits
+at roughly twice the seabed's depth, the multiple wins that comparison whenever
+clustering resolves it as its own cluster. This is not hypothetical. On a 100
+ping EK60 test file whose seabed is near 200 m (echopype's `basic` detector puts
+it at 203 m, and the 190-215 m band is visibly elevated),
+`min_cluster_size`/`min_samples` of 300/300 and 900/70 both returned roughly
+400 m, the multiple, while 5000/1000 returned 197 m. The defaults are a starting
+point, not a tuned setting, and nothing in the output distinguishes the two
+cases. Tune both against data you can check, and compare the line against
+`ep_detect_seafloor` or a `.evl` line before relying on it for a survey.
+
 ### Changed — `read_seafloor_line` selects its line files by the run's time window
 
 `evl_path` now accepts a folder of Echoview exports as well as a single `.evl`

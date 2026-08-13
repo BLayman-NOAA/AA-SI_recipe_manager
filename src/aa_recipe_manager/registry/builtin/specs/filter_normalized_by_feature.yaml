@@ -1,0 +1,75 @@
+op: filter_normalized_by_feature
+cache_key: filter_normalized_by_feature  # pinned cache identity - keep stable across op renames
+description: >
+  Subset the normalised ML Dataset to samples whose raw value for one feature
+  falls inside a range. Returns a filtered Dataset that can be passed directly
+  to run_hdbscan for a second-pass clustering.
+
+  Thresholds apply to the pre-normalization values, so they are given in the
+  feature's own units (dB for mean_Sv) rather than in transformed units. The
+  normalised feature variable is carried through untouched, so the second pass
+  reuses the first pass's normalization rather than re-fitting a scaler on the
+  subset.
+
+  Chains after filter_normalized_by_cluster to isolate, for example, the
+  high-Sv part of the first pass's noise points. That subset clusters far more
+  readily than the full noise pool, because a rare population that is a
+  negligible share of the whole dataset becomes a dominant mode once the
+  surrounding samples are removed.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: >
+      Normalised ML Dataset produced by normalize_ml_data, or a filtered copy
+      of one from filter_normalized_by_cluster.
+outputs:
+  ds_normalized_filtered:
+    type: Dataset
+    description: >
+      Copy of ds_normalized subsetted to the samples inside the requested
+      range. The sample_index_to_grid_index mapping is subsetted with it, so
+      the filtered dataset can be passed directly to run_hdbscan.
+params:
+  feature_name:
+    type: str
+    description: >
+      Feature to threshold on, matching a label in the feature coordinate.
+      The mean_centered strategy names its intensity feature 'mean_Sv'.
+    required: true
+  min_value:
+    type: float
+    description: >
+      Keep samples at or above this raw feature value. Omit for no lower
+      bound. At least one of min_value or max_value must be given.
+    required: false
+  max_value:
+    type: float
+    description: >
+      Keep samples at or below this raw feature value. Omit for no upper
+      bound.
+    required: false
+  dataset_name:
+    type: str
+    description: >
+      ML dataset to subset. Must match the dataset_name used by
+      reshape_for_ml.
+    required: true
+  normalization_name:
+    type: str
+    description: >
+      Normalized feature set to carry through, matching the
+      normalization_name used by normalize_ml_data. The filtered copy keeps
+      this name, so the second-pass run_hdbscan takes the same value.
+    required: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.filter_normalized_by_feature
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+    output_map:
+      ds_normalized_filtered: "['ds_normalized_filtered']"

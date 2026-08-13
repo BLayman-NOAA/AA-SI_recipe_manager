@@ -162,18 +162,48 @@ steps:
   # 'seafloor_depth'/'altitude' auxiliary features, which features: [cell_cv]
   # does not use.
   #
-  # Do NOT wire seafloor_depth: ${detect_seafloor.seafloor_depth} here. It
-  # resolves on a cold run but breaks on a resumed one: detect_seafloor is a
-  # member of the per-file mapped chain, and when any member of that chain is
-  # pruned (which happens as soon as merge_sv is a cache hit and the chain is
-  # no longer needed to rebuild it), the runner skips every member without
-  # recording outputs -- so a survey-wide consumer outside the chain fails with
-  # "step 'detect_seafloor' has not produced outputs yet". A survey-wide
-  # seafloor line would need its own collect step.
+  # To use those features, collect the per-file lines into one survey-wide line
+  # first. In processing_lvl_2_per_file.yaml, after merge_sv:
+  #
+  #   - id: merge_seafloor
+  #     op: merge_datasets
+  #     collect: ${detect_seafloor.seafloor_depth}
+  #     checkpoint: always
+  #     depends_on: [merge_sv]
+  #     inputs:
+  #       datasets: ${detect_seafloor.seafloor_depth}
+  #     params:
+  #       dim: "ping_time"
+  #
+  # then wire seafloor_depth: ${merge_seafloor.merged} below. merge_datasets
+  # concatenates collected DataArrays as readily as Datasets, and the line is
+  # 1-D, so the extra checkpoint costs nothing.
+  #
+  # depends_on is ordering only, and it is required. merge_seafloor's sole data
+  # dependency is detect_seafloor, which sits mid-chain, so without it the
+  # topological sort places merge_seafloor between two chain members -- and a
+  # non-mapped step there SPLITS the chain, leaving create_seafloor_mask onward
+  # reading the earlier members' folded per-file lists instead of this
+  # instance's element. Ordering it after the fan-in keeps the chain contiguous.
+  #
+  # One-time cost: adding merge_seafloor against an already-populated cache
+  # fails on its first run, because merge_sv is a cache hit while merge_seafloor
+  # has no checkpoint yet, so the chain is pruned before it can be collected.
+  # Run once with --force (or from a clean cache) to seed it; resumes are normal
+  # from then on.
+  #
+  # What does not work is referencing ${detect_seafloor.seafloor_depth} here
+  # directly. That resolves on a cold run but breaks on a resumed one, because
+  # detect_seafloor is a member of the per-file mapped chain: when any member of
+  # that chain is pruned (which happens as soon as merge_sv is a cache hit and
+  # the chain is no longer needed to rebuild it), the runner skips every member
+  # without recording outputs, so a survey-wide consumer outside the chain fails
+  # with "step 'detect_seafloor' has not produced outputs yet". merge_seafloor
+  # sits outside the chain with its own checkpoint, so it survives that pruning
+  # the same way merge_sv does.
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
       mvbs: ${compute_mvbs.ds_MVBS}
-      overlay_line_var: "sw_dive_profile"
       sv_clean_unmasked: ${remove_noise.ds_Sv}
       cell_stats_sv: ${compute_cell_stats.ds_Sv}
       min_depth: ${inputs.min_depth}
@@ -182,3 +212,5 @@ steps:
       ping_max: ${inputs.ping_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
+
+

@@ -1,0 +1,388 @@
+# Processing Level 4 (Sv-filtered two pass) - Machine Learning
+#
+# Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
+# runs two passes of HDBSCAN clustering, and produces the clustering report
+# outputs.
+#
+# Structured like processing_lvl_4.yaml, with an extra clustering pass. Pass 1
+# clusters all samples. Pass 2 re-clusters only the high-Sv part of the pass-1
+# noise, isolated by chaining filter_normalized_by_cluster into
+# filter_normalized_by_feature. The two passes are merged so downstream ops see
+# one consolidated result, and each pass is reported on separately alongside
+# the merged report.
+#
+# Why the extra Sv filter rather than re-clustering all of the pass-1 noise:
+# a strong, spatially compact aggregation is often left as noise by pass 1 not
+# because it is diffuse in feature space, but because it is a negligible share
+# of the sample population at the density scale HDBSCAN settled on. Removing
+# the surrounding samples turns it into a dominant mode. Re-clustering the
+# whole noise pool does not do that, because the pool is still dominated by the
+# same background.
+#
+# Pass 2 deliberately reuses the pass-1 normalization. Re-normalizing the
+# subset re-expands it across the full transformed range, which breaks up the
+# compact group this pass is meant to find.
+
+recipe:
+  name: "processing_lvl_4_sv_filter"
+  description: "ML reshape, normalization, Sv-filtered two-pass clustering, and reporting."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  mvbs:
+    type: dataset
+    description: "MVBS dataset with line overlay variables added."
+  echodata:
+    type: echodata
+    required: false
+    description: >
+      EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML
+      features. Only needed when seafloor_depth below is not wired, and not at
+      all for the features list this recipe currently uses.
+  seafloor_depth:
+    type: dataarray
+    required: false
+    description: >
+      Pre-detected seafloor line, 1-D over ping_time, wired from a
+      detect_seafloor step. Takes precedence over echodata for the
+      'seafloor_depth' and 'altitude' features, so the ML features use the same
+      line the masking stack used rather than a channel mean recomputed
+      internally. In a per-file map_over pipeline, collect the per-file lines
+      into one survey-wide line and wire that, e.g. a merge_datasets step with
+      collect: ${detect_seafloor.seafloor_depth}. Referencing the mapped step
+      directly resolves on a cold run but fails on a resumed one, because the
+      runner prunes a mapped chain as a whole once the downstream fan-in is a
+      cache hit.
+  overlay_line_var:
+    type: str
+    default: "overlay_line"
+    description: "Line variable to overlay on the clustering report plots."
+  sv_clean_unmasked:
+    type: dataset
+    description: >
+      Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
+      and cluster echogram plots.
+  cell_stats_sv:
+    type: dataset
+    description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+  min_depth:
+    type: float
+    default: 0
+    description: "Shallowest depth in meters shown by the ML and clustering echograms."
+  max_depth:
+    type: float
+    default: 100
+    description: "Deepest depth in meters shown by the ML and clustering echograms."
+  time_min:
+    type: str
+    description: >
+      Start of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to start at the first ping.
+  time_max:
+    type: str
+    description: >
+      End of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to run through the last ping.
+  x_axis_units:
+    type: str
+    default: "datetime"
+    description: "Units for the x-axis of the ML and clustering echograms."
+  y_axis_units:
+    type: str
+    default: "meters"
+    description: "Units for the y-axis of the ML and clustering echograms."
+
+  # Pass-1 HDBSCAN tuning. Shared by the first clustering step below so a
+  # parent recipe can sweep them without editing this file.
+  hdbscan_min_cluster_size_fraction:
+    type: float
+    default: 0.001
+    description: >
+      Smallest cluster HDBSCAN will keep in pass 1, as a fraction of the
+      sampled points.
+  hdbscan_min_samples:
+    type: int
+    default: 7
+    description: >
+      Neighbourhood size HDBSCAN uses to judge density in pass 1. Higher
+      values leave more points unclustered as noise.
+  hdbscan_cluster_selection_method:
+    type: str
+    default: "eom"
+    description: >
+      How clusters are drawn from the condensed tree in pass 1: 'eom' for
+      excess of mass, 'leaf' for the finest-grained leaves.
+  hdbscan_sample_size:
+    type: int
+    default: 1500000
+    description: >
+      Cap on the samples HDBSCAN clusters in pass 1. Samples above the cap are
+      dropped at random and come back unlabelled rather than as noise, so set
+      this at or above the sample count unless runtime forces otherwise.
+
+  # Pass-2 Sv filter and HDBSCAN tuning.
+  sv_filter_min_value:
+    type: float
+    default: -70
+    description: >
+      Lowest mean_Sv, in dB, kept for the second pass. Set this below the
+      aggregation being recovered and above the bulk of the echogram. Values
+      that sit inside the aggregation's own range split it and recover less of
+      it than a lower threshold would.
+
+  cluster_colors:
+    type: list
+    description: "Cluster colors shared by the pass-1, pass-2, and merged reports."
+    default:
+      - "#9D00FF"
+      - "#35E200"
+      - "#FF0000"
+      - "#2F00FF"
+      - "#FF8800"
+      - "#FFFB1C"
+      - "#FF44E9"
+      - "#00BE8BCA"
+      - "#00FFE5"
+      - "#3D8D00FF"
+      - "#9C67FFFF"
+
+steps:
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${inputs.mvbs}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      echodata: ${inputs.echodata}
+      ds_sv: ${inputs.cell_stats_sv}
+      seafloor_depth: ${inputs.seafloor_depth}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+
+  - id: plot_normalized_ml
+    op: plot_ml_echogram
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 30
+
+  # --- Pass 1: cluster every sample ---
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    checkpoint: save
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size_fraction: ${inputs.hdbscan_min_cluster_size_fraction}
+      min_samples: ${inputs.hdbscan_min_samples}
+      sample_size: ${inputs.hdbscan_sample_size}
+      cluster_selection_method: ${inputs.hdbscan_cluster_selection_method}
+      use_hdbscan: true
+      soft_membership_threshold: 0.6
+
+  # --- Pass 2: re-cluster the high-Sv part of the pass-1 noise ---
+  #
+  # Two filters in sequence. The first keeps the pass-1 noise samples, the
+  # second narrows those to the high-Sv end. Both carry the pass-1 normalized
+  # features through untouched, so pass 2 clusters the same feature values
+  # pass 1 saw.
+
+  - id: filter_noise
+    op: filter_normalized_by_cluster
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+    params:
+      cluster_label: -1
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  - id: filter_high_sv
+    op: filter_normalized_by_feature
+    inputs:
+      ds_normalized: ${filter_noise.ds_normalized_filtered}
+    params:
+      feature_name: "mean_Sv"
+      min_value: ${inputs.sv_filter_min_value}
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  - id: run_hdbscan_pass2
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${filter_high_sv.ds_normalized_filtered}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_pass2"
+      min_cluster_size_fraction: .005
+      min_samples: 8
+      sample_size: 10000000
+      cluster_selection_method: "eom"
+      use_hdbscan: true
+
+  # --- Merge pass 1 and pass 2 results ---
+
+  - id: merge_passes
+    op: merge_clustering_passes
+    inputs:
+      clustering_results_pass1: ${run_hdbscan.clustering_results}
+      clustering_results_pass2:
+        - ${run_hdbscan_pass2.clustering_results}
+    params:
+      ml_result_name: "hdbscan_merged"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      retain_parent_labels: true
+
+  # --- Embed all three label sets into one dataset ---
+  #
+  # Each result is stored under its own ml_result_name, so the final dataset
+  # carries the pass-1, pass-2, and merged labels side by side. Pass-2 covers
+  # only the filtered samples; the rest of the grid stays NaN and the Sv
+  # backdrop shows through on its echogram.
+
+  - id: embed_pass1
+    op: embed_clustering_results
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: embed_pass2
+    op: embed_clustering_results
+    inputs:
+      ds_normalized: ${embed_pass1.ds_normalized}
+      clustering_results: ${run_hdbscan_pass2.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_pass2"
+
+  - id: embed_results
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${embed_pass2.ds_normalized}
+      clustering_results: ${merge_passes.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_merged"
+
+  # --- One report per pass, plus the merged report ---
+  #
+  # Each pass gets its own clustering_model so its HDBSCAN hierarchy plot comes
+  # from the run that produced it. The merged result has no single model behind
+  # it, so its report has no hierarchy panel.
+
+  - id: plot_pass1_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      # [min_depth, max_depth]; the ping slots are left off because time_min
+      # and time_max below window the plot instead.
+      plot_window:
+        - ${inputs.min_depth}
+        - ${inputs.max_depth}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+      cluster_stats_dpi: 200
+      overlay_line_var: ${inputs.overlay_line_var}
+      cluster_colors: ${inputs.cluster_colors}
+      cluster_stats_sv_data_var: "Sv"
+
+  - id: plot_pass2_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${run_hdbscan_pass2.clustering_results}
+      clustering_model: ${run_hdbscan_pass2.clustering_model}
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_pass2"
+      plot_window:
+        - ${inputs.min_depth}
+        - ${inputs.max_depth}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+      cluster_stats_dpi: 200
+      overlay_line_var: ${inputs.overlay_line_var}
+      cluster_colors: ${inputs.cluster_colors}
+      cluster_stats_sv_data_var: "Sv"
+
+  - id: plot_final_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${merge_passes.clustering_results}
+      ds_Sv: ${inputs.sv_clean_unmasked}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_merged"
+      plot_window:
+        - ${inputs.min_depth}
+        - ${inputs.max_depth}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+      cluster_stats_dpi: 200
+      overlay_line_var: ${inputs.overlay_line_var}
+      cluster_colors: ${inputs.cluster_colors}
+      cluster_stats_sv_data_var: "Sv"

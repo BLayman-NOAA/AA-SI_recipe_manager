@@ -490,3 +490,81 @@ class TestResolveDependencies:
 
         _merge_dependency(rd, dep, "step_b")
         assert not rd.packages["my_pkg"].conflict
+
+
+class TestPinPrecedence:
+    """A git or local pin outranks a pypi range for the same package.
+
+    One environment holds one build, so an experimental step pinning an
+    unreleased package has to decide what gets installed. The pypi ranges other
+    steps declare stay on as constraints that build must still satisfy.
+    """
+
+    @staticmethod
+    def _resolve(*deps):
+        from aa_recipe_manager.resolver.dependencies import _merge_dependency
+
+        rd = ResolvedDependencies()
+        for step_id, dep in deps:
+            _merge_dependency(rd, dep, step_id)
+        return rd
+
+    PYPI = Dependency(name="echopype", version=">=0.6.0", source="pypi")
+    GIT = Dependency(
+        name="echopype",
+        version=">=0.11.1",
+        source="git",
+        url="https://github.com/OSOceanAcoustics/echopype.git@5bb8298f",
+    )
+
+    def test_pin_wins_when_declared_after_the_range(self):
+        rd = self._resolve(("compute_sv", self.PYPI), ("resample", self.GIT))
+        dep = rd.packages["echopype"]
+        assert dep.source == "git"
+        assert dep.url == self.GIT.url
+        assert not dep.conflict
+        assert rd.to_requirements_txt() == f"git+{self.GIT.url}"
+
+    def test_pin_wins_when_declared_before_the_range(self):
+        """Order must not decide which build is installed."""
+        rd = self._resolve(("resample", self.GIT), ("compute_sv", self.PYPI))
+        dep = rd.packages["echopype"]
+        assert dep.source == "git"
+        assert dep.url == self.GIT.url
+        assert not dep.conflict
+
+    def test_range_is_kept_as_a_constraint_on_the_pinned_build(self):
+        rd = self._resolve(("compute_sv", self.PYPI), ("resample", self.GIT))
+        # The pin decides the build; the range is still recorded so the
+        # installed version can be checked against what other steps expect.
+        assert rd.packages["echopype"].merged_specifier == ">=0.6.0"
+
+    def test_two_pins_that_disagree_are_still_a_conflict(self):
+        other = Dependency(
+            name="echopype", version="", source="git",
+            url="https://github.com/someone/echopype.git",
+        )
+        rd = self._resolve(("a", self.GIT), ("b", other))
+        assert rd.packages["echopype"].conflict is True
+
+    def test_git_and_local_are_still_a_conflict(self):
+        local = Dependency(name="echopype", version="", source="local", url="./echopype")
+        rd = self._resolve(("a", self.GIT), ("b", local))
+        assert rd.packages["echopype"].conflict is True
+
+    def test_incompatible_pypi_ranges_are_still_a_conflict(self):
+        rd = self._resolve(
+            ("a", Dependency(name="x", version=">=2.0", source="pypi")),
+            ("b", Dependency(name="x", version="<1.0", source="pypi")),
+        )
+        assert rd.packages["x"].conflict is True
+
+    def test_conflict_messages_name_the_steps(self):
+        other = Dependency(
+            name="echopype", version="", source="git",
+            url="https://github.com/someone/echopype.git",
+        )
+        rd = self._resolve(("detect", self.GIT), ("resample", other))
+        messages = rd.conflict_messages
+        assert len(messages) == 1
+        assert "detect" in messages[0] and "resample" in messages[0]

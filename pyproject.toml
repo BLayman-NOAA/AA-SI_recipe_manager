@@ -73,6 +73,12 @@ prefect = [
 # environment that can execute any recipe built from built-in specs without
 # running `aa-recipe env create`. Keep this list in sync with the
 # `dependency:` blocks under src/aa_recipe_manager/registry/builtin/specs/.
+#
+# Specs under specs/experimental/ are deliberately not covered. They may pin a
+# package to an unreleased build, and one environment cannot hold two builds of
+# the same package, so including them would force every user onto an unreleased
+# dependency for ops most will never call. Use `aa-recipe env create` on a
+# recipe that needs one.
 all-builtin-specs = [
     "echopype>=0.6.0",
     "aa-si-utils @ git+https://github.com/BLayman-NOAA/AA-SI_Utils.git",

@@ -29,9 +29,12 @@ inputs:
       detect_seafloor step. Takes precedence over echodata for the
       'seafloor_depth' and 'altitude' features, so the ML features use the same
       line the masking stack used rather than a channel mean recomputed
-      internally. In a per-file map_over pipeline, wire it straight from the
-      mapped step: the reference resolves to the list of per-file lines, which
-      is concatenated along ping_time in segment order.
+      internally. In a per-file map_over pipeline, collect the per-file lines
+      into one survey-wide line and wire that, e.g. a merge_datasets step with
+      collect: ${detect_seafloor.seafloor_depth}. Referencing the mapped step
+      directly resolves on a cold run but fails on a resumed one, because the
+      runner prunes a mapped chain as a whole once the downstream fan-in is a
+      cache hit.
   overlay_line_var:
     type: str
     default: "overlay_line"
