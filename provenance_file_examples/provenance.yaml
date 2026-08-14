@@ -1,0 +1,43 @@
+recipe_hash: 2d04c412de98c7dad3125afeeadfb25c62924578ebccdfd13f3a4d5f15198f8a
+recipe_name: processing_levels_pipeline_gcs
+recipe_version: '1.0'
+timestamp: '2026-08-10T16:00:55.802778Z'
+python_version: 3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 
+  19:42:21) [MSC v.1916 64 bit (AMD64)]
+python_version_number: 3.12.3
+os_info: Windows-11-10.0.26200-SP0
+inputs:
+  raw_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/raw
+resolved_dependencies:
+  aa-si-utils:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+  aa-si-calibration:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+  echopype:
+    installed_version: 0.11.1
+    source: pypi
+  aa-si-ml:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+  aa-si-visualization:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Visualization.git
+raw_inputs:
+  files:
+  - name: D20160725-T205832.raw
+    size: 52652344
+  - name: D20160725-T212129.raw
+    size: 52653644
+  - name: D20160725-T214425.raw
+    size: 52647816
+  count: 3
+  digest: 9c0f762b72adb5197bd479ebfe272c6d05d7d84e74847340f521b64fb480529a
+  source: resolved
+  producing_step: initial_setup.raw_file_paths
+  origin_run_id: 154351-63c8cc

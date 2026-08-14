@@ -23,14 +23,10 @@ inputs:
     description: "Environmental parameters extracted from the standardized mapping."
   noise_chunk_ping_time:
     type: int
-    default: 100
+    default: 1000
     description: >
-      Ping-time chunk size to apply before remove_noise, so its coarsen()-based
-      noise estimate can run in dask-parallel chunks instead of as one
-      in-memory block. Confirmed via isolated benchmark (2026-07-31, real
-      compute_sv checkpoint, 1548-ping window) to be a genuine ~40% win here,
-      despite echopype's add_remove_background_noise_attrs redundant-recompute
-      inefficiency. Kept a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly.
+      Ping-time chunk size to apply before remove_noise, so it can run in dask-parallel chunks instead of one
+      in-memory block. 
 
 steps:
 
@@ -60,6 +56,7 @@ steps:
       encode_mode: "power"
       to_disk: false
 
+  # optional
   - id: log_seafloor_stats
     op: log_seafloor_detection_stats
     inputs:
@@ -68,10 +65,7 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
-  # An experimental alternative to this step, clustering the Sv cells with
-  # HDBSCAN instead of thresholding, lives in processing_lvl_2_experimental.yaml
-  # beside this file. It needs its own environment; see the header there.
-
+  # .bot file based seafloor
   - id: detect_seafloor
     op: detect_seafloor
     depends_on: [log_seafloor_stats]
@@ -87,7 +81,7 @@ steps:
       ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
-      seafloor_buffer_m: 100
+      seafloor_buffer_m: 10
 
   - id: create_surface_mask
     op: create_surface_mask
