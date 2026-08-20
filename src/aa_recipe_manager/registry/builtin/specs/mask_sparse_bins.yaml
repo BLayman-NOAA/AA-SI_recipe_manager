@@ -35,6 +35,19 @@ params:
     description: Fraction of NaN values above which a bin is masked (0.0 to 1.0)
     required: false
     default: 0.5
+  range_var:
+    type: str
+    description: >
+      Meter-valued variable to bin along, which must match the value given to
+      compute_mvbs and compute_per_cell_statistics or the sparse mask lands on
+      a different grid than the one it is meant to clean. 'echo_range'
+      measures from the transducer face, 'depth' from the surface and needs
+      the dataset to carry a depth variable. The bin edges are read from the
+      first ping of the first channel, so a range variable that varies from
+      ping to ping, as depth does under platform vertical offsets, is
+      approximated by its first ping.
+    required: false
+    default: "echo_range"
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.mask_sparse_bins

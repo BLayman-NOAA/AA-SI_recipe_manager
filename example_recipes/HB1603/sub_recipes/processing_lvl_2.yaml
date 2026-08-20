@@ -107,10 +107,12 @@ steps:
     params:
       mode: "and"
 
+  # Sourced from ep_add_depth rather than compute_sv so the masked Sv carries
+  # the depth variable, which level 3 needs when its range_var is "depth".
   - id: apply_mask
     op: apply_sv_mask
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
+      ds_Sv: ${ep_add_depth.ds_Sv}
       mask: ${combine_masks.mask}
 
   - id: rechunk_before_noise

@@ -4,8 +4,8 @@ description: >
   Compute per-MVBS-cell statistics (e.g. coefficient of variation) from
   fine-resolution Sv data before masking or MVBS averaging. Results are
   stored as new DataArrays in the returned dataset at MVBS-bin resolution.
-  Must be called with the same range_bin and ping_time_bin values used by
-  mask_sparse_bins and compute_mvbs so that bin grids align exactly.
+  Must be called with the same range_bin, ping_time_bin and range_var values
+  used by mask_sparse_bins and compute_mvbs so that bin grids align exactly.
   Pass the returned dataset to add_auxiliary_features via the ds_sv input
   to absorb the statistics into the ML feature matrix.
 category: ml_preprocessing
@@ -47,6 +47,18 @@ params:
     description: Name of the Sv variable in the input Dataset
     required: false
     default: "Sv"
+  range_var:
+    type: str
+    description: >
+      Meter-valued variable to bin along, which must match the value given to
+      mask_sparse_bins and compute_mvbs or the cell statistics describe cells
+      offset from the MVBS cells they are joined to. 'echo_range' measures
+      from the transducer face, 'depth' from the surface and needs the dataset
+      to carry a depth variable. The cell dimension names stay
+      cell_ping_time and cell_echo_range either way, since
+      add_auxiliary_features selects on them by name.
+    required: false
+    default: "echo_range"
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.compute_per_cell_statistics

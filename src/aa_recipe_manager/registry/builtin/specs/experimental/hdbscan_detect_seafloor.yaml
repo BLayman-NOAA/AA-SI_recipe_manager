@@ -81,11 +81,33 @@ params:
   num_feature_channels:
     type: int
     description: >
-      Number of frequency channels, taken in the dataset's channel order, used
-      as clustering features. The dB differences against the first of them are
-      added as features too.
+      Number of frequency channels used as clustering features, taken in
+      ascending frequency. The dB differences against the first of them are
+      added as features too. Ignored when feature_channels is set.
+
+      Channels are sorted by frequency before selection rather than taken in
+      the order the raw file stored them, which is not always ascending: an
+      EK80 survey may present them as 18, 70, 200, 120, 38 kHz, where taking
+      the first two as they arrive pairs 18 with 70 instead of 18 with 38.
     required: false
     default: 2
+  feature_channels:
+    type: list
+    description: >
+      Explicit channels to use as features, given as frequencies in kHz
+      (e.g. [38, 70]) or as channel labels, in the order they should be fed.
+      Overrides num_feature_channels. The first entry is the baseline that the
+      dB difference features are measured against.
+
+      A single channel is allowed and simply contributes no difference
+      features, which is worth considering on a deep survey: at a seabed near
+      1645 m on HB1603 only 38 kHz detected the bottom on every ping, while
+      70, 120 and 200 kHz detected none of it.
+
+      Channels not listed are still present in the dataset and still take part
+      in the NaN screening that decides which cells are clustered at all.
+    required: false
+    default: null
   offset_m:
     type: float
     units: m

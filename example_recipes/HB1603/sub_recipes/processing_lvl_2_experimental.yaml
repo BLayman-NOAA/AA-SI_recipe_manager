@@ -92,13 +92,13 @@ steps:
       encode_mode: "power"
       to_disk: false
 
-  - id: log_seafloor_stats
-    op: log_seafloor_detection_stats
-    inputs:
-      echodata: ${inputs.echodata}
-      ds_Sv: ${compute_sv.ds_Sv}
-    params:
-      min_valid_depth_m: 10.0
+  # - id: log_seafloor_stats
+  #   op: log_seafloor_detection_stats
+  #   inputs:
+  #     echodata: ${inputs.echodata}
+  #     ds_Sv: ${compute_sv.ds_Sv}
+  #   params:
+  #     min_valid_depth_m: 10.0
 
   - id: seabed_grid
     op: build_range_grid
@@ -114,7 +114,7 @@ steps:
       ds_Sv: ${compute_sv.ds_Sv}
       target_grid: ${seabed_grid.target_grid}
 
-  - id: seabed_depth
+  - id: add_depth
     op: ep_add_depth
     inputs:
       ds_Sv: ${seabed_resample.ds_Sv}
@@ -125,9 +125,8 @@ steps:
   - id: detect_seafloor
     checkpoint: save
     op: hdbscan_detect_seafloor
-    depends_on: [log_seafloor_stats]
     inputs:
-      ds_Sv: ${seabed_depth.ds_Sv}
+      ds_Sv: ${add_depth.ds_Sv}
     params:
       min_cluster_size: 2000
       min_samples: 500
@@ -140,7 +139,7 @@ steps:
       ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
-      seafloor_buffer_m: -10
+      seafloor_buffer_m: 0
 
   - id: create_surface_mask
     op: create_surface_mask
@@ -166,10 +165,12 @@ steps:
     params:
       mode: "and"
 
+  # Sourced from ep_add_depth rather than compute_sv so the masked Sv carries
+  # the depth variable, which level 3 needs when its range_var is "depth".
   - id: apply_mask
     op: apply_sv_mask
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
+      ds_Sv: ${ep_add_depth.ds_Sv}
       mask: ${combine_masks.mask}
 
   - id: rechunk_before_noise

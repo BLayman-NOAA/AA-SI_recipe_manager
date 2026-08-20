@@ -38,6 +38,20 @@ def _fail(message: str) -> None:
     sys.exit(1)
 
 
+def _exception_text(exc: BaseException) -> str:
+    """Return ``str(exc)``, falling back to a placeholder when that fails.
+
+    Some exception types cannot rebuild their own message after a round trip
+    through a worker process (``numpy.exceptions.AxisError`` loses the
+    attributes its ``__str__`` reads), and formatting them would otherwise
+    mask the error being reported.
+    """
+    try:
+        return str(exc)
+    except Exception:
+        return f"<unprintable {type(exc).__name__}>"
+
+
 def _echo_cause_chain(exc: BaseException) -> None:
     """Print the exceptions that led to ``exc``, innermost last.
 
@@ -56,7 +70,10 @@ def _echo_cause_chain(exc: BaseException) -> None:
             break
         visited.add(id(nxt))
         if id(nxt) not in quiet:
-            click.echo(f"  caused by: {type(nxt).__name__}: {nxt}", err=True)
+            click.echo(
+                f"  caused by: {type(nxt).__name__}: {_exception_text(nxt)}",
+                err=True,
+            )
         cursor = nxt
 
 
@@ -110,7 +127,8 @@ def _handle_recipe_errors(exc: Exception) -> None:
             click.echo(f"  callable: {exc.callable_path}", err=True)
         if exc.original is not None:
             click.echo(
-                f"  original: {type(exc.original).__name__}: {exc.original}",
+                f"  original: {type(exc.original).__name__}: "
+                f"{_exception_text(exc.original)}",
                 err=True,
             )
         _echo_cause_chain(exc)

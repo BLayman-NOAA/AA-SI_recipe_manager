@@ -7,6 +7,14 @@ description: >
   This step is echopype.commongrid.compute_MVBS called directly, so the bin
   edges and the averaging (in the linear domain, converted back to dB) are
   echopype's.
+
+  Every sample is assigned to a bin by the value of its range variable rather
+  than by its range_sample index, so channels recorded at different sample
+  intervals land in the same physical bins. This is what makes MVBS safe for
+  arithmetic across channels on data whose channels do not share a geometry.
+
+  The flox_kwargs passthrough echopype accepts is not exposed, since a params
+  block can only supply named arguments.
 category: processing
 inputs:
   ds_Sv:
@@ -30,12 +38,67 @@ outputs:
 params:
   range_bin:
     type: str
+    units: m
     description: "Depth bin size for averaging (e.g. '2m')"
     required: true
   ping_time_bin:
     type: str
+    units: s
     description: "Ping-time bin size for averaging (e.g. '10s')"
     required: true
+  range_var:
+    type: str
+    description: >
+      Variable to bin along: 'echo_range' for range from the transducer face,
+      or 'depth' for depth below the surface. 'depth' requires the dataset to
+      carry a depth variable, which ep_add_depth adds; binning by it is what
+      puts channels mounted at different depths on one vertical reference.
+    required: false
+    default: "echo_range"
+  range_var_max:
+    type: str
+    units: m
+    description: >
+      Deepest value the bins cover, as a unit string (e.g. '2100m'). When
+      unset, echopype reads the maximum from the data, which forces a compute
+      on a lazy dataset. Supplying it keeps the step lazy.
+    required: false
+    default: null
+  closed:
+    type: str
+    description: "Which side of each bin interval is closed: 'left' or 'right'"
+    required: false
+    default: "left"
+  skipna:
+    type: bool
+    description: >
+      Skip NaN values when averaging. When false, any NaN in a bin makes the
+      whole bin NaN, so masked data collapses.
+    required: false
+    default: true
+  fill_value:
+    type: float
+    description: >
+      Value for bins holding no data to aggregate. echopype defaults to NaN,
+      which YAML cannot express here, so leaving this unset keeps that default.
+    required: false
+    default: null
+  method:
+    type: str
+    description: >
+      Flox reduction strategy for dask arrays, normally 'map-reduce'. Any other
+      value requires reindex to be set to null in the same params block, since
+      echopype rejects a non-null reindex outside map-reduce and its own
+      default for reindex is false rather than null.
+    required: false
+    default: "map-reduce"
+  reindex:
+    type: bool
+    description: >
+      Reindex at the blockwise stage rather than after it. False uses less
+      memory and more time. Only meaningful when method is 'map-reduce'.
+    required: false
+    default: false
 implementations:
   - key: default
     callable_path: echopype.commongrid.compute_MVBS
