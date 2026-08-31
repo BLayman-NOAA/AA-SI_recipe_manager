@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 import traceback
 from collections.abc import Sequence
 from typing import Any
@@ -875,6 +876,7 @@ def run_cmd(
         executor, dask_scheduler, dask_workers, run_config
     )
 
+    run_start = time.perf_counter()
     try:
         result = api.execute(
             recipe,
@@ -901,6 +903,12 @@ def run_cmd(
             keep_temp=keep_temp,
         )
     except Exception as exc:
+        # Wall-clock, not a step sum: it's the answer to "did dask actually
+        # help" even when the run dies partway through.
+        click.echo(
+            f"Total time before failure: {_format_duration(time.perf_counter() - run_start)}",
+            err=True,
+        )
         _handle_recipe_errors(exc)
         return
 
@@ -1006,6 +1014,7 @@ def batch_cmd(
         executor, dask_scheduler, dask_workers, run_config
     )
 
+    run_start = time.perf_counter()
     try:
         input_sets = input_sets_from_folder(
             input_dir, input_name, pattern=pattern,
@@ -1023,6 +1032,10 @@ def batch_cmd(
             progress=_CLIProgress(),
         )
     except Exception as exc:
+        click.echo(
+            f"Total time before failure: {_format_duration(time.perf_counter() - run_start)}",
+            err=True,
+        )
         _handle_recipe_errors(exc)
         return
 
