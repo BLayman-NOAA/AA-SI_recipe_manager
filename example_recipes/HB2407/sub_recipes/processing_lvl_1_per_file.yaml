@@ -7,15 +7,27 @@
 # processing_lvl_2_per_file.yaml.
 #
 #   initial_setup
-#     |-- gen_cal_mapping (once, survey-wide) ----+
-#     +-- read_raw          (per file)            |
-#           combine_raw     (per file) -----------+
+#     |-- scan_raw_config     (per file, calibration scan only)
+#     |     record_raw_configs  (fan-in)
+#     |     standardize_cal
+#     |     build_cal_mapping ----------------------+
+#     +-- read_raw            (per file)            |
+#           combine_raw       (per file) -----------+
 #           extract_cal_params (per file, picks this file's mapping)
 #
-# gen_cal_mapping is independent of the per-file chain, so a concurrent
-# executor overlaps them with no extra directives. The chain continues without
+# The calibration branch is four staged steps replacing the single
+# gen_cal_mapping, so an interrupted raw scan resumes and a corrected
+# calibration file does not invalidate the scan. See
+# calibration_pipeline_staged.yaml. The per-file chain continues without
 # interruption into processing_lvl_2_per_file.yaml, which must be included
 # immediately after this level.
+#
+# read_raw carries depends_on: [build_cal_mapping] so the calibration branch
+# drains first. Both fan out over the same source, and two mapped runs over one
+# source merge into a single chain when they end up adjacent in topological
+# order, which would split combine_raw away from read_raw. The raw reads no
+# longer overlap the calibration scan, but both phases are fan-outs so wall
+# time is roughly unchanged.
 
 recipe:
   name: "processing_lvl_1_per_file"
@@ -85,24 +97,57 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # Runs once for the whole survey: builds calibration_dict (parsed cal data)
-  # and mapping_dict, which is keyed per raw filename. Each per-file
-  # extract_cal_params instance below selects its own file's entry out of these
-  # shared dicts, so the calibration files are parsed once, not once per raw
-  # file.
-  - id: gen_cal_mapping
-    op: generate_standardized_cal_mapping
+  # Survey-wide calibration. These run once and produce calibration_dict
+  # (parsed cal data) and mapping_dict (keyed per raw filename). Each per-file
+  # extract_cal_params instance below selects its own file's entry out of
+  # those shared dicts, so the calibration files are parsed once.
+  #
+  # The time window is not passed here: the scan fans out over
+  # initial_setup.raw_file_paths, which is already filtered by it.
+  - id: scan_raw_config
+    op: read_raw_file_config
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
     params:
-      raw_input_folder: ${inputs.raw_input_folder}
+      raw_file_path: ${_item}
+      verbose: false
+
+  - id: record_raw_configs
+    op: record_raw_file_configs
+    collect: ${scan_raw_config.file_config}
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      file_configs: ${scan_raw_config.file_config}
+    params:
+      output_base: ${initial_setup.calibration_output_dir}
+
+  - id: standardize_cal
+    op: standardize_calibration_files
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      frequencies: ${record_raw_configs.frequencies}
+    params:
       cal_input_folder: ${inputs.cal_input_folder}
       output_base: ${initial_setup.calibration_output_dir}
       cruise_id: ${inputs.cruise_id}
       record_author: ${inputs.record_author}
       short_filenames: true
+
+  - id: build_cal_mapping
+    op: build_calibration_mapping
+    checkpoint: always
+    regenerate: always
+    inputs:
+      raw_file_configs: ${record_raw_configs.raw_file_configs}
+    params:
+      output_base: ${initial_setup.calibration_output_dir}
+      single_channel_dir: ${standardize_cal.single_channel_dir}
+      raw_configs_path: ${record_raw_configs.raw_configs_path}
+      short_filenames: true
       keep_unused: true
       conflict_resolution: "error"
-      file_time_start: ${inputs.file_time_start}
-      file_time_end: ${inputs.file_time_end}
 
   # --- Per-file fan-out starts here --------------------------------------
   # Every step from here through remove_noise in processing_lvl_2_per_file.yaml
@@ -114,9 +159,16 @@ steps:
   # checkpoint: never -- the output is an exe_temp store path that is deleted
   # at the end of the run, so it must not be cached under any checkpoint mode
   # (a cached path would dangle on the next run).
+  #
+  # depends_on is required, not cosmetic. scan_raw_config maps over the same
+  # source with the same single dependency, so the topological sort interleaves
+  # the two mapped runs and merges them into one chain, which splits
+  # combine_raw off from read_raw and hands it every file's store instead of
+  # its own. tests/test_parallel.py pins the grouping.
   - id: read_raw
     op: read_raw_files
     map_over: ${initial_setup.raw_file_paths}
+    depends_on: [build_cal_mapping]
     checkpoint: never
     execution:
       dask_config:
@@ -147,8 +199,8 @@ steps:
     op: extract_standardized_cal_params
     map_over: ${initial_setup.raw_file_paths}
     inputs:
-      calibration_dict: ${gen_cal_mapping.calibration_dict}
-      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
       echodata: ${combine_raw.echodata}
     params:
       raw_file_path: ${_item}

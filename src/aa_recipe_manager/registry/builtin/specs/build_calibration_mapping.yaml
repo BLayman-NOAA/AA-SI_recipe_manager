@@ -1,0 +1,127 @@
+op: build_calibration_mapping
+cache_key: build_calibration_mapping  # pinned cache identity - keep stable across op renames
+description: >
+  Match each raw channel to its calibration data and save the mapping files.
+
+  Loads the raw file configurations and the standardized single-channel files,
+  runs the matching algorithm, moves aside any calibration file no raw channel
+  matched, resolves conflicts, writes mapping_files/channel_mapping.yaml and
+  calibration_configurations.yaml, and verifies the result.
+
+  Reads the single-channel files from disk rather than taking them as data.
+  The mapping keys are those files' names, which only the on-disk loader
+  attaches, and this step rewrites that folder.
+
+  Mark it regenerate: always in a recipe. Its real product is the files on
+  disk, and a hand-deleted single-channel file cannot change a cache key
+  computed before the run, so a cache hit would return the dictionaries
+  without re-reading the folder. The step is cheap: a few small local YAML
+  reads and the matcher.
+category: calibration
+inputs:
+  raw_file_configs:
+    type: list
+    required: false
+    description: >
+      The raw file configurations to map, normally from
+      record_raw_file_configs. Read from the saved raw_file_configs.yaml
+      under output_base when omitted.
+outputs:
+  mapping_dict:
+    type: dict
+    description: >
+      Maps each raw file's channels to their calibration key, keyed by
+      filename then channel_id. Feed to extract_standardized_cal_params.
+  calibration_dict:
+    type: dict
+    description: >
+      Parsed standardized calibration data keyed by calibration key. Holds the
+      values themselves. Feed to extract_standardized_cal_params.
+  missing_params:
+    type: dict
+    required: false
+    description: >
+      Calibration keys mapped to the required parameters they are missing. An
+      empty dict means every required parameter is present.
+  unused_files:
+    type: list
+    required: false
+    description: >
+      Names of single-channel calibration files the mapping does not
+      reference. An empty list means all of them are used.
+params:
+  output_base:
+    type: path
+    required: true
+    description: >
+      Root directory the calibration artifacts are written under. Normally
+      wired to initial_setup's calibration_output_dir.
+    constraints:
+      must_exist: false
+  single_channel_dir:
+    type: path
+    required: false
+    description: >
+      Folder of standardized single-channel files. Defaults to
+      single_channel_calibration_files/ under output_base. Wire it to the
+      standardization step's single_channel_dir output for the ordering
+      dependency. Not fingerprinted, because a step-output reference is still
+      an unresolved placeholder when cache keys are computed; use
+      regenerate: always instead.
+    constraints:
+      must_exist: false
+  raw_configs_path:
+    type: path
+    required: false
+    description: >
+      Path of the saved raw_file_configs.yaml. Defaults to
+      raw_file_configs/raw_file_configs.yaml under output_base, and is only
+      consulted when raw_file_configs is not supplied.
+    constraints:
+      must_exist: false
+  conflict_resolution:
+    type: str
+    required: false
+    default: "error"
+    description: >
+      What to do when one raw channel matches several calibration files.
+      "error" (the default) lists the conflicts and stops, so you delete the
+      unwanted single-channel file and re-run. "interactive" prompts on the
+      terminal, and raises before any file is moved when the run has no
+      interactive input.
+  keep_unused:
+    type: bool
+    required: false
+    default: true
+    description: >
+      Move calibration files no raw channel matched into
+      unused_calibration_files/ instead of deleting them. They are the
+      evidence when a channel comes out unmapped.
+  short_filenames:
+    type: bool
+    required: false
+    default: true
+    description: >
+      Remap the returned dictionaries to compact calibration keys. Should
+      match the setting the single-channel files were written with.
+  verbose:
+    type: bool
+    required: false
+    default: true
+    description: Print the mapping summary, preview, and verification results.
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.build_calibration_mapping
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+    output_map:
+      mapping_dict: "['mapping_dict']"
+      calibration_dict: "['calibration_dict']"
+      missing_params: "['missing_params']"
+      # Paths are not JSON-safe, so the name list is mapped rather than the
+      # Path list the function also returns.
+      unused_files: "['unused_file_names']"

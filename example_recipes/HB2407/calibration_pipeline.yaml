@@ -1,9 +1,4 @@
-# HB2407 Calibration Only - Standardize Calibration Files and Build the Mapping
-#
-# The smallest useful recipe in this folder: point it at a raw folder and a
-# manufacturer calibration folder, and it writes the calibration artifacts.
-# Nothing is read into memory as EchoData and no Sv is computed, so it runs in
-# the time it takes to scan the raw file headers.
+# HB2407 Calibration Only - Standardize Calibration Files and Build the Mapping File
 #
 #   initial_setup           resolve the raw file set and the calibration
 #                           output directory under outputs/
@@ -15,14 +10,14 @@
 #
 #   raw_file_configs/                  raw_file_configs.yaml (channel config
 #                                      scanned out of the raw files)
-#   single_channel_calibration_files/  one standardized .yaml per channel
-#   mapping_files/                     channel_mapping.yaml,
+#   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
+#   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
 #                                      calibration_configurations.yaml
 #   unused_calibration_files/          cal files no raw channel matched
 #   logs/                              calibration_flags.json
 #
 # outputs_dir comes from the run config (aa-recipe.config.yaml) and must stay
-# local; the two input folders may be local paths or gs:// URLs.
+# local. The input folders may be local paths or gs:// URLs.
 #
 # gen_cal_mapping is marked regenerate: always. Its real product is the files
 # on disk, not the two dicts it returns, and a cache hit would hand back the
@@ -35,8 +30,7 @@
 # cal_input_folder is parsed either way, and any that no scanned channel
 # matches is moved to unused_calibration_files/.
 #
-# Re-running is cheap and honest about its inputs. The op reuses the saved
-# raw_file_configs.yaml only while the raw folder's contents and the window
+# The op reuses the saved raw_file_configs.yaml only while the raw folder's contents and the window
 # still match what produced it, and re-parses the manufacturer files only when
 # single_channel_calibration_files/ is empty. Change raw_input_folder or a
 # bound and the scan re-runs; leave them alone and it does not.
@@ -48,16 +42,11 @@
 # wherever the inputs came from.
 #
 # Usage:
-#   aa-recipe run calibration_pipeline.yaml --input raw_input_folder=./raw
+#   aa-recipe run calibration_pipeline.yaml 
 #
-#   aa-recipe run calibration_pipeline.yaml
-#     --input raw_input_folder=gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Echosounder/Data/Raw
-#     --input cal_input_folder=gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/calibration
-#
-# NOTE: aa-recipe.config.yaml in this folder already sets
-# inputs.raw_input_folder to the prod GCS raw folder, and config values
-# override a recipe's own input defaults. Running here with no --input
-# therefore scans the whole survey over the network rather than ./raw.
+# It's recommended that you use aa-calibration_pipeline.config.yaml to set
+# the raw_file_folder and cal_input_folder locations, which override the recipe input defaults
+
 
 recipe:
   name: "hb2407_calibration"

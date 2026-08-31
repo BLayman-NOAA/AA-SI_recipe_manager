@@ -791,3 +791,53 @@ def test_merge_datasets_spec_registered():
     from aa_recipe_manager.registry.loader import load_builtin_registry
 
     assert "merge_datasets" in load_builtin_registry().list_ops()
+
+
+# ---------------------------------------------------------------------------
+# Staged calibration steps (HB2407)
+# ---------------------------------------------------------------------------
+
+
+_HB2407 = Path(__file__).resolve().parent.parent / "example_recipes" / "HB2407"
+
+
+def _dry_run_hb2407(name: str):
+    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.validation import DryRunEngine
+
+    registry = load_builtin_registry()
+    recipe = load_recipe(_HB2407 / name)
+    dag = build_dag(recipe, registry, check_versions=False)
+    report = DryRunEngine().run(dag, visualize=True, check_versions=False)
+    return dag, report
+
+
+def test_calibration_staged_example_valid():
+    dag, report = _dry_run_hb2407("calibration_pipeline_staged.yaml")
+    assert report.is_valid, report.errors
+    assert dag.nodes["scan_raw_config"].is_mapped
+    assert dag.nodes["record_raw_configs"].is_collector
+    # Re-runs every time: a hand-deleted single-channel file cannot change a
+    # cache key computed before the run.
+    assert dag.nodes["build_cal_mapping"].step.regenerate == "always"
+    # if-missing is safe only because the step records its output directory
+    # rather than the individual files.
+    assert dag.nodes["standardize_cal"].step.regenerate == "if-missing"
+
+
+def test_per_file_calibration_keeps_processing_chain_contiguous():
+    """The staged calibration scan must not merge into the per-file chain.
+
+    scan_raw_config and read_raw fan out over the same source. Without the
+    depends_on edge on read_raw they interleave, group into one chain, and
+    split combine_raw off from read_raw, which then receives every file's store
+    instead of its own. Nothing else validates this.
+    """
+    from aa_recipe_manager.parallel import group_mapped_chains
+
+    dag, report = _dry_run_hb2407("Herring_10-15_per_file.yaml")
+    assert report.is_valid, report.errors
+
+    chains = {tuple(c.member_ids)[0]: c.member_ids for c in group_mapped_chains(dag)}
+    assert chains["scan_raw_config"] == ["scan_raw_config"]
+    assert chains["read_raw"][:3] == ["read_raw", "combine_raw", "extract_cal_params"]

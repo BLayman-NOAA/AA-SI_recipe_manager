@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: the calibration pipeline as four separately cached steps
+
+`generate_standardized_cal_mapping` did four jobs in one step, so it was one
+cache entry: a crash part way through the raw scan lost the whole scan, and a
+corrected manufacturer calibration file invalidated the scan along with the
+parse. Four new ops split it. `read_raw_file_config` takes one raw file and
+returns its channel configuration, meant to be mapped over the raw file list;
+`record_raw_file_configs` is the fan-in and writes `raw_file_configs.yaml`;
+then `standardize_calibration_files` and `build_calibration_mapping`.
+
+The fused op stays registered and behaves as before, as a thin sequence over
+the same functions, so existing recipes are untouched.
+
+Measured on the 57-file HB2407 example: killed 45 seconds into a cold scan, 19
+of 58 per-file instances survived and the resume scanned the other 39. Changing
+a manufacturer calibration file re-runs the parse and the mapping and leaves the
+scan cached, since `cal_input_folder` is fingerprinted separately. Deleting
+`raw_file_configs.yaml` rebuilds it from the cached scans without re-reading a
+raw file. Adding a raw file still re-scans every file, because `initial_setup`
+fingerprints the raw folder and every instance descends from it.
+
+`example_recipes/HB2407/calibration_pipeline_staged.yaml` demonstrates the
+staged form, and `sub_recipes/processing_lvl_1_per_file.yaml` now uses it.
+
+### Added: steps can prompt on the real terminal
+
+A step's stdout goes to the run log, so `input()` inside one printed its
+question where nobody could see it and the run appeared to hang.
+`executor/console.py` writes to the stream the log router wrapped, and raises
+`NoConsoleError` when there is no interactive input rather than blocking.
+Outside a step it defers to the builtin `input()`, so notebooks are unaffected.
+This makes `conflict_resolution: "interactive"` usable on the calibration
+mapping step.
+
+### Fixed: calibration outputs are recorded as artifacts
+
+The calibration steps never reported the files they wrote, and
+`_artifacts_present` treats an empty recorded list on a non-sink step as
+"present", so a cached step never rewrote deleted files.
+`calibration_pipeline.yaml` worked around this with `regenerate: always`. The
+staged steps record their outputs, so `regenerate: if-missing` works.
+`standardize_calibration_files` records its output directory rather than the
+individual channel files, which lets a wiped folder rebuild without undoing the
+deliberate single-file deletion the conflict workflow depends on.
+
 ### Added: an experimental spec folder, and a git pin now outranks a pypi range
 
 Specs under `src/aa_recipe_manager/registry/builtin/specs/experimental/` load

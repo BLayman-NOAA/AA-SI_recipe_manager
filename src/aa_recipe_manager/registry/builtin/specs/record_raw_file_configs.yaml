@@ -1,0 +1,61 @@
+op: record_raw_file_configs
+cache_key: record_raw_file_configs  # pinned cache identity - keep stable across op renames
+description: >
+  Collect per-file channel configurations into the survey's raw config file.
+
+  The fan-in half of the raw scan. Drops the files that could not be read,
+  sorts the rest by metadata_start_time, and writes
+  raw_file_configs/raw_file_configs.yaml under the calibration output
+  directory. Declare it with collect on the scan step's file_config output.
+category: calibration
+inputs:
+  file_configs:
+    type: dict
+    many: true
+    description: >
+      The collected per-file configurations, normally wired to the mapped
+      read_raw_file_config step's file_config output. Null entries are
+      dropped.
+outputs:
+  raw_file_configs:
+    type: list
+    description: >
+      The saved configurations, sorted by metadata_start_time. Pass to
+      build_calibration_mapping so it need not re-read them from disk.
+  frequencies:
+    type: list
+    description: >
+      Sorted unique channel frequencies in Hz. Sets the channel order for
+      EK60 (.cal) calibration data, and is optional for EK80.
+  raw_configs_path:
+    type: path
+    description: >
+      Full path of the raw_file_configs.yaml that was written. Wire it into
+      build_calibration_mapping for the ordering dependency.
+params:
+  output_base:
+    type: path
+    required: true
+    description: >
+      Root directory the calibration artifacts are written under. Normally
+      wired to initial_setup's calibration_output_dir.
+    constraints:
+      must_exist: false
+  verbose:
+    type: bool
+    required: false
+    default: true
+    description: Print a summary of what was recorded.
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.record_raw_file_configs
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+    output_map:
+      raw_file_configs: "['raw_file_configs']"
+      frequencies: "['frequencies']"
+      raw_configs_path: "['raw_configs_path']"

@@ -164,6 +164,10 @@ EXPECTED_BUILTIN_OPS = {
     "download_ncei_data",
     "initial_setup",
     "generate_standardized_cal_mapping",
+    "read_raw_file_config",
+    "record_raw_file_configs",
+    "standardize_calibration_files",
+    "build_calibration_mapping",
     "read_raw_files",
     "combine_raw_files",
     "extract_standardized_cal_params",
@@ -308,6 +312,45 @@ class TestBuiltinLoader:
             "mapping_dict": "['mapping_dict']",
             "calibration_dict": "['calibration_dict']",
         }
+
+        # The staged equivalents of the fused op above. Same underlying
+        # implementation, split so each stage caches on its own.
+        staged = {
+            "read_raw_file_config": (
+                "aa_si_calibration.calibration.read_raw_file_config",
+                {"file_config": "__return__"},
+            ),
+            "record_raw_file_configs": (
+                "aa_si_calibration.calibration.record_raw_file_configs",
+                {
+                    "raw_file_configs": "['raw_file_configs']",
+                    "frequencies": "['frequencies']",
+                    "raw_configs_path": "['raw_configs_path']",
+                },
+            ),
+            "standardize_calibration_files": (
+                "aa_si_calibration.calibration.standardize_calibration_files",
+                {
+                    "single_channel_dir": "['single_channel_dir']",
+                    "channel_count": "['channel_count']",
+                    "skipped": "['skipped']",
+                },
+            ),
+            "build_calibration_mapping": (
+                "aa_si_calibration.calibration.build_calibration_mapping",
+                {
+                    "mapping_dict": "['mapping_dict']",
+                    "calibration_dict": "['calibration_dict']",
+                    "missing_params": "['missing_params']",
+                    # Paths are not JSON-safe, so the name list is mapped.
+                    "unused_files": "['unused_file_names']",
+                },
+            ),
+        }
+        for op, (callable_path, output_map) in staged.items():
+            impl = reg.get_implementation(op)
+            assert impl.callable_path == callable_path
+            assert impl.output_map == output_map
 
         extract_impl = reg.get_implementation("extract_standardized_cal_params")
         assert extract_impl.callable_path == (

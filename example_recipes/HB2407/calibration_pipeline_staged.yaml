@@ -1,0 +1,175 @@
+# HB2407 Calibration Only (Staged) - the same calibration outputs as
+# calibration_pipeline.yaml, but as four separately cached steps.
+#
+#   initial_setup        resolve the raw file set and the calibration output
+#                        directory under outputs/
+#   scan_raw_config      one instance per raw file, reading that file's channel
+#                        configuration and nothing else
+#   record_raw_configs   fans the per-file results back in and writes
+#                        raw_file_configs.yaml
+#   standardize_cal      parses the manufacturer .cal / .xml files into one
+#                        standardized file per channel
+#   build_cal_mapping    matches each raw channel to its calibration data and
+#                        writes the mapping files
+#
+# Artifacts land under <outputs_dir>/<calibration_outputs>/, exactly as the
+# fused recipe leaves them:
+#
+#   raw_file_configs/                  raw_file_configs.yaml
+#   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
+#   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
+#                                      calibration_configurations.yaml
+#   unused_calibration_files/          cal files no raw channel matched
+#   logs/                              calibration_flags.json
+#   standardization.fingerprint.json   which manufacturer files produced the
+#                                      single-channel files above
+#
+# The fused generate_standardized_cal_mapping does all of this in one step, so
+# it is one cache entry: a crash part way through the raw scan loses the whole
+# scan, and a corrected calibration file invalidates the scan along with the
+# parse. Split, each stage answers to its own inputs. Re-running does this
+# (measured on this recipe, 57 raw files):
+#
+#   nothing changed          everything cached except build_cal_mapping
+#   scan interrupted         only the unscanned files are read. Killed 45s into
+#                            a cold scan, 19 of 58 instances survived.
+#   a manufacturer cal file  standardize_cal and build_cal_mapping re-run, the
+#     corrected or replaced  raw scan does not
+#   raw_file_configs.yaml    rebuilt from the cached per-file scans without
+#     deleted                re-reading a raw file
+#   the single-channel       rebuilt in full
+#     FOLDER deleted
+#   ONE single-channel       not put back, which is the conflict workflow;
+#     file deleted by hand   build_cal_mapping re-runs against what is left
+#
+# What this does not buy: adding a raw file re-scans every file, not just the
+# new one. initial_setup fingerprints the raw folder, so a new file changes its
+# hash and every scan_raw_config instance descends from it.
+#
+# The default checkpoint mode is "explicit", so all four steps say
+# checkpoint: always. Steps record the files they write, which is what lets
+# regenerate: if-missing tell that an output was deleted.
+#
+# outputs_dir comes from the run config (aa-recipe.config.yaml) and must stay
+# local. The input folders may be local paths or gs:// URLs; the raw folder is
+# scanned one file at a time and the calibration folder is downloaded whole.
+# Remote input needs the gcs extra: pip install aa-si-calibration[gcs].
+#
+# Usage:
+#   aa-recipe run calibration_pipeline_staged.yaml
+
+recipe:
+  name: "hb2407_calibration_staged"
+  description: "Standardize manufacturer calibration files and build the raw-channel mapping for HB2407, as separately cached stages."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "./raw"
+    fingerprint_mode: auto
+    description: "Folder of .raw files, read for channel configuration only."
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+  cruise_id:
+    type: str
+    default: "HB2407"
+    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+  record_author:
+    type: str
+    default: "<Your Name>"
+    description: "Recorded as the author of every generated single-channel file."
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Debugging knob: inclusive ISO datetime restricting the scan to raw files
+      whose filename-encoded time is at or after this bound. Leave unset to
+      scan the whole folder. Applied once, by initial_setup, and the scan fans
+      out over whatever it selected.
+  file_time_end:
+    type: str
+    required: false
+    description: "Debugging knob: inclusive ISO datetime upper bound. See file_time_start."
+  conflict_resolution:
+    type: str
+    default: "error"
+    description: >
+      What to do when one raw channel matches several calibration files.
+      "error" lists the conflicts and stops; "interactive" prompts on the
+      terminal and fails, before moving any file, if the run has no interactive
+      input.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # One instance per raw file, content-addressed by that file's path, so an
+  # interrupted scan resumes from what it already read.
+  # verbose is off because one banner per file buries the rest of the log.
+  - id: scan_raw_config
+    op: read_raw_file_config
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    params:
+      raw_file_path: ${_item}
+      verbose: false
+
+  - id: record_raw_configs
+    op: record_raw_file_configs
+    collect: ${scan_raw_config.file_config}
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      file_configs: ${scan_raw_config.file_config}
+    params:
+      output_base: ${initial_setup.calibration_output_dir}
+
+  # regenerate: if-missing is safe here only because this step records its
+  # output directory: wiping the folder rebuilds it, deleting one file inside
+  # it does not. The conflict workflow depends on that distinction.
+  - id: standardize_cal
+    op: standardize_calibration_files
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      frequencies: ${record_raw_configs.frequencies}
+    params:
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+
+  # single_channel_dir and raw_configs_path are wired for the ordering edges;
+  # both would otherwise default to the same locations under output_base.
+  - id: build_cal_mapping
+    op: build_calibration_mapping
+    checkpoint: always
+    regenerate: always
+    inputs:
+      raw_file_configs: ${record_raw_configs.raw_file_configs}
+    params:
+      output_base: ${initial_setup.calibration_output_dir}
+      single_channel_dir: ${standardize_cal.single_channel_dir}
+      raw_configs_path: ${record_raw_configs.raw_configs_path}
+      short_filenames: true
+      # Keep unmatched calibration files rather than deleting them: they are
+      # the evidence when a channel comes out unmapped.
+      keep_unused: true
+      conflict_resolution: ${inputs.conflict_resolution}

@@ -1,0 +1,55 @@
+op: read_raw_file_config
+cache_key: read_raw_file_config  # pinned cache identity - keep stable across op renames
+description: >
+  Read ONE raw file's channel configuration from its datagram headers.
+
+  The fan-out unit of the calibration raw scan. Map it over
+  initial_setup.raw_file_paths with checkpoint: always and each file becomes
+  its own cache entry, so a run interrupted at file 400 of 500 keeps the 399
+  already scanned. Pair it with record_raw_file_configs, which collects the
+  results into the survey's raw_file_configs.yaml.
+category: calibration
+inputs: {}
+outputs:
+  file_config:
+    type: dict
+    required: false
+    description: >
+      This file's channel configuration: filename, metadata_start_time, and
+      one entry per channel. Null when the instrument type cannot be detected,
+      and record_raw_file_configs drops those entries.
+params:
+  raw_file_path:
+    type: path
+    required: true
+    description: >
+      One .raw file. May be a local path or a remote fsspec URL, which is
+      downloaded to local scratch, read, and deleted before this step returns.
+      Normally wired to ${_item}. Not fingerprinted, because the mapped item
+      already content-addresses the instance.
+  verify_start_time:
+    type: bool
+    required: false
+    default: false
+    description: >
+      If true, EK80 files are additionally read with the full SimradFileReader
+      to verify metadata_start_time, which is slower. The default single pass
+      scan is enough for channel configuration.
+  verbose:
+    type: bool
+    required: false
+    default: true
+    description: >
+      Print per-file progress. Worth setting false on a long fan-out, where
+      one banner per file buries the rest of the log.
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.read_raw_file_config
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+    output_map:
+      file_config: "__return__"

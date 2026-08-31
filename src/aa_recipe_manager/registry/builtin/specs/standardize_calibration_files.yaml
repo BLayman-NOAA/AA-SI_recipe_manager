@@ -1,0 +1,110 @@
+op: standardize_calibration_files
+cache_key: standardize_calibration_files  # pinned cache identity - keep stable across op renames
+description: >
+  Convert manufacturer calibration files to standardized single-channel files.
+
+  Parses the EK60 .cal or EK80 .xml files in the calibration input folder,
+  validates them against the standardized schema, and writes one .yaml per
+  channel into single_channel_calibration_files/ under the calibration output
+  directory. These per-channel files are what NCEI archives.
+
+  The parse is skipped when standardization.fingerprint.json shows the same
+  manufacturer files already produced the files that are there. That sidecar
+  answers to the manufacturer folder, so deleting a single-channel file does
+  not bring it back, which is what the mapping step's "error" conflict workflow
+  relies on.
+category: calibration
+inputs:
+  frequencies:
+    type: list
+    required: false
+    description: >
+      Unique channel frequencies in Hz, normally from record_raw_file_configs.
+      Sets the channel order for EK60 (.cal) data and is optional for EK80.
+      Recovered from the saved raw_file_configs.yaml when omitted.
+outputs:
+  single_channel_dir:
+    type: path
+    description: >
+      Folder the single-channel files were written to. Wire it into
+      build_calibration_mapping for the ordering dependency.
+  channel_count:
+    type: int
+    description: Number of single-channel calibration files in that folder.
+  skipped:
+    type: bool
+    description: >
+      True when the existing files were reused because the manufacturer files
+      had not changed.
+params:
+  cal_input_folder:
+    type: path
+    required: true
+    # Fold folder membership into the cache hash, so replacing a manufacturer
+    # file re-parses without dragging the raw scan with it. Works because
+    # recipes wire this to a pipeline input, which resolves at DAG-build time;
+    # a step-output reference would not.
+    fingerprint_mode: auto
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).
+      May be a remote fsspec URL, which is downloaded whole to local scratch
+      for the duration of the parse.
+    constraints:
+      # Auto-create if missing so dry-run does not fail before the user has
+      # placed calibration files. The step errors at run time if it is empty.
+      create_if_missing: true
+  output_base:
+    type: path
+    required: true
+    description: >
+      Root directory the calibration artifacts are written under. Normally
+      wired to initial_setup's calibration_output_dir.
+    constraints:
+      must_exist: false
+  cruise_id:
+    type: str
+    required: true
+    description: >
+      Cruise identifier recorded in every generated single-channel file (e.g.
+      "HB2407"), so a standardized file stays traceable to the survey it came
+      from.
+  record_author:
+    type: str
+    required: true
+    description: >
+      Name recorded as the author of every generated single-channel file. Part
+      of the provenance the standardized format carries, not something the
+      calculation uses.
+  short_filenames:
+    type: bool
+    required: false
+    default: true
+    description: >
+      Use compact names for the generated single-channel files. Set false for
+      longer, more descriptive names. The names become the calibration keys the
+      mapping is built from, so this participates in the reuse fingerprint.
+  overwrite:
+    type: bool
+    required: false
+    default: false
+    description: >
+      Re-parse and rewrite even when the sidecar says the existing files are
+      current, forcing a clean rebuild of the single-channel folder.
+  verbose:
+    type: bool
+    required: false
+    default: true
+    description: Print the parsed parameters and the files written.
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.calibration.standardize_calibration_files
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+    output_map:
+      single_channel_dir: "['single_channel_dir']"
+      channel_count: "['channel_count']"
+      skipped: "['skipped']"
