@@ -1,0 +1,134 @@
+# HB2407 Masked Sv for the Echogram Viewer
+#
+# Produces the artifact an analyst actually wants to look at when checking a
+# mask: Sv with the seabed and surface cut out, and nothing else done to it.
+#
+#   level 1   per file: read -> calibration params
+#   level 2a  per file: Sv -> transducer depth -> depth -> crop; merged, chunked
+#   level 2b  select_window -> EVL seafloor -> masks -> apply_mask [checkpoint]
+#
+# It stops there on purpose. Background noise removal rewrites every sample, so
+# looking at a denoised echogram to judge a seabed cut is judging two things at
+# once. The masked-only store is also the honest input for the viewer's own
+# reduction: a level's coarse pixel is the linear mean of the source samples
+# that survived the mask, and NaN is what tells it which those are.
+#
+# The survey-level blocks are the same two includes every other HB2407 recipe
+# uses, so they hash identically and come back as cache hits. Level 2b is
+# processing_lvl_2_user.yaml's chain stopped at apply_mask; its step ids and
+# params match, so the checkpoints are shared with the full analysis recipe in
+# both directions.
+#
+# THE SURVEY WINDOW IS SET HERE, WHICH IS NOT THE USUAL CHOICE. The four local
+# raw files this points at are a test segment, not the survey, so
+# survey_time_start / survey_time_end bound the ingest rather than leaving it
+# to read every .raw in the folder. That re-keys the survey checkpoints away
+# from a real survey-wide run, which is correct: they are different data.
+#
+# Build the viewer store from the checkpoint this leaves behind, using the
+# stand-in for the milestone 13 op in AA-SI_EchogramGL:
+#
+#   aa-recipe run echogram_masked.yaml
+#   python scripts/build_viewer_store.py #       --cache   <this folder>/recipe_cache #       --manifest <this folder>/outputs/manifest.json #       --raw     <this folder>/raw/D20240924-T19*.raw #                 <this folder>/raw/D20240924-T2[012]*.raw #       --out stores/hb2407_masked --levels 8
+#
+# Usage: aa-recipe dry-run echogram_masked.yaml --visualize
+
+recipe:
+  name: "hb2407_echogram_masked"
+  description: "HB2407 masked Sv, seabed and surface removed, no noise removal."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # --- Survey-level. Matches survey_preprocess.yaml apart from the window. --
+  raw_input_folder:
+    type: path
+    default: "./raw"
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./HB2407_calibration_files"
+
+  # The test segment: four contiguous files from the evening of 2024-09-24,
+  # 3330 pings each. Bounds are filename stamps and the end is inclusive, so
+  # this selects T194054 through T222726 and stops short of T232256.
+  survey_time_start:
+    type: str
+    default: "2024-09-24T19:40:54"
+  survey_time_end:
+    type: str
+    default: "2024-09-24T22:27:26"
+
+  # Not the survey-wide 250 m. The .evl line puts this segment's seabed
+  # between 17.9 and 53.3 m, so a 250 m ceiling would leave four fifths of
+  # every ping below the mask and the store four fifths nodata. 70 m keeps a
+  # margin of blank water under the deepest seabed and nothing more.
+  crop_max_range_m:
+    type: float
+    default: 70.0
+  survey_chunk_ping_time:
+    type: int
+    default: 2000
+
+  # --- User-level. ---------------------------------------------------------
+  seabed_line_folder:
+    type: path
+    default: "./seabed_lines"
+
+  # The pings, not the filename stamps: the last file runs about 55 minutes
+  # past its own stamp, and the window has to cover its pings for both
+  # select_ping_time_range and the .evl selection.
+  file_time_start:
+    type: str
+    default: "2024-09-24T19:40:54"
+  file_time_end:
+    type: str
+    default: "2024-09-24T23:25:00"
+
+  surface_depth_m:
+    type: float
+    default: 5.0
+  seafloor_buffer_m:
+    type: float
+    default: 1.0
+
+steps:
+
+  # ======================================================================
+  # SURVEY LEVEL
+  # ======================================================================
+
+  - include: sub_recipes/processing_lvl_1_survey.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      cruise_id: "HB2407"
+      record_author: "<Your Name>"
+      sonar_model: "EK80"
+      survey_time_start: ${inputs.survey_time_start}
+      survey_time_end: ${inputs.survey_time_end}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      datum_correction_m: -1.0
+      use_heave: true
+      heave_sign: 1.0
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
+
+  # ======================================================================
+  # USER LEVEL - the window enters here and nowhere above.
+  # ======================================================================
+
+  - include: sub_recipes/processing_lvl_2_user_masked.yaml
+    input_overrides:
+      survey_sv: ${rechunk_survey_sv.ds_Sv}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      seabed_line_folder: ${inputs.seabed_line_folder}
+      surface_depth_m: ${inputs.surface_depth_m}
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}

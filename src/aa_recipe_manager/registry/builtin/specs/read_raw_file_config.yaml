@@ -42,6 +42,24 @@ params:
     description: >
       Print per-file progress. Worth setting false on a long fan-out, where
       one banner per file buries the rest of the log.
+  max_scan_bytes:
+    type: int
+    required: false
+    description: >
+      Read only this many leading bytes of a remote EK80 file instead of
+      transferring it whole. An EK80 file's channel configuration is settled by
+      its Configuration and Parameter datagrams, which sit within the first few
+      MiB, so 8388608 (8 MiB) covers CW and FM alike with room to spare. Set
+      this when scanning a survey whose raw files are large or in another
+      region: it is the difference between moving a survey's worth of sample
+      data and moving its headers.
+
+      Safe to set: a file whose prefix does not settle the configuration is
+      read whole instead, so an unusual file costs time rather than accuracy.
+      Because a prefix cannot measure them, raw3_count and gps_data come back
+      null; last_ping_time is recovered from the file's tail. Leave unset for
+      the whole-file read, which is also what local files and
+      verify_start_time always get.
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.read_raw_file_config

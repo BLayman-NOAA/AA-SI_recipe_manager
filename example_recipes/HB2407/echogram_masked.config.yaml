@@ -1,0 +1,14 @@
+# Run configuration for echogram_masked.yaml.
+#
+# Per-recipe configs win over ./aa-recipe.config.yaml, which points
+# raw_input_folder at the production bucket. This one keeps the run local: the
+# four raw files it needs are already in ./raw, and so is the .evl line that
+# covers them.
+
+user_cache_dir: ./recipe_cache
+temp_dir: ./exe_temp
+outputs_dir: ./outputs
+survey_cache_dir: ./survey_cache
+
+inputs:
+  raw_input_folder: ./raw

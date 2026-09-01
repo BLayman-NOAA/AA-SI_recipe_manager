@@ -1,0 +1,146 @@
+# Processing Level 2b (User, masked only) - Window Selection and Masking
+#
+# processing_lvl_2_user.yaml's chain stopped one step early, at apply_mask,
+# with the masked Sv checkpointed so something downstream can read it.
+#
+#   select_window -> detect_seafloor (EVL line) -> seafloor/surface masks
+#                 -> combine -> apply_mask [checkpoint]
+#
+# WHY THIS EXISTS SEPARATELY
+#
+#   Masked-but-not-denoised Sv is what an analyst looks at when deciding
+#   whether the mask is right. Background noise removal changes the picture
+#   everywhere, so judging the seabed and surface cuts through it means
+#   judging two things at once.
+#
+#   The step ids and params below are identical to the matching steps in
+#   processing_lvl_2_user.yaml, so the two recipes share every checkpoint up
+#   to apply_mask: running this one warms the cache for the full analysis and
+#   vice versa. Keep them that way. This is a duplicate rather than a
+#   refactor of that file precisely so its hashes do not move.
+#
+# The dataset that comes out carries NaN wherever the mask rejected a sample,
+# which is what the viewer draws as nodata. It keeps echo_range as well as
+# depth: the vertical grid is regular in echo_range and, once heave is folded
+# into depth, no longer regular in depth.
+
+recipe:
+  name: "processing_lvl_2_user_masked"
+  description: "Select a ping_time window from the survey Sv and mask it, without denoising."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  survey_sv:
+    type: dataset
+    description: "Merged, chunked survey-wide Sv from processing_lvl_2_survey.yaml."
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Inclusive ISO datetime lower bound for THIS user's segment. Selects the
+      ping_time window and the Echoview .evl line files to read, so the line
+      always spans the pings. Leave unset to take the whole survey.
+  file_time_end:
+    type: str
+    required: false
+    description: "Inclusive ISO datetime upper bound; see file_time_start."
+  seabed_line_folder:
+    type: path
+    description: >
+      Folder of Echoview .evl seabed line exports; the ones covering
+      file_time_start to file_time_end are combined into the seafloor used for
+      masking. A single .evl file also works, and is read whole.
+  seabed_line_max_gap_s:
+    type: float
+    default: 600
+    description: >
+      Widest hole in the combined seabed line, in seconds, to interpolate
+      across. Consecutive line files butt up against each other to within a
+      second, so this only bites across a survey-leg gap.
+  seabed_line_min_coverage:
+    type: float
+    default: 0.99
+    description: >
+      Fraction of the window's pings that must land on the line before the step
+      fails, rather than letting create_seafloor_mask drop every sample of an
+      uncovered ping.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth in meters above which the surface mask excludes samples."
+  seafloor_buffer_m:
+    type: float
+    default: 1.0
+    description: "Height of buffer above seabed line to mask."
+
+steps:
+
+  # The user's entry point into the shared survey store. Everything above this
+  # step is survey-level and shared; everything below is this user's.
+  - id: select_window
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.survey_sv}
+    params:
+      start: ${inputs.file_time_start}
+      end: ${inputs.file_time_end}
+
+  - id: detect_seafloor
+    op: read_seafloor_line
+    checkpoint: save
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      evl_path: ${inputs.seabed_line_folder}
+      # The same window that selected the pings, so the line spans them. A line
+      # file's span runs from its own name stamp to the next file's, which is
+      # what pulls in the export straddling the window start.
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      # No extrapolation past the line's ends: uncovered pings come back NaN
+      # and create_seafloor_mask drops them entirely, so min_coverage fails the
+      # run rather than letting that happen quietly.
+      edge_extend_s: 0.0
+      max_gap_s: ${inputs.seabed_line_max_gap_s}
+      min_coverage: ${inputs.seabed_line_min_coverage}
+
+  # ds_Sv must carry 'depth' to match the surface-referenced line
+  # detect_seafloor produced; without it create_seafloor_mask silently falls
+  # back to 'echo_range' and offsets the mask by the transducer depth. The
+  # survey store has been through ep_add_depth, so select_window's output does.
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  # create_surface_mask always compares against echo_range.
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+    params:
+      mode: "and"
+
+  # The end of the line here, and checkpointed because it is the artifact.
+  # In processing_lvl_2_user.yaml this step feeds rechunk_before_noise instead.
+  - id: apply_mask
+    op: apply_sv_mask
+    checkpoint: always
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      mask: ${combine_masks.mask}
