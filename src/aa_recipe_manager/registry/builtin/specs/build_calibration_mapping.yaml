@@ -48,7 +48,25 @@ outputs:
     required: false
     description: >
       Names of single-channel calibration files the mapping does not
-      reference. An empty list means all of them are used.
+      reference. An empty list means all of them are used. Under "report" no
+      mapping exists to check against, so this carries the files the run moved
+      aside instead.
+  conflicts:
+    type: dict
+    required: false
+    description: >
+      Unresolved multiple-match conflicts, keyed by a stable conflict id.
+      Each carries the candidate calibration keys, a summary of every
+      candidate, the raw files and channel ids it affects, and
+      distinguishing_fields naming what actually differs between the
+      candidates. That list excludes the fields two calibration records differ
+      in by construction, such as the source filename and the created
+      timestamp, so it names only what a reviewer has to weigh. It is empty
+      when the candidates match everywhere it matters. Only populated under
+      conflict_resolution
+      "report"; empty when the mapping completed. A non-empty value means no
+      mapping file was written, so feed the choices back as
+      calibration_choices and run the step again.
 params:
   output_base:
     type: path
@@ -88,7 +106,20 @@ params:
       "error" (the default) lists the conflicts and stops, so you delete the
       unwanted single-channel file and re-run. "interactive" prompts on the
       terminal, and raises before any file is moved when the run has no
-      interactive input.
+      interactive input. "report" neither raises nor prompts: it returns the
+      conflicts on the conflicts output and writes no mapping file, which is
+      the mode for a caller with no terminal that will present the choices
+      and run the step again with calibration_choices.
+  calibration_choices:
+    type: dict
+    required: false
+    description: >
+      Conflict decisions supplied up front, mapping a conflict id from a
+      previous run's conflicts output to the calibration key to keep. Applied
+      in every conflict_resolution mode before that mode's handler runs, so a
+      partial map resolves what it covers and leaves the rest to be reported,
+      prompted for, or raised on. An unknown conflict id, or a key that is not
+      one of that conflict's candidates, is an error.
   keep_unused:
     type: bool
     required: false
@@ -125,3 +156,4 @@ implementations:
       # Paths are not JSON-safe, so the name list is mapped rather than the
       # Path list the function also returns.
       unused_files: "['unused_file_names']"
+      conflicts: "['conflicts']"

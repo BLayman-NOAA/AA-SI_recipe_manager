@@ -85,6 +85,7 @@ all-builtin-specs = [
     "aa-si-calibration @ git+https://github.com/BLayman-NOAA/AA-SI_calibration.git",
     "aa-si-ml @ git+https://github.com/BLayman-NOAA/AA-SI_ML.git",
     "aa-si-visualization @ git+https://github.com/BLayman-NOAA/AA-SI_Visualization.git",
+    "aa-si-echogram-gl @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git",
     "ipykernel",
     "ipywidgets",
 ]

@@ -1,0 +1,84 @@
+op: build_echogram_pyramid
+cache_key: build_echogram_pyramid  # pinned cache identity - keep stable across op renames
+description: >
+  Build a level-of-detail pyramid from an Sv Dataset for the WebGPU echogram
+  viewer.
+
+  The output is a DataTree with one node per level, level 0 being the data as
+  given and level k merging 2**k pings into one by averaging in linear space.
+  Checkpoint the step and the store lands in the recipe or survey cache under
+  the step's content address, where `aa-echogram serve --store <path>` can read
+  it directly. Nothing has to be published for a pyramid to be looked at.
+
+  `ping_range` is what makes this parallel. Passing one builds a single segment
+  of the survey, so the op can be mapped over the ranges from
+  plan_pyramid_segments and the results collected by merge_echogram_pyramids.
+  The slice is taken inside the op, so a mapped instance reads only its own
+  pings rather than the whole survey.
+category: visualization
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Sv Dataset with a vertical coordinate and ping_time. Normally the output
+      of apply_sv_mask or remove_noise, or the merged survey Sv from a
+      segment-parallel chain.
+    expected_variables:
+      - Sv
+outputs:
+  pyramid:
+    type: object
+    description: >
+      DataTree with one node per level, carrying the multiscales block and the
+      per chunk summaries on its root attributes.
+params:
+  levels:
+    type: int
+    required: false
+    default: 8
+    description: >
+      Levels to build, halving the ping axis each time. Eight levels reduce the
+      ping axis by 128 at the coarsest, which is what lets an overview of a
+      survey read a small array.
+  range_var:
+    type: str
+    required: false
+    default: echo_range
+    description: >
+      Vertical coordinate to build the geometry from. echo_range rather than
+      depth: depth carries heave, and averaging sample index i across pings
+      that heaved averages different depths, which the pyramid's alignment
+      check refuses. The surface reference is not lost, because the sidecar
+      keeps depth minus echo_range as the per ping transducer depth.
+  ping_range:
+    type: list
+    required: false
+    default: null
+    description: >
+      Optional [start, stop] naming one segment of the ping axis. Supplied by a
+      mapped step as ${_item} from plan_pyramid_segments.
+  aggregation:
+    type: str
+    required: false
+    default: linear_mean
+    description: >
+      How pings are merged: 'linear_mean' averages in linear space and reports
+      decibels, 'max' keeps the loudest sample. Mean is right for biomass, max
+      preserves a single strong target that a mean would dilute.
+implementations:
+  - key: default
+    callable_path: aa_si_echogram_gl.ops.build_echogram_pyramid
+    default: true
+    dependency:
+      name: aa-si-echogram-gl
+      version: ">=0.0.1"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git
+    param_map:
+      ds_Sv: ds_Sv
+      levels: levels
+      range_var: range_var
+      ping_range: ping_range
+      aggregation: aggregation
+    output_map:
+      pyramid: __return__

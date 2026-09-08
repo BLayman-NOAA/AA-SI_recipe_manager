@@ -1009,7 +1009,7 @@ def _checkpoint_output_category(
 
     if _is_echodata(value):
         return ZARR_DATA_DIR if preferred_format == "zarr" else OTHER_DATA_DIR
-    if isinstance(value, (xr.DataArray, xr.Dataset)):
+    if isinstance(value, (xr.DataArray, xr.Dataset, xr.DataTree)):
         return ZARR_DATA_DIR if preferred_format == "zarr" else OTHER_DATA_DIR
     if _is_json_safe(value):
         return JSON_DATA_DIR
@@ -1035,7 +1035,9 @@ def _would_pickle(value: Any, preferred_format: str) -> bool:
     """
     import xarray as xr
 
-    if _is_echodata(value) or isinstance(value, (xr.DataArray, xr.Dataset)):
+    if _is_echodata(value) or isinstance(
+        value, (xr.DataArray, xr.Dataset, xr.DataTree)
+    ):
         return preferred_format == "pickle"
     return not _is_json_safe(value)
 
@@ -1383,6 +1385,35 @@ def _serialize_output(
         _write_zarr(target, _write_da_local, _write_da_remote, stage)
         return target, "zarr_da"
 
+    if isinstance(value, xr.DataTree):
+        # A tree of groups rather than one flat store: an echogram pyramid is a
+        # node per level, and the viewer reads those subgroups directly. Written
+        # unconsolidated and consolidated once for the reason
+        # _write_tree_consolidated_once gives.
+        if preferred_format == "pickle":
+            target = _target(".pkl")
+            _write_pickle(target, value)
+            return target, "pickle"
+
+        target = _target(".zarr")
+
+        def _write_tree_local() -> None:
+            with _zarr_write_warnings_suppressed():
+                _write_tree_consolidated_once(value, str(target.as_local_path()))
+
+        def _write_tree_remote() -> None:
+            _write_tree_consolidated_once(
+                value, target.url, storage_options=xr_storage_options
+            )
+
+        def _stage_tree(path: Any) -> None:
+            with _zarr_write_warnings_suppressed():
+                _write_tree_consolidated_once(value, str(path))
+
+        stage = _stage_tree if _should_stage(value) else None
+        _write_zarr(target, _write_tree_local, _write_tree_remote, stage)
+        return target, "zarr_tree"
+
     if isinstance(value, xr.Dataset):
         if preferred_format == "netcdf":
             target = _target(".nc")
@@ -1481,6 +1512,19 @@ def _deserialize_output(loc: StorageLocation, fmt: str) -> Any:
         if loc.is_local:
             return xr.open_dataset(str(loc.as_local_path()), engine="zarr", chunks={})
         return xr.open_dataset(
+            loc.url,
+            engine="zarr",
+            chunks={},
+            backend_kwargs={"storage_options": remote_options},
+        )
+    if fmt == "zarr_tree":
+        import xarray as xr
+
+        if loc.is_local:
+            return xr.open_datatree(
+                str(loc.as_local_path()), engine="zarr", chunks={}
+            )
+        return xr.open_datatree(
             loc.url,
             engine="zarr",
             chunks={},

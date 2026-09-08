@@ -36,6 +36,16 @@ outputs:
     description: >
       True when the existing files were reused because the manufacturer files
       had not changed.
+  single_channel_data:
+    type: dict
+    required: false
+    description: >
+      The standardized channels as data: {"channels": [...]}, one entry per
+      single-channel file, each carrying the _calibration_file_key that the
+      mapping is built on. Produced on the fresh parse, the reuse path and an
+      override alike, so a caller can review the channels without reading the
+      folder. Plain JSON types only, so it checkpoints as JSON rather than a
+      pickle and stays eligible for the shared survey cache.
 params:
   cal_input_folder:
     type: path
@@ -95,6 +105,24 @@ params:
     required: false
     default: true
     description: Print the parsed parameters and the files written.
+  override_channels:
+    type: dict
+    required: false
+    description: >
+      Write these channels as the single-channel files instead of parsing the
+      manufacturer files. Same shape as the single_channel_data output: omit
+      an entry to discard that channel, and edit values in place to correct
+      them. This is how a reviewed and edited set of channels comes back from
+      a caller that has no access to the folder.
+
+      _calibration_file_key is ignored on input, because filenames are
+      re-derived from the supplied values and an edit can therefore rename a
+      file. The channels are validated against the standardized schema before
+      anything is written, and the folder is cleared first so a discarded
+      channel leaves no orphan behind for the mapping to match. Folded into
+      the standardization fingerprint, so changing them rewrites the folder,
+      and a later run that parses the manufacturer files again clears what an
+      override wrote rather than mapping both sets.
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.standardize_calibration_files
@@ -108,3 +136,4 @@ implementations:
       single_channel_dir: "['single_channel_dir']"
       channel_count: "['channel_count']"
       skipped: "['skipped']"
+      single_channel_data: "['single_channel_data']"

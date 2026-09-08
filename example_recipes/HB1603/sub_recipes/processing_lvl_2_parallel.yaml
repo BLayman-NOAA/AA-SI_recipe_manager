@@ -7,16 +7,16 @@
 # masked Sv datasets back into one survey-wide Sv along ping_time. Background
 # noise removal and everything after it run on that merged survey dataset.
 #
-#   [per file] compute_sv -> ep_add_depth -> ep_add_splitbeam_angle
+#   [per file] compute_sv -> ep_add_depth
 #              -> log_seafloor_stats -> detect_seafloor
 #              -> seafloor/surface/frequency masks -> combine -> apply_mask
 #   [fan-in]   merge_sv (collect, concat along ping_time)
-#   [survey]   rechunk_before_noise -> remove_noise
+#   [survey]   crop_range -> rechunk_before_noise -> remove_noise
 #
 # WHY THE FAN-IN SITS AT apply_mask, not immediately after compute_sv:
 #
-#   * ep_add_depth, ep_add_splitbeam_angle, log_seafloor_stats and
-#     detect_seafloor all need the EchoData that produced the Sv. Merging
+#   * ep_add_depth, log_seafloor_stats and detect_seafloor all need the
+#     EchoData that produced the Sv. Merging
 #     right after compute_sv would leave them with no per-file EchoData and
 #     force a survey-wide combine_raw back into the pipeline -- exactly the
 #     up-front combine this design removes.
@@ -28,6 +28,23 @@
 #     file would change the noise estimate at file boundaries. It therefore
 #     stays survey-wide, after the merge, and its result is identical to the
 #     non-parallel pipeline's.
+#
+# VERTICAL REFERENCE
+#
+# ep_add_depth adds the surface-referenced 'depth' variable, and detect_seafloor
+# returns a line matched to whichever dataset it is given: surface referenced
+# when that dataset carries 'depth', transducer referenced otherwise.
+# create_seafloor_mask picks its comparison variable the same way. Both
+# therefore read ep_add_depth's dataset, so the line and the samples share one
+# reference. Reading detect_seafloor off compute_sv instead pairs a
+# transducer-referenced line against surface-referenced samples, which offsets
+# the mask by the transducer depth without erroring.
+#
+# ep_add_splitbeam_angle is commented out below: nothing downstream consumes
+# split-beam angles. apply_mask sources ep_add_depth, so the angles never
+# reached an output -- the step was per-file work whose result was discarded.
+# Restore it, and point create_seafloor_mask back at its output, if a later
+# step needs them.
 #
 # The map_over source below is ${initial_setup.raw_file_paths}, a step
 # defined in processing_lvl_1_parallel.yaml. Includes flatten into a single
@@ -63,6 +80,42 @@ inputs:
     type: list
     default: [70, 120, 200]
     description: "Frequencies (kHz) removed by the frequency mask."
+  crop_outlier_sigma:
+    type: float
+    required: false
+    description: >
+      Standard deviations above the mean per-ping deepest sample at which a
+      ping is treated as anomalous. The crop then lands on the deepest
+      RETAINED ping, so uncommon-but-real depths survive. Left unset here:
+      this survey's seafloor is detected per ping from the .bot returns rather
+      than read off a hand-verified line, so the deepest-sample distribution
+      already carries the detector's own misses and an outlier test would cut
+      against them. Set it if a single glitch ping is holding the range axis
+      open and defeating the lossless trim below.
+  crop_outlier_margin:
+    type: float
+    default: 1.5
+    description: >
+      Multiplier on (mean + crop_outlier_sigma * sd) forming the reject
+      threshold. Raise to flag fewer pings, lower to flag more. Only used
+      when crop_outlier_sigma is set.
+  crop_trailing_all_nan:
+    type: bool
+    default: true
+    description: >
+      Drop trailing range samples that hold no finite Sv anywhere in the
+      survey. Lossless, which is why it is the default for this survey.
+      Ignored when crop_outlier_sigma is set. Set false with the other two
+      unset to disable the crop step.
+  crop_max_range_m:
+    type: float
+    required: false
+    description: >
+      Hard depth ceiling for the crop, in metres. Composes with the criteria
+      above rather than replacing them: the shallowest cut wins. Drops samples
+      whether or not they hold data. Left unset: this is a deep survey whose
+      seafloor runs past 1000 m, so a hand-picked ceiling is far more likely
+      to discard real data here than on a shelf survey.
   noise_range_sample_num:
     type: int
     default: 10
@@ -106,16 +159,19 @@ steps:
     params:
       use_platform_vertical_offsets: true
 
-  - id: ep_add_splitbeam_angle
-    op: ep_add_splitbeam_angle
-    map_over: ${initial_setup.raw_file_paths}
-    inputs:
-      ds_Sv: ${ep_add_depth.ds_Sv}
-      echodata: ${inputs.echodata}
-    params:
-      waveform_mode: "CW"
-      encode_mode: "power"
-      to_disk: false
+  # Disabled: its output fed only create_seafloor_mask, which now reads
+  # ep_add_depth directly, and nothing downstream consumes split-beam angles.
+  # See the file header.
+  # - id: ep_add_splitbeam_angle
+  #   op: ep_add_splitbeam_angle
+  #   map_over: ${initial_setup.raw_file_paths}
+  #   inputs:
+  #     ds_Sv: ${ep_add_depth.ds_Sv}
+  #     echodata: ${inputs.echodata}
+  #   params:
+  #     waveform_mode: "CW"
+  #     encode_mode: "power"
+  #     to_disk: false
 
   - id: log_seafloor_stats
     op: log_seafloor_detection_stats
@@ -126,12 +182,15 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
+  # Reads ep_add_depth's dataset, not compute_sv's, so the line comes back
+  # surface referenced and matches the 'depth' variable create_seafloor_mask
+  # compares it against. See the file header.
   - id: detect_seafloor
     op: detect_seafloor
     map_over: ${initial_setup.raw_file_paths}
     depends_on: [log_seafloor_stats]
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
+      ds_Sv: ${ep_add_depth.ds_Sv}
       echodata: ${inputs.echodata}
     params:
       min_valid_depth_m: 10.0
@@ -140,7 +199,8 @@ steps:
     op: create_seafloor_mask
     map_over: ${initial_setup.raw_file_paths}
     inputs:
-      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      # Must be the same depth-carrying dataset detect_seafloor read.
+      ds_Sv: ${ep_add_depth.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
       seafloor_buffer_m: ${inputs.seafloor_buffer_m}
@@ -194,10 +254,30 @@ steps:
 
   # --- Survey-wide from here on ------------------------------------------
 
+  # Everything below the deepest seafloor is NaN after apply_mask, but it still
+  # occupies range samples. Dropping them here, once, shrinks every step that
+  # follows: remove_noise, mask_sparse, compute_mvbs and the cell-statistics
+  # grid all work on the trimmed axis. This survey records well past the
+  # seafloor, so the lossless trim alone takes a large bite.
+  #
+  # It sits after the fan-in deliberately: the crop point is survey-wide, and
+  # cropping per file would leave segments with different range_sample lengths
+  # that merge_sv pads back out with NaN. See the op's description.
+  - id: crop_range
+    op: crop_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_sv.merged}
+    params:
+      outlier_sigma: ${inputs.crop_outlier_sigma}
+      outlier_margin: ${inputs.crop_outlier_margin}
+      drop_trailing_all_nan: ${inputs.crop_trailing_all_nan}
+      max_range_m: ${inputs.crop_max_range_m}
+
   - id: rechunk_before_noise
     op: rechunk_dataset
     inputs:
-      ds_Sv: ${merge_sv.merged}
+      ds_Sv: ${crop_range.ds_Sv}
     params:
       ping_time_chunk: ${inputs.noise_chunk_ping_time}
 

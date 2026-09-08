@@ -3,6 +3,20 @@
 # Starts from the combined echodata plus extracted calibration parameters,
 # computes Sv, builds and applies the masking stack, and performs background
 # noise removal.
+#
+# ep_add_depth adds the surface-referenced 'depth' variable, and detect_seafloor
+# returns a line matched to whichever dataset it is given: surface referenced
+# when that dataset carries 'depth', transducer referenced otherwise.
+# create_seafloor_mask picks its comparison variable the same way. Both
+# therefore read ep_add_depth's dataset, so the line and the samples share one
+# reference. Reading detect_seafloor off compute_sv instead pairs a
+# transducer-referenced line against surface-referenced samples, which offsets
+# the mask by the transducer depth without erroring.
+#
+# ep_add_splitbeam_angle is commented out below: nothing downstream consumes
+# split-beam angles. apply_mask sources ep_add_depth, so the angles never
+# reached an output. Restore it, and point create_seafloor_mask back at its
+# output, if a later step needs them.
 
 recipe:
   name: "processing_lvl_2"
@@ -46,15 +60,16 @@ steps:
     params:
       use_platform_vertical_offsets: true
 
-  - id: ep_add_splitbeam_angle
-    op: ep_add_splitbeam_angle
-    inputs:
-      ds_Sv: ${ep_add_depth.ds_Sv}
-      echodata: ${inputs.echodata}
-    params:
-      waveform_mode: "CW"
-      encode_mode: "power"
-      to_disk: false
+  # Disabled: see the file header.
+  # - id: ep_add_splitbeam_angle
+  #   op: ep_add_splitbeam_angle
+  #   inputs:
+  #     ds_Sv: ${ep_add_depth.ds_Sv}
+  #     echodata: ${inputs.echodata}
+  #   params:
+  #     waveform_mode: "CW"
+  #     encode_mode: "power"
+  #     to_disk: false
 
   # optional
   - id: log_seafloor_stats
@@ -65,12 +80,13 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
-  # .bot file based seafloor
+  # .bot file based seafloor. Reads ep_add_depth's dataset so the line comes
+  # back surface referenced; see the file header.
   - id: detect_seafloor
     op: detect_seafloor
     depends_on: [log_seafloor_stats]
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
+      ds_Sv: ${ep_add_depth.ds_Sv}
       echodata: ${inputs.echodata}
     params:
       min_valid_depth_m: 10.0
@@ -78,7 +94,8 @@ steps:
   - id: create_seafloor_mask
     op: create_seafloor_mask
     inputs:
-      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      # Must be the same depth-carrying dataset detect_seafloor read.
+      ds_Sv: ${ep_add_depth.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
       seafloor_buffer_m: 10
@@ -115,10 +132,22 @@ steps:
       ds_Sv: ${ep_add_depth.ds_Sv}
       mask: ${combine_masks.mask}
 
+  # Everything below the deepest seafloor is NaN after apply_mask but still
+  # occupies range samples, widening remove_noise, mask_sparse, compute_mvbs
+  # and the cell-statistics grid. Lossless: only trailing samples that hold no
+  # finite Sv anywhere in the survey are dropped.
+  - id: crop_range
+    op: crop_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      drop_trailing_all_nan: true
+
   - id: rechunk_before_noise
     op: rechunk_dataset
     inputs:
-      ds_Sv: ${apply_mask.ds_Sv}
+      ds_Sv: ${crop_range.ds_Sv}
     params:
       ping_time_chunk: ${inputs.noise_chunk_ping_time}
 

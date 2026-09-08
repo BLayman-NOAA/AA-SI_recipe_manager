@@ -1,0 +1,61 @@
+op: plan_pyramid_segments
+cache_key: plan_pyramid_segments  # pinned cache identity - keep stable across op renames
+description: >
+  Choose ping ranges that a pyramid can be built over independently and then
+  concatenated exactly.
+
+  A pyramid is a reduction along the ping axis, so it splits along that axis,
+  but only if the cuts fall on the reduction's own cell boundaries. Level k
+  merges 2**k pings, so every range but the last is a multiple of
+  2**(levels-1) and reduces to a whole number of cells at every level. The last
+  range is whatever is left: its final cell is short, which is exactly what a
+  serial build produces at the end of a survey, so the segmented result is not
+  an approximation of the serial one but the same answer.
+category: visualization
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Sv Dataset, read only for its ping count.
+    expected_variables:
+      - Sv
+outputs:
+  ranges:
+    type: list
+    description: >
+      List of [start, stop] ping ranges, in order and tiling the survey with no
+      gap or overlap. Map build_echogram_pyramid over this.
+  grid:
+    type: int
+    description: The multiple the ranges are aligned to, which is 2**(levels-1).
+params:
+  levels:
+    type: int
+    required: false
+    default: 8
+    description: Levels the build will produce, which is what sets the grid.
+  target_pings:
+    type: int
+    required: false
+    default: 32768
+    description: >
+      Rough segment size, rounded down onto the grid. Sized for the memory one
+      mapped instance needs: a segment is held whole while its levels are
+      reduced, so at five channels and an uncropped water column 32,768 pings is
+      roughly a gigabyte at level zero and twice that through the cascade. Raise
+      it for a wide machine, lower it for a deep water column.
+implementations:
+  - key: default
+    callable_path: aa_si_echogram_gl.ops.plan_pyramid_segments
+    default: true
+    dependency:
+      name: aa-si-echogram-gl
+      version: ">=0.0.1"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git
+    param_map:
+      ds_Sv: ds_Sv
+      levels: levels
+      target_pings: target_pings
+    output_map:
+      ranges: ranges
+      grid: grid

@@ -206,6 +206,11 @@ EXPECTED_BUILTIN_OPS = {
     "merge_clustering_passes",
     "merge_datasets",
     "build_range_grid",
+    # Echogram viewer pyramids: one build, and the pair that make it
+    # segment-parallel.
+    "build_echogram_pyramid",
+    "plan_pyramid_segments",
+    "merge_echogram_pyramids",
 }
 
 # Ops from specs/experimental/. Registered like any other op so recipes can use
@@ -334,6 +339,7 @@ class TestBuiltinLoader:
                     "single_channel_dir": "['single_channel_dir']",
                     "channel_count": "['channel_count']",
                     "skipped": "['skipped']",
+                    "single_channel_data": "['single_channel_data']",
                 },
             ),
             "build_calibration_mapping": (
@@ -344,6 +350,7 @@ class TestBuiltinLoader:
                     "missing_params": "['missing_params']",
                     # Paths are not JSON-safe, so the name list is mapped.
                     "unused_files": "['unused_file_names']",
+                    "conflicts": "['conflicts']",
                 },
             ),
         }

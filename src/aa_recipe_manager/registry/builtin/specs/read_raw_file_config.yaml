@@ -46,16 +46,19 @@ params:
     type: int
     required: false
     description: >
-      Read only this many leading bytes of a remote EK80 file instead of
-      transferring it whole. An EK80 file's channel configuration is settled by
-      its Configuration and Parameter datagrams, which sit within the first few
-      MiB, so 8388608 (8 MiB) covers CW and FM alike with room to spare. Set
-      this when scanning a survey whose raw files are large or in another
-      region: it is the difference between moving a survey's worth of sample
-      data and moving its headers.
+      Ceiling on how many leading bytes of a remote EK80 file may be read in
+      place of transferring it whole. The scan starts at 8 MiB and doubles up
+      to this cap, stopping as soon as the Configuration and Parameter
+      datagrams settle every channel, so a file that settles early pays only
+      the small read and the local prefix grows in place rather than being
+      re-read from zero.
 
-      Safe to set: a file whose prefix does not settle the configuration is
-      read whole instead, so an unusual file costs time rather than accuracy.
+      Size it for the deepest configuration in the survey. CW files settle
+      within a fraction of a MiB; FM files sit behind much larger RAW3
+      payloads and scale with file size, so a survey of ~1 GiB FM files needs
+      a cap in the tens of MiB. Too low is expensive, not wrong: files that
+      never settle are read whole.
+
       Because a prefix cannot measure them, raw3_count and gps_data come back
       null; last_ping_time is recovered from the file's tail. Leave unset for
       the whole-file read, which is also what local files and

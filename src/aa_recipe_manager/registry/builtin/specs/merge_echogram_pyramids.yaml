@@ -1,0 +1,46 @@
+op: merge_echogram_pyramids
+cache_key: merge_echogram_pyramids  # pinned cache identity - keep stable across op renames
+description: >
+  Collect per segment pyramids into one.
+
+  The fan-in for a segment-parallel pyramid build. Level k of the survey is
+  level k of each part laid end to end, so this concatenates per level rather
+  than rebuilding, and adds no levels: each part already carries every level.
+  The per chunk summaries are recomputed, because a part's chunk grid is not the
+  whole survey's and its keys cannot be shifted into place.
+
+  Only correct when the parts were cut by plan_pyramid_segments. A split off the
+  grid puts a partial cell in the middle of the survey and every coarse level
+  after it is wrong.
+category: visualization
+inputs:
+  parts:
+    type: object
+    many: true
+    description: >
+      Collected pyramid DataTrees, in ping order, supplied by a
+      ``collect: ${mapped_step.pyramid}`` directive.
+outputs:
+  pyramid:
+    type: object
+    description: The combined pyramid, as one DataTree with a node per level.
+params:
+  dim:
+    type: str
+    required: false
+    default: ping_time
+    description: Ping dimension to concatenate along.
+implementations:
+  - key: default
+    callable_path: aa_si_echogram_gl.ops.merge_echogram_pyramids
+    default: true
+    dependency:
+      name: aa-si-echogram-gl
+      version: ">=0.0.1"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git
+    param_map:
+      parts: parts
+      dim: dim
+    output_map:
+      pyramid: __return__
