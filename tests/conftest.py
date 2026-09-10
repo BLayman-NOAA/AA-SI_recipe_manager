@@ -76,7 +76,7 @@ def make_recipe(**kwargs):
 def hb1603_recipe_path():
     return (
         Path(__file__).parent.parent
-        / "example_recipes"
+        / "examples"
         / "HB1603"
         / "hb1603_survey_pipeline.yaml"
     )
@@ -86,7 +86,7 @@ def hb1603_recipe_path():
 def hb1603_extra_calibration_recipe_path():
     return (
         Path(__file__).parent.parent
-        / "example_recipes"
+        / "examples"
         / "HB1603"
         / "extra_calibration_hb1603_survey_pipeline.yaml"
     )

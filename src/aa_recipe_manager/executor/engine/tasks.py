@@ -30,6 +30,7 @@ from aa_recipe_manager.executor.engine.step import execute_step
 from aa_recipe_manager.executor.invocation import RuntimeContext, _ElementContext
 from aa_recipe_manager.executor.refs import CheckpointRef, ValueRef, resolve_ref
 from aa_recipe_manager.executor.runtime_context import execution_context
+from aa_recipe_manager.executor.disposal import dispose_step_outputs
 from aa_recipe_manager.parallel import (
     derive_instance_hash,
     instance_discriminator,
@@ -305,7 +306,35 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
     except BaseException as exc:
         attach_task_log(exc, log_buffer.getvalue())
         raise
+    finally:
+        # Per instance, not per chain: _finalize_chain only runs once every
+        # instance is done, so disposing there would hold every downloaded file
+        # for the length of the fan-out, which is the thing this exists to
+        # avoid. Runs on the failure path too, so a crashed instance does not
+        # strand its scratch.
+        _dispose_instance(task, wctx, elem_ctx, log_buffer)
     return TaskResult(members=members, log_text=log_buffer.getvalue())
+
+
+def _dispose_instance(
+    task: ChainInstanceTask,
+    wctx: WorkerContext,
+    elem_ctx: "_ElementContext",
+    log_buffer: io.StringIO,
+) -> None:
+    """Delete this instance's disposable outputs.
+
+    Safe to run as soon as the instance's members are done: a disposable port
+    is validated to be uncheckpointed, and a collector reads a chain's outputs
+    only through the checkpointed ports it fans in on.
+    """
+    removed = 0
+    for mid in task.member_ids:
+        member = wctx.dag.nodes[mid]
+        removed += dispose_step_outputs(member.spec, elem_ctx.own_outputs(mid))
+    if removed:
+        with capture_output(log_buffer):
+            print(f"disposed {removed} path(s) for instance {task.instance_index}")
 
 
 def _run_chain_members(

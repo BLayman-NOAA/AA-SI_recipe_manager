@@ -15,6 +15,21 @@ outputs:
       Readable, folder-safe slug derived from the query parameters. Intended
       to be passed to download_ncei_data so that each query writes into its
       own subfolder under output_dir.
+  raw_urls:
+    type: list
+    required: false
+    default: null
+    description: >
+      Public HTTPS URL of each record's .raw object, in record order. For
+      steps that read a file in place rather than downloading it, such as
+      read_raw_file_config with max_scan_bytes: map over this and each
+      instance range-reads the leading bytes of one file, with nothing
+      transferred whole and nothing left on disk.
+
+      Plain strings, so a mapped instance is content-addressed by its URL and
+      dedupes across runs the same way a raw file path does. Built rather than
+      probed, so a record whose object is not stored as <key>.raw fails on
+      read instead of costing a HEAD request per file.
 params:
   file_time_start:
     type: str
@@ -41,3 +56,4 @@ implementations:
     output_map:
       ncei_results: "['records']"
       query_label: "['query_label']"
+      raw_urls: "['raw_urls']"

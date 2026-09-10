@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
+import heapq
 import warnings
-from collections import deque
 from pathlib import Path
 from typing import Any
 import re
@@ -27,6 +27,7 @@ from aa_recipe_manager.model.types import (
     Spec,
     Step,
 )
+from aa_recipe_manager.parallel import group_mapped_chains
 from aa_recipe_manager.registry.registry import Registry
 from aa_recipe_manager.resolver.params import (
     contains_item_ref,
@@ -148,6 +149,7 @@ def build_dag(
     _validate_edges(edges, nodes, valid_step_ids, errors, warn_msgs)
     _validate_required_inputs(nodes, errors)
     _validate_map_collect_sweep(nodes, errors, warn_msgs)
+    _validate_disposable_outputs(nodes, errors)
 
     if errors:
         raise RecipeValidationError(errors, warn_msgs)
@@ -159,12 +161,17 @@ def build_dag(
     if errors:
         raise RecipeValidationError(errors)
 
-    return PipelineDAG(
+    dag = PipelineDAG(
         recipe=recipe,
         nodes=nodes,
         edges=edges,
         topological_order=topo_order,
     )
+    _validate_mapped_chain_refs(dag, edges, errors)
+    if errors:
+        raise RecipeValidationError(errors)
+
+    return dag
 
 
 def _resolve_step(
@@ -494,6 +501,79 @@ def _collect_bind_port(node: DAGNode) -> str | None:
     return output_name if output_name in node.spec.inputs else None
 
 
+def _validate_mapped_chain_refs(
+    dag: PipelineDAG,
+    edges: list[DAGEdge],
+    errors: list[str],
+) -> None:
+    """Reject a reference between mapped steps that did not land in one chain.
+
+    Two steps mapped over the same source are meant to run as one chain, where
+    each member sees this element's value of the ones before it. Only
+    consecutive members are grouped, so a step ordered between them splits the
+    chain, and the reference then resolves to the whole fanned-out list. That
+    is silently the wrong value rather than an error, so refuse to run instead.
+    """
+    chain_of: dict[str, str] = {}
+    for chain in group_mapped_chains(dag):
+        for member_id in chain.member_ids:
+            chain_of[member_id] = chain.member_ids[0]
+
+    reported: set[tuple[str, str]] = set()
+    for edge in edges:
+        src, tgt = edge.source_step_id, edge.target_step_id
+        source = dag.nodes.get(src)
+        target = dag.nodes.get(tgt)
+        if source is None or target is None:
+            continue
+        if not (source.is_mapped and target.is_mapped):
+            continue
+        if source.map_source != target.map_source:
+            continue
+        if chain_of.get(src) == chain_of.get(tgt) or (src, tgt) in reported:
+            continue
+        reported.add((src, tgt))
+        errors.append(
+            f"Step '{tgt}' reads '{src}', which maps over the same source, but "
+            f"the two are not in one mapped chain, so '{src}' resolves to the "
+            f"whole fanned-out list rather than this element's value. Declare "
+            f"the steps that map over {source.map_source} consecutively, or "
+            f"fan '{src}' in with a collect step and read that."
+        )
+
+
+def _validate_disposable_outputs(
+    nodes: dict[str, DAGNode],
+    errors: list[str],
+) -> None:
+    """Reject a disposable output on a step whose result is checkpointed.
+
+    Disposal deletes the files the port names. If the step were checkpointed,
+    the checkpoint would record paths to files that no longer exist, and a
+    later partial resume would load that checkpoint and hand a consumer a
+    dangling path. Requiring ``checkpoint: never`` keeps the two features from
+    contradicting each other, and is also the honest declaration: an output you
+    are about to delete is not one worth caching.
+    """
+    for node in nodes.values():
+        ports = [
+            name
+            for name, port in node.spec.outputs.items()
+            if getattr(port, "disposable", False)
+        ]
+        if not ports:
+            continue
+        if node.step.checkpoint != "never":
+            listed = ", ".join(sorted(ports))
+            errors.append(
+                f"Step '{node.step.id}': op '{node.step.op}' declares "
+                f"disposable output(s) {listed}, so the step must set "
+                f"'checkpoint: never'. A checkpoint would record paths to "
+                f"files disposal deletes, and a later resume would load them "
+                f"as dangling paths."
+            )
+
+
 def _validate_map_collect_sweep(
     nodes: dict[str, DAGNode],
     errors: list[str],
@@ -640,7 +720,18 @@ def _topological_sort(
     edges: list[DAGEdge],
     errors: list[str],
 ) -> list[str]:
-    """Kahn's algorithm topological sort. Appends a cycle error if a cycle is found."""
+    """Kahn's algorithm topological sort. Appends a cycle error if a cycle is found.
+
+    Ready steps are drained in recipe declaration order rather than in the
+    order they became ready. Both are valid topological orders, but only the
+    declaration order keeps a mapped chain contiguous when the recipe also
+    declares independent non-mapped steps alongside it: a breadth-first queue
+    hoists a mapped step as soon as its map source is done, which lands
+    unrelated steps in the middle of the chain and splits it. group_mapped_chains
+    only groups consecutive members, and a split chain's members stop sharing an
+    element context, so a reference from one to another resolves to the whole
+    fanned-out list instead of this element's value.
+    """
     # De-duplicate while preserving edge declaration order: a plain ``set``
     # here made the ready-queue processing order (and therefore which mapped
     # chains stay contiguous in dag.topological_order, see parallel.py's
@@ -662,16 +753,18 @@ def _topological_sort(
         adjacency[src].append(tgt)
         in_degree[tgt] += 1
 
-    queue = deque(nid for nid, deg in in_degree.items() if deg == 0)
+    declared_at = {node_id: index for index, node_id in enumerate(nodes)}
+    ready = [(declared_at[nid], nid) for nid, deg in in_degree.items() if deg == 0]
+    heapq.heapify(ready)
     order: list[str] = []
 
-    while queue:
-        nid = queue.popleft()
+    while ready:
+        _, nid = heapq.heappop(ready)
         order.append(nid)
         for neighbor in adjacency[nid]:
             in_degree[neighbor] -= 1
             if in_degree[neighbor] == 0:
-                queue.append(neighbor)
+                heapq.heappush(ready, (declared_at[neighbor], neighbor))
 
     if len(order) != len(nodes):
         cycle_nodes = [nid for nid, deg in in_degree.items() if deg > 0]

@@ -1,0 +1,356 @@
+# HB1603 Sperm Whale Dive Profiles - 14 dives, one clustering, per-dive codes
+#
+# Pools every localized dive's MVBS cells into a single HDBSCAN clustering,
+# then projects the cluster identities back onto each dive as per-ping SVCodes
+# and the depth-interval duration tables from the NEFSC report.
+#
+# This replaces the previous classifier, which coded each cell from the sign of
+# Sv(18 kHz) minus Sv(38 kHz) with a 3 dB "equal" band. The grid and the output
+# layout are kept, so a run can be diffed cell for cell against
+# NEFSC_UC1/full_data/Auxiliary/Sv_codes/.
+#
+#   survey tier   calibration scanned in place from NCEI, then per-file Sv
+#                 merged into the shared store   [included byte-identically]
+#   plan          read the 15 dive configs, emit 14 windows
+#   user tier     one chain per dive, fanned in to a combined MVBS
+#   ML            reshape -> normalize -> HDBSCAN -> label every point
+#   report        per-dive SVCode CSVs and the duration tables
+#
+# RUN THE SURVEY FIRST
+#
+#   survey_preprocess.yaml builds the shared Sv store and is the expensive
+#   pass. Run it once, then run this: the two include the same sub-recipes with
+#   the same inputs, so every survey step here is a cache hit.
+#
+#   That only holds while the shared inputs match exactly. crop_max_range_m and
+#   survey_chunk_ping_time are declared in both files and must be kept in step.
+#   Verified rather than assumed: with them matching, all 13 survey steps hash
+#   identically in the two recipes, and a dive-specific input such as
+#   pad_minutes disturbs none of them. Letting them drift invalidates the crop
+#   and the merge, so the survey has to be reassembled.
+#
+#   aa-recipe run survey_preprocess.yaml --executor dask --dask-workers 6
+#   aa-recipe run dive_profiles.yaml     --executor dask --dask-workers 4
+#
+# WHY THE CLUSTERING IS POOLED
+#
+#   Clustering each dive alone would give each its own cluster ids, and nothing
+#   would connect a cluster in the July dive to the one in August. Pooling puts
+#   every dive in one feature space, so a code means the same thing across the
+#   whole set, which is what makes the per-dive tables comparable.
+#
+# CLUSTER IDS ARE RUN SCOPED
+#
+#   HDBSCAN ids are not stable across runs, so an SVCode integer here does not
+#   carry the fixed meaning codes 1, 2 and 3 had in the previous analysis
+#   (gas-bearing, indeterminate, non gas-bearing). plot_clustering_report emits
+#   the per-cluster Sv statistics that say what each id actually is; read the
+#   tables against those, not against the old numbering.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run dive_profiles.yaml --visualize
+
+recipe:
+  name: "hb1603_dive_profiles"
+  description: "Pooled HDBSCAN clustering of 14 HB1603 sperm whale dives, with per-dive SVCodes."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  mvbs_range_var_max:
+    type: str
+    default: "1810m"
+    description: >
+      Depth the per-window MVBS grid is built out to, as the unit string
+      echopype parses. It is pinned rather than measured so every window shares
+      one depth axis and the fan-in has nothing to pad.
+
+      It must clear the deepest depth the survey tier can produce, which is not
+      crop_max_range_m: the crop is applied to echo_range, range from the
+      transducer, while depth adds the transducer's own depth below the surface
+      on top of it. HB1603's transducer sits about 8.9 m down, so a 1800 m
+      echo_range ceiling reaches roughly 1809 m of depth and 1810 m is the next
+      2 m bin edge above it. Raise both together, and keep the margin if you
+      move the crop: a ceiling below the data silently drops the deepest bins.
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: "Must match survey_preprocess.yaml exactly, or the merged store is rebuilt."
+  survey_chunk_ping_time:
+    type: int
+    default: 1000
+    description: "Must match survey_preprocess.yaml exactly."
+  json_dir:
+    type: path
+    default: "../../../../NEFSC_UC1/full_data/Auxiliary/JSON_Files"
+    description: "Folder of SWD_*.json dive configs."
+  evl_root:
+    type: path
+    default: "../../../../NEFSC_UC1/full_data/Auxiliary"
+    description: "Searched recursively for the .evl files the configs name."
+  pad_minutes:
+    type: float
+    default: 0.0
+    description: "Minutes added either side of each dive's line span."
+  sample_size:
+    type: int
+    default: 1000000
+    description: >
+      Cap on the points HDBSCAN is fitted on. The rest are labelled by
+      assign_clusters_to_all_points rather than left unlabelled.
+  min_cluster_size_fraction:
+    type: float
+    default: 0.02
+  min_samples:
+    type: int
+    default: 4
+  code_output_dir:
+    type: path
+    default: "./outputs/sv_codes"
+    description: "Where the per-dive CSVs and the duration tables are written."
+  depth_interval_m:
+    type: float
+    default: 200.0
+    description: "Depth bin of the duration table. 200 m matches the report."
+
+steps:
+
+  # --- Survey tier: included byte-identically with survey_preprocess.yaml --
+
+  - include: sub_recipes/calibration_from_ncei.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/survey_sv.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
+
+  # --- Plan the dives ------------------------------------------------------
+
+  # 15 configs, 14 windows: SWD_20160707-OE20-OE29-OE32.json is a combined view
+  # of three July 7 dives that are each covered by their own config, and it
+  # carries no 99% confidence lines, so it cannot drive the coding step.
+  - id: plan_dives
+    op: custom
+    checkpoint: always
+    params:
+      json_dir: ${inputs.json_dir}
+      evl_root: ${inputs.evl_root}
+      pad_minutes: ${inputs.pad_minutes}
+    custom_spec:
+      description: Turn the NEFSC dive configs into recipe windows.
+      callable_path: aa_si_utils.dive_profiles.plan_dive_datasets
+      cache_key: dive_profiles_plan_dive_datasets
+      version: "1"
+      params:
+        json_dir: {type: path}
+        evl_root: {type: path}
+        pad_minutes: {type: float}
+      outputs:
+        windows: {type: list}
+        raw_files: {type: list}
+      output_map:
+        windows: "['windows']"
+        raw_files: "['raw_files']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  # --- User tier: one chain per dive, fanned in ---------------------------
+
+  - include: sub_recipes/dive_windows.yaml
+    input_overrides:
+      survey_sv: ${rechunk_survey_sv.ds_Sv}
+      windows: ${plan_dives.windows}
+      # One pinned depth axis for every window, so the fan-in has nothing to
+      # pad. Spelled as a unit string because echopype parses it, and kept
+      # above crop_max_range_m by hand: the crop is on echo_range and depth
+      # adds the transducer's own depth on top of it.
+      range_var_max: ${inputs.mvbs_range_var_max}
+
+  # --- Machine learning over the pooled cells -----------------------------
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${merge_dive_mvbs.merged}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      ds_sv: ${merge_dive_cell_stats.merged}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size_fraction: ${inputs.min_cluster_size_fraction}
+      min_samples: ${inputs.min_samples}
+      sample_size: ${inputs.sample_size}
+      cluster_selection_method: "leaf"
+      use_hdbscan: true
+
+  # Without this, every cell beyond sample_size stays unlabelled and comes back
+  # NaN once the result is regridded, which on a pooled survey is most of the
+  # data. checkpoint: never because it needs the fitted model, which only the
+  # run_hdbscan above it holds: a checkpointed clustering result drops the
+  # model, and the model itself would checkpoint as pickle.
+  - id: label_all_points
+    op: assign_clusters_to_all_points
+    checkpoint: never
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  - id: embed_results
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: plot_clustering_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+      clustering_model: ${label_all_points.clustering_model}
+      ds_Sv: ${merge_dive_mvbs.merged}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      overlay_line_var: "dive_fit"
+      cluster_stats_sv_data_var: "Sv"
+
+  # --- SVCodes and the report tables --------------------------------------
+
+  # Per-cell CSVs in the reference layout, plus the per-ping summary the
+  # duration table is built from. A ping contributes its whole 10 s bin to the
+  # code that dominates the cells between its 99% confidence bounds, which is
+  # what makes the per-code minutes add up to the dive length.
+  - id: generate_sv_codes
+    op: custom
+    checkpoint: always
+    inputs:
+      ds: ${embed_results.ds_normalized}
+    params:
+      windows: ${plan_dives.windows}
+      output_dir: ${inputs.code_output_dir}
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      range_var: "depth"
+      ping_time_bin_s: 10.0
+    custom_spec:
+      description: Write per-dive SVCode CSVs from the embedded clustering.
+      callable_path: aa_si_utils.dive_profiles.generate_sv_codes
+      cache_key: dive_profiles_generate_sv_codes
+      version: "1"
+      inputs:
+        ds: {type: Dataset}
+      params:
+        windows: {type: list}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        dataset_name: {type: str}
+        ml_result_name: {type: str}
+        range_var: {type: str}
+        ping_time_bin_s: {type: float}
+      outputs:
+        code_csv_paths: {type: list}
+        summary_csv_path: {type: path}
+        dive_labels: {type: list}
+      output_map:
+        code_csv_paths: "['code_csv_paths']"
+        summary_csv_path: "['summary_csv_path']"
+        dive_labels: "['dive_labels']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  # "Percent of total dive duration the whale spent at 200 m depth intervals
+  # per code." Depth comes from the fitted dive profile, not from the cells:
+  # the question is how long the whale spent at a depth, and the code says what
+  # was around it there.
+  - id: sv_code_depth_table
+    op: custom
+    checkpoint: always
+    params:
+      summary_csv_path: ${generate_sv_codes.summary_csv_path}
+      output_dir: ${inputs.code_output_dir}
+      depth_interval_m: ${inputs.depth_interval_m}
+    custom_spec:
+      description: Percent of dive duration per depth interval per code.
+      callable_path: aa_si_utils.dive_profiles.sv_code_depth_table
+      cache_key: dive_profiles_sv_code_depth_table
+      version: "1"
+      params:
+        summary_csv_path: {type: path}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        depth_interval_m: {type: float}
+      outputs:
+        per_dive_csv_path: {type: path}
+        combined_csv_path: {type: path}
+        totals_csv_path: {type: path}
+      output_map:
+        per_dive_csv_path: "['per_dive_csv_path']"
+        combined_csv_path: "['combined_csv_path']"
+        totals_csv_path: "['totals_csv_path']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git

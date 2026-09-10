@@ -4,15 +4,28 @@ description: >
   Compute per-ping transducer depth in metres below the water surface from the
   EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.
 
-  Built from ``drop_keel_offset`` rather than from echopype's own platform
-  vertical offsets. On a drop keel vessel the transducers ride on a retractable
-  keel and ``drop_keel_offset`` records how far it was lowered, while the
-  ``transducer_offset_z`` and ``water_level`` fields that
-  ``ep_add_depth(use_platform_vertical_offsets=true)`` reads are often left at
-  zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.
+  Reads the Platform group directly rather than going through
+  ``ep_add_depth(use_platform_vertical_offsets=true)``, which gets the sign
+  wrong on both EK families for different reasons.
 
-  The keel position is per file and heave is per ping, so the result is
-  ``drop_keel_offset + datum_correction_m + heave_sign * vertical_offset``.
+  On an EK80 drop keel vessel the transducers ride on a retractable keel and
+  ``drop_keel_offset`` records how far it was lowered, while the
+  ``transducer_offset_z`` and ``water_level`` fields echopype's formula reads
+  are left at zero. echopype carries ``drop_keel_offset`` for provenance and
+  never reads it.
+
+  An EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60
+  per-ping transducer depth into ``water_level``, whose value its formula then
+  subtracts (``transducer_offset_z - (water_level + vertical_offset)``, with
+  ``transducer_offset_z`` zero because the ER60 does not populate it). The
+  transducer comes out above the water surface and every depth is short by
+  twice the draft. This step reads ``water_level`` directly instead.
+
+  ``drop_keel_offset`` is preferred when both are present; the field actually
+  used is recorded in the output's ``static_offset_field`` attr.
+
+  The static position is per file and heave is per ping, so the result is
+  ``static offset + datum_correction_m + heave_sign * vertical_offset``.
   Heave is interpolated onto ds_Sv's ping_time here, which also means
   ``ep_add_depth`` passes the array straight through instead of resampling it
   again with nearest neighbour.
@@ -35,14 +48,15 @@ outputs:
     description: >
       Transducer depth in metres below the surface, shape (ping_time,), on
       ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s
-      ``depth_offset``. Provenance (the raw drop keel offset, the correction
-      applied, the heave sign and coverage) is recorded in its attrs.
+      ``depth_offset``. Provenance (the static offset and which Platform field
+      it came from, the correction applied, the heave sign and coverage) is
+      recorded in its attrs.
 params:
   datum_correction_m:
     type: float
     units: m
     description: >
-      Metres added to ``drop_keel_offset`` to reach depth below the water
+      Metres added to the static offset to reach depth below the water
       surface, for when the recorded offset is measured from a hull datum
       rather than the waterline. Positive pushes the transducer deeper. The
       default 0.0 takes the recorded offset as already waterline referenced.

@@ -91,7 +91,7 @@ def default_config_search_paths() -> list[Path]:
 def recipe_config_candidate(recipe_path: str | os.PathLike[str]) -> Path:
     """Per-recipe config path: ``<recipe_stem>.config.yaml`` beside the recipe.
 
-    E.g. ``example_recipes/hb1603_gcs.yaml`` -> ``example_recipes/hb1603_gcs.config.yaml``.
+    E.g. ``examples/hb1603_gcs.yaml`` -> ``examples/hb1603_gcs.config.yaml``.
     Recipe-relative (not cwd-relative), so it is found no matter where the
     command is run from.
     """

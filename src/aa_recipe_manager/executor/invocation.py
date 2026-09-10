@@ -159,6 +159,17 @@ class _ElementContext:
             return dict(self._store[step_id])
         return self._parent.step_outputs(step_id)
 
+    def own_outputs(self, step_id: str) -> dict[str, Any] | None:
+        """This element's own outputs for ``step_id``, without falling through.
+
+        :meth:`step_outputs` reads the parent when the step is not a chain
+        member, which is right for resolving references and wrong for disposal:
+        deleting files named by a parent value would delete another instance's
+        scratch, or an upstream step's.
+        """
+        outputs = self._store.get(step_id)
+        return dict(outputs) if outputs is not None else None
+
 
 # ---------------------------------------------------------------------------
 # Callable import

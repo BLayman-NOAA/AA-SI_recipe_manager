@@ -198,6 +198,7 @@ EXPECTED_BUILTIN_OPS = {
     "plot_ml_echogram",
     "run_hdbscan",
     "embed_clustering_results",
+    "assign_clusters_to_all_points",
     "plot_clustering_report",
     "log_seafloor_detection_stats",
     "compute_per_cell_statistics",
@@ -387,12 +388,12 @@ class TestBuiltinLoader:
             "download_dir": "['download_dir']",
         }
 
+        # add_line_overlay reads both line formats through one callable whose
+        # argument names match the port names, so it needs no param_map at all.
         overlay_impl = reg.get_implementation("add_line_overlay")
-        assert overlay_impl.param_map == {
-            "ds": "ds_MVBS",
-            "line_file_path": "csv_filepath",
-            "line_name": "dive_profile_name",
-        }
+        assert overlay_impl.callable_path == "aa_si_utils.utils.add_line_overlay"
+        assert not overlay_impl.param_map
+        assert overlay_impl.output_map == {"ds": "__return__"}
 
     def test_hdbscan_detect_seafloor_implementation_resolves(self, monkeypatch):
         original_version = importlib.metadata.version

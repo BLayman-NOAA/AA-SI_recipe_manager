@@ -1,0 +1,112 @@
+op: assign_clusters_to_all_points
+cache_key: assign_clusters_to_all_points  # pinned cache identity - keep stable across op renames
+description: >
+  Extend a subsampled clustering to every point in the dataset, so no cell is
+  left unlabelled.
+
+  ``run_hdbscan`` clusters at most ``sample_size`` points, and above that the
+  remaining points receive no label at all - they come back NaN once
+  ``embed_clustering_results`` regrids the result. On a survey-scale ML dataset
+  that is most of the data. This step projects the fitted structure onto the
+  unlabelled points with hdbscan's ``approximate_predict``, which walks each
+  point down the condensed tree the fit produced and returns the cluster it
+  falls into, or -1 when it falls outside every cluster.
+
+  Points the fit did see keep their fitted label rather than a predicted one:
+  the fit is the more authoritative answer where it exists, and only the
+  remainder is being filled in.
+
+  Place it between ``run_hdbscan`` and ``embed_clustering_results``. The output
+  is the same shape ``run_hdbscan`` produces, so everything downstream
+  (``embed_clustering_results``, ``plot_clustering_report``,
+  ``merge_clustering_passes``) consumes it unchanged.
+
+  CHECKPOINTING. This step needs the fitted model, and a checkpointed
+  clustering_results Dataset does not carry one: converting a result for Zarr
+  drops the model and records only model_type and model_available. The
+  clustering_model port is a plain object, so it falls back to pickle format,
+  which the tiered store refuses to write to the shared survey tier. Keep this
+  step adjacent to the run_hdbscan that feeds it, in the user tier, or set
+  checkpoint: never and let it recompute.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: >
+      The normalized ML Dataset the clustering was run against, supplying the
+      full feature matrix. Must be the same Dataset that fed run_hdbscan, or
+      the sample indices will not line up and the step fails rather than
+      silently mislabelling.
+  clustering_results:
+    type: Dataset
+    description: >
+      Result from run_hdbscan, holding the fitted labels and the sample indices
+      they belong to.
+  clustering_model:
+    type: object
+    description: >
+      The fitted model from the same run_hdbscan step, fitted with
+      prediction_data=True (run_hdbscan always does). Required: the step fails
+      with a pointed message when it is null, since a checkpointed
+      clustering_results cannot supply it.
+outputs:
+  clustering_results:
+    type: Dataset
+    description: >
+      Clustering result covering every sample index in ds_normalized, in the
+      same shape run_hdbscan produces. Carries n_fitted, n_predicted and
+      label_source attrs recording how much of it was predicted rather than fit.
+  clustering_model:
+    type: object
+    description: The input model, passed through so a later plotting step can take it.
+    required: false
+    default: null
+  cluster_labels:
+    type: list
+    description: Sorted list of non-noise cluster labels present in the extended result.
+    required: false
+    default: null
+params:
+  dataset_name:
+    type: str
+    description: >
+      ML dataset the clustering belongs to. Must match the dataset_name used by
+      reshape_for_ml and run_hdbscan.
+    required: true
+  normalization_name:
+    type: str
+    description: >
+      Normalized feature set that was clustered. Must match the
+      normalization_name used by normalize_ml_data and run_hdbscan.
+    required: true
+  ml_result_name:
+    type: str
+    description: >
+      Name the extended result is stored under. Leave unset to keep the name
+      already on the incoming result, which is what keeps a downstream
+      embed_clustering_results / plot_clustering_report pair pointing at it
+      without changes.
+    required: false
+    default: null
+  batch_size:
+    type: int
+    description: >
+      Rows predicted per approximate_predict call. The prediction materialises
+      intermediate arrays proportional to the batch, so this is the memory knob;
+      lower it if a survey-scale run runs out of memory. Batching does not
+      change the labels.
+    required: false
+    default: 200000
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.assign_clusters_by_prediction
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+    output_map:
+      clustering_results: "['clustering_results']"
+      clustering_model: "['clustering_model']"
+      cluster_labels: "['cluster_labels']"

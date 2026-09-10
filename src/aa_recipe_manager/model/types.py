@@ -57,6 +57,22 @@ class PortDeclaration(BaseModel):
     ``"raw_file_list"`` tags the list of raw input files a run read, so the
     executor can harvest it into provenance (see ``build_raw_inputs_record``).
     """
+    disposable: bool = False
+    """Output ports whose value names files the run may delete once every
+    consumer has read them.
+
+    For streaming a survey larger than the disk: a mapped chain downloads one
+    raw file, converts it, checkpoints Sv, and the downloaded file and the
+    intermediate store are then dead weight. Marking those ports disposable
+    lets each chain instance clean up after itself, so peak disk tracks the
+    concurrency rather than the survey.
+
+    The value must be a path string or a list of them; anything else is left
+    alone. Only meaningful on a step with ``checkpoint: never`` -- a
+    checkpointed step would record paths to files that no longer exist, and a
+    later partial resume would hand a consumer a dangling path. The DAG builder
+    enforces that.
+    """
 
 
 class ParamDeclaration(BaseModel):

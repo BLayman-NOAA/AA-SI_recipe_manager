@@ -48,9 +48,10 @@ outputs:
     required: false
     description: >
       Names of single-channel calibration files the mapping does not
-      reference. An empty list means all of them are used. Under "report" no
-      mapping exists to check against, so this carries the files the run moved
-      aside instead.
+      reference, including the ones this run moved aside. An empty list means
+      every calibration file matched a raw channel, so a non-empty one is the
+      signal that a channel went unmapped. Under "report" no mapping exists to
+      check against, so this carries only the files the run moved aside.
   conflicts:
     type: dict
     required: false
@@ -120,6 +121,23 @@ params:
       partial map resolves what it covers and leaves the rest to be reported,
       prompted for, or raised on. An unknown conflict id, or a key that is not
       one of that conflict's candidates, is an error.
+  tolerances:
+    type: dict
+    required: false
+    description: >
+      Per-field match tolerances, merged over the matcher's defaults so a dict
+      naming only one field widens only that field. The defaults are exact for
+      frequency, frequency_start, frequency_end and transmit_power (1 Hz / 1 W)
+      and 1e-6 s for transmit_duration_nominal, because a calibration is
+      formally valid only for the configuration it was measured at.
+
+      Widening one is a scientific decision, not a convenience: a channel that
+      matches only under a widened tolerance was calibrated at a different
+      setting than it is being applied to, and the resulting gain and
+      sa_correction carry a bias of that difference. Every override is reported
+      on the terminal. Reach for it when a survey changed a setting mid-cruise
+      and no calibration exists for the other side of the change, and record
+      why in the recipe.
   keep_unused:
     type: bool
     required: false

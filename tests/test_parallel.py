@@ -318,6 +318,56 @@ def test_mapped_chain_shares_element_context(helpers):
     assert result.outputs["merge"]["total"] == 66
 
 
+def test_mapped_chain_runs_when_only_one_member_is_needed_after_resume(
+    helpers, tmp_path
+):
+    """A pruned branch must not hide another member's cached fan-in output."""
+    producer = _step(
+        "seg", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    first = _step(
+        "first", "inc", inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    second = _step(
+        "second", "inc", inputs={"x": "${first.out}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    cached_merge = _step(
+        "cached_merge", "collect_sum", inputs={"values": "${second.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"}, collect="${second.out}",
+    )
+    required_merge = _step(
+        "required_merge", "collect_sum", inputs={"values": "${first.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"}, collect="${first.out}",
+    )
+    source_goal = _step(
+        "source_goal", "make_scalar",
+        out_ports={"value": _INT}, output_map={"value": "__return__"},
+    )
+    source_goal.depends_on = ["seg"]
+    first.checkpoint = "always"
+    second.checkpoint = "always"
+    cached_merge.checkpoint = "always"
+    required_merge.checkpoint = "never"
+    source_goal.checkpoint = "never"
+
+    steps = [producer, first, second, cached_merge, required_merge, source_goal]
+    cache = str(tmp_path / "cache")
+    _run(steps, user_cache_dir=cache)
+    helpers.call_log.clear()
+
+    result = _run(steps, user_cache_dir=cache)
+
+    assert result.outputs["required_merge"]["total"] == 63
+    assert not [call for call in helpers.call_log if call[0] == "inc"]
+
+
 # ---------------------------------------------------------------------------
 # sweep
 # ---------------------------------------------------------------------------
@@ -419,6 +469,72 @@ def test_per_instance_checkpoint_resume(helpers, tmp_path):
     r2 = _run(steps, user_cache_dir=ckpt, checkpoint_mode="eager")
     assert r2.outputs["merge"]["total"] == 63
     assert [c for c in helpers.call_log if c[0] == "inc"] == []
+
+
+def test_independent_step_no_longer_splits_a_mapped_chain(helpers):
+    """A step with no tie to the chain must not be ordered into the middle of it.
+
+    ``mid`` is ready as soon as ``seg`` is, so a breadth-first ready queue put
+    it between ``a`` and ``b``, which split the chain and handed ``b`` the
+    whole fanned-out list. Draining ready steps in declaration order keeps the
+    chain whole.
+    """
+    producer = _step(
+        "seg", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    a = _step(
+        "a", "inc", inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    b = _step(
+        "b", "inc", inputs={"x": "${a.out}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    mid = _step(
+        "mid", "collect_sum", inputs={"values": "${seg.items}"},
+        in_ports={"values": _LIST}, out_ports={"total": _INT},
+        output_map={"total": "__return__"},
+    )
+    dag = build_dag(_recipe([producer, a, b, mid]), Registry(), check_versions=False)
+    chains = {c.member_ids[0]: c.member_ids for c in group_mapped_chains(dag)}
+    assert chains["a"] == ["a", "b"]
+
+    result = SequentialExecutor().execute(dag)
+    assert result.outputs["b"]["out"] == [12, 22, 32]
+
+
+def test_split_mapped_chain_reference_is_rejected(helpers):
+    """A same-source reference across a chain boundary is an error, not a list.
+
+    ``mid`` collects ``a`` and ``b`` reads ``mid``, so no ordering keeps ``a``
+    and ``b`` in one chain. ``b`` also reads ``a`` directly, which would
+    silently resolve to every element's value.
+    """
+    producer = _step(
+        "seg", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    a = _step(
+        "a", "inc", inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    mid = _step(
+        "mid", "collect_sum", inputs={"values": "${a.out}"},
+        in_ports={"values": _MANY}, out_ports={"total": _INT},
+        output_map={"total": "__return__"}, collect="${a.out}",
+    )
+    b = _step(
+        "b", "offset", inputs={"x": "${a.out}", "base": "${mid.total}"},
+        in_ports={"x": _INT, "base": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"}, map_over="${seg.items}",
+    )
+    with pytest.raises(RecipeValidationError) as excinfo:
+        build_dag(_recipe([producer, a, mid, b]), Registry(), check_versions=False)
+    assert "not in one mapped chain" in str(excinfo.value)
 
 
 def test_group_mapped_chains_partitions_by_source(helpers):
@@ -740,7 +856,7 @@ def test_map_over_plus_include_fans_out_subworkflow(helpers, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-_EXAMPLES = Path(__file__).resolve().parent.parent / "example_recipes" / "HB1603"
+_EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "HB1603"
 
 
 def _dry_run_example(name: str):
@@ -798,7 +914,7 @@ def test_merge_datasets_spec_registered():
 # ---------------------------------------------------------------------------
 
 
-_HB2407 = Path(__file__).resolve().parent.parent / "example_recipes" / "HB2407"
+_HB2407 = Path(__file__).resolve().parent.parent / "examples" / "HB2407"
 
 
 def _dry_run_hb2407(name: str):

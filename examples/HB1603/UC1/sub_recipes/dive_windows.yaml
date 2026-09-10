@@ -1,0 +1,333 @@
+# HB1603 Dive Windows - one chain per dive, fanned back in for clustering
+#
+# The user tier. It cuts each localized dive out of the shared survey Sv,
+# processes it on its own, and concatenates the results into the single
+# dataset the clustering runs over.
+#
+#   [per window] select_ping_time_range(window) -> seabed and surface masks
+#                -> remove_background_noise -> mask_sparse -> compute_mvbs
+#                -> per-cell statistics -> attach the three dive lines
+#   [fan-in]     merge_dive_mvbs -> the combined multi-dive MVBS
+#
+# WHY THE WINDOW ENTERS HERE AND NOWHERE ABOVE
+#
+#   Step hashes are a Merkle chain. A window wired into anything in the survey
+#   tier - initial_setup's file_time, the catalogue query, the raw file list -
+#   changes that step's hash and every hash below it, and no two analyses ever
+#   share a cached Sv. select_window is the first step that is
+#   allowed to know which dive it is looking at.
+#
+# WHY EVERY WINDOW-MAPPED STEP TAKES THE WHOLE DICT
+#
+#   ${_item} is an all-or-nothing token: there is no ${_item.start}. So a
+#   mapped step that needs part of a window takes the window itself and reads
+#   what it needs. That is why select_ping_time_range is given `window` rather
+#   than start/end here, and why the line steps are custom steps over the dict
+#   rather than add_line_overlay with a path.
+#
+# WHY MVBS IS PER WINDOW RATHER THAN SURVEY-WIDE
+#
+#   compute_mvbs bins from its dataset's own first ping. The 14 dives are
+#   spread over six weeks, so binning their concatenation at 10 s would
+#   manufacture millions of empty bins between them. Binning inside the window
+#   and concatenating the results keeps only real cells.
+#
+#   remove_background_noise is here for a related reason: it estimates over a
+#   ping window, so it needs contiguous pings. Each dive is contiguous; their
+#   concatenation is not.
+#
+# THE FREQUENCY MASK
+#
+#   HB1603 carries 18, 38, 70, 120 and 200 kHz. The previous analysis coded on
+#   18 and 38 alone, and this reproduces that feature set by masking the other
+#   three. They are masked rather than dropped, and reshape_for_ml discards a
+#   channel that is all NaN, so the ML features come out as 18 and 38 kHz.
+
+recipe:
+  name: "hb1603_dive_windows"
+  description: "Per-dive masking, MVBS and dive lines, fanned in to one multi-dive dataset."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  survey_sv:
+    type: dataset
+    description: "The shared survey Sv store, from rechunk_survey_sv."
+  windows:
+    type: list
+    description: "Window dicts from plan_dive_datasets, one per dive."
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: >
+      Bubble-layer line. The previous analysis set values above 10 m to NaN,
+      and this reproduces it.
+  seafloor_buffer_m:
+    type: float
+    default: 10.0
+    description: "Metres above the seabed line to also reject."
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: >
+      Channels masked out so the ML features are 18 and 38 kHz. In kHz, which
+      is what create_frequency_mask compares against: it rounds each channel's
+      frequency_nominal to kHz, so a list in Hz silently matches nothing and
+      leaves every channel in play.
+
+      Masking these three is what restricts the analysis to 18 and 38 kHz.
+      reshape_for_ml drops a channel that is entirely NaN, so the masked
+      channels never reach the feature matrix and never gate a cell. Without
+      it every cell needs all five channels finite, and 70/120/200 kHz cannot
+      see past a few hundred metres: measured on SWD_20160707-OE20, that left
+      8.7% of cells rather than 60.5%, of which 73% sat above 200 m and the
+      only ones below 600 m were residual noise spikes reading 0 dB at
+      200 kHz. The whale dives to 1000 m.
+  range_bin:
+    type: str
+    default: "2m"
+    description: "Vertical cell size. 2 m matches the reference Sv_codes grid."
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: "Horizontal cell size. 10 s matches the reference grid."
+  range_var:
+    type: str
+    default: "depth"
+    description: >
+      Binning coordinate. "depth" because the dive lines are metres below the
+      surface and the codes are reported against depth.
+  nan_threshold:
+    type: float
+    default: 0.6
+    description: "Sparse-bin masking threshold."
+  range_var_max:
+    type: str
+    default: "2000m"
+    description: >
+      Depth the MVBS grid is built out to, for every window alike. A unit
+      string, because echopype parses it with _parse_x_bin the same way it
+      parses range_bin; a bare number fails at run time.
+
+      Keep the number above the survey's crop_max_range_m by at least the
+      transducer's depth below the surface: the crop is applied to echo_range,
+      measured from the transducer, while this is a depth measured from the
+      sea surface. On HB1603 the transducer sits about 8.9 m down, so a 1800 m
+      crop reaches roughly 1809 m of depth. A ceiling below the data silently
+      drops the deepest bins. The two cannot be
+      wired from one input because that one is a float for crop_range and this
+      one is a string, so they are duplicated on purpose and have to be moved
+      together.
+
+      Without it compute_MVBS takes each window's own data maximum, so windows
+      that reach different depths get different depth coordinates, and the
+      fan-in below outer-joins them and NaN-pads the shallower ones. Pinning it
+      gives every window an identical axis, since compute_MVBS builds its bins
+      as arange(0, range_var_max + range_bin, range_bin) - anchored at zero, so
+      only the extent ever differed. It also lets compute_MVBS stay lazy, as it
+      no longer has to compute the maximum to find out."
+  noise_range_sample_num:
+    type: int
+    default: 10
+  noise_ping_num:
+    type: int
+    default: 5
+
+steps:
+
+  # --- Per-window chain --------------------------------------------------
+
+  - id: select_window
+    op: select_ping_time_range
+    map_over: ${inputs.windows}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.survey_sv}
+    params:
+      window: ${_item}
+
+  # The registered op, given the window rather than a path: the seabed file
+  # lives inside the window dict and ${_item} cannot be indexed. It is the
+  # documented drop-in for detect_seafloor, with the same seafloor_depth output
+  # and the same 1-D (ping_time,) shape, so create_seafloor_mask below consumes
+  # either unchanged.
+  #
+  # detect_seafloor itself cannot be used here: it reads the echosounder's own
+  # .bot bottom pick out of EchoData, and there is no EchoData below the survey
+  # fan-in. A hand-verified Echoview line is the better source anyway, and is
+  # what the previous NEFSC analysis used.
+  #
+  # edge_extend_s is null rather than the op's default of 0.0. A seabed export
+  # is sampled sparsely, so a dive window can begin between two of its points,
+  # and a NaN seafloor makes create_seafloor_mask reject every sample of that
+  # ping. Holding the end depths outward is the safe choice for a seabed line
+  # and the wrong one for a dive profile.
+  - id: seafloor_line
+    op: read_seafloor_line
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      window: ${_item}
+      edge_extend_s: null
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      seafloor_depth: ${seafloor_line.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  - id: combine_masks
+    op: combine_masks
+    map_over: ${inputs.windows}
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: remove_noise
+    op: remove_background_noise
+    map_over: ${inputs.windows}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+
+  - id: mask_sparse
+    op: mask_sparse_bins
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      nan_threshold: ${inputs.nan_threshold}
+
+  - id: compute_mvbs
+    op: compute_mvbs
+    map_over: ${inputs.windows}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.range_var_max}
+
+  # Computed from the pre-sparse-mask Sv on the same grid, so the statistic
+  # describes the cell the MVBS value came from.
+  - id: compute_cell_stats
+    op: compute_per_cell_statistics
+    map_over: ${inputs.windows}
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      statistics:
+        - cv
+
+  # The dive profile, attached after MVBS on the grid the codes are read off.
+  # Attaching before would average the lines along with the data.
+  #
+  # Three steps rather than one because a dive profile ships as three separate
+  # Echoview exports: the LOESS-fitted depth and its two 99% confidence bounds.
+  # Each takes the window and names which of its line paths to read, since
+  # ${_item} cannot be indexed. They chain ds -> ds so all three land on the
+  # same dataset.
+  #
+  # (The R-written click CSV carries all of this in one file and would need a
+  # single step, but only the 2016-07-03 dive has one; the other 13 are .evl
+  # triplets.)
+  #
+  # edge_extend_s stays at the op default of 0.0 here, unlike the seabed line:
+  # a dive profile covers the localized dive and nothing either side of it, so
+  # holding its end depth outward would invent whale positions.
+  - id: add_dive_fit
+    op: add_line_overlay
+    map_over: ${inputs.windows}
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      window: ${_item}
+      window_key: "dive_fit_evl"
+      line_name: "dive_fit"
+
+  - id: add_dive_u99
+    op: add_line_overlay
+    map_over: ${inputs.windows}
+    inputs:
+      ds: ${add_dive_fit.ds}
+    params:
+      window: ${_item}
+      window_key: "dive_u99_evl"
+      line_name: "dive_u99"
+
+  - id: add_dive_l99
+    op: add_line_overlay
+    map_over: ${inputs.windows}
+    inputs:
+      ds: ${add_dive_u99.ds}
+    params:
+      window: ${_item}
+      window_key: "dive_l99_evl"
+      line_name: "dive_l99"
+
+  # --- Fan-in: every dive's cells in one dataset -------------------------
+
+  # Safe to concatenate only because every window was binned to the same
+  # range_var_max above. Datasets whose depth coordinates differ get
+  # outer-joined and NaN-padded here, the same trap the survey tier guards
+  # against on range_sample.
+  - id: merge_dive_mvbs
+    op: merge_datasets
+    collect: ${add_dive_l99.ds}
+    checkpoint: always
+    inputs:
+      datasets: ${add_dive_l99.ds}
+    params:
+      dim: "ping_time"
+
+  - id: merge_dive_cell_stats
+    op: merge_datasets
+    collect: ${compute_cell_stats.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${compute_cell_stats.ds_Sv}
+    params:
+      dim: "cell_ping_time"

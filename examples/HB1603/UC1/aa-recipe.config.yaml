@@ -1,0 +1,50 @@
+# Run configuration for the HB1603 dive-profile workflow.
+#
+# Picked up automatically by any recipe in this folder, so
+# survey_preprocess.yaml and dive_profiles.yaml share one cache and one set of
+# outputs. That sharing is the point: it is what makes the survey tier a cache
+# hit in the analysis run.
+#
+# THE TWO CACHES
+#
+#   user_cache_dir    this analyst's work, including the per-dive chains
+#   survey_cache_dir  the shared survey Sv, read by everyone
+#
+#   A normal run reads both and writes only the user tier. Curating the shared
+#   artifact is a deliberate, separate act:
+#
+#     aa-recipe run survey_preprocess.yaml --cache-write-tier survey
+#
+#   which reads and writes the survey tier only. cache_write_tier is
+#   deliberately not settable here, so no ordinary run can write to the tier
+#   other people depend on by accident.
+#
+# temp_dir MUST BE LOCAL AND ON A DISK WITH ROOM
+#
+#   The per-file chain writes each raw file's intermediate zarr store here. The
+#   run only holds a few at a time, one per concurrent instance, but a dask run
+#   with 6 workers holds 6, and an EK60 file's store is comparable to the 50 MB
+#   raw file it came from. exe_temp is cleared when the run finishes.
+#
+# outputs_dir must stay local: the calibration artifacts and the report images
+# are written with pathlib, not fsspec.
+
+user_cache_dir: ./recipe_cache
+temp_dir: ./exe_temp
+outputs_dir: ./outputs
+
+# The shared survey Sv. Point this at the bucket once the survey pass has been
+# curated there; until then a local folder is fine and the workflow behaves the
+# same, just without the sharing.
+#
+# survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/hb1603_survey_cache
+survey_cache_dir: ./survey_cache
+
+# Remote reads need the gcs extra and application-default credentials:
+#   pip install "aa-recipe-manager[gcs]"
+#   gcloud auth application-default login
+# storage_options:
+#   token: /path/to/service-account.json
+
+# NCEI is read over plain HTTPS and needs no credentials.
+executor: sequential

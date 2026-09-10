@@ -1,9 +1,33 @@
 op: add_line_overlay
 cache_key: add_line_overlay  # pinned cache identity - keep stable across op renames
 description: >
-  Join a CSV line or profile file (e.g. a dive profile) to a Dataset as a
-  new coordinate-aligned variable. The enriched Dataset is passed downstream
-  for plotting or analysis.
+  Join a depth-versus-time line file to a Dataset as coordinate-aligned
+  variables. The enriched Dataset is passed downstream for plotting, for the ML
+  reshape, or for a step that selects cells between two lines.
+
+  Reads both line formats this workflow meets, and works out which from the
+  extension, so a recipe names the file rather than the reader.
+
+  WHAT GETS ADDED DIFFERS BY FORMAT, because the two files do not carry the
+  same thing:
+
+    .evl  An Echoview export, one line per file. Adds a single variable named
+          exactly line_name. Seabed exports and individual dive lines arrive
+          this way, so a dive profile with its two confidence bounds is three
+          files and three steps.
+
+    .csv  The R-written click file, which carries a whole dive profile at
+          once. Adds four variables with line_name as a prefix:
+          <line_name>_depth (the raw click depths), <line_name>_fit (the LOESS
+          smoothed curve), and <line_name>_lower_ci / <line_name>_upper_ci.
+
+  So line_name is an exact name for an EVL and a prefix for a CSV. That
+  asymmetry is in the data, not in the op: one file holds one line, the other
+  holds four.
+
+  Apply it after the grid you intend to plot or analyse on, since the line is
+  interpolated onto whatever ping_time the input carries. Attaching a line to
+  Sv and then computing MVBS would average the line along with the data.
 category: annotation
 inputs:
   ds:
@@ -12,38 +36,177 @@ inputs:
       Dataset the line is joined onto, normally the gridded MVBS from
       compute_mvbs. The line is aligned to this Dataset's ping_time, so join
       it after the grid the plot or the ML reshape will actually use.
+
+      For an EVL it also supplies the vertical reference the line is converted
+      to: depth when ep_add_depth ran upstream, otherwise echo_range. A dive
+      profile or seabed line is recorded in metres below the surface, so pass a
+      depth-carrying dataset for one.
+    expected_coords:
+      - ping_time
 outputs:
   ds:
     type: Dataset
-    description: Input Dataset with the line variable added
+    description: >
+      Input Dataset with the line variable (EVL) or variables (CSV) added. NaN
+      wherever the line does not cover a ping.
+    expected_coords:
+      - ping_time
 params:
   line_file_path:
     type: path
     description: >
-      Path to the CSV file containing the line data. May be a local path or a
-      remote fsspec URL (e.g. gs://bucket/survey/line_files/dive.csv); remote
-      CSVs are read in place (no download). The must_exist check below is
-      skipped at validation time for remote URLs and enforced by the step at
-      run time instead.
-    required: true
+      The line file. For .evl this may also be a folder of them, or a list, to
+      select from with file_time_start / file_time_end. May be a local path or
+      a remote fsspec URL (e.g. gs://bucket/survey/DiveProfiles); remote files
+      are read in place with no download, since line files are small. The
+      must_exist check below is skipped at validation time for remote URLs and
+      enforced by the step at run time instead.
+
+      Mutually exclusive with ``window``: exactly one of the two is required.
+    required: false
     constraints:
       must_exist: true
+    # Content-addressed so re-exporting or hand-editing a line invalidates the
+    # cached step, while merely moving the file does not. For a folder the hash
+    # covers every .evl in it, not just the ones the window selects.
+    fingerprint_mode: checksum
   line_name:
     type: str
-    description: Name to assign to the new variable in the Dataset
+    description: >
+      Variable name for an EVL, variable prefix for a CSV. Downstream steps
+      refer to the line by this name, so keep it stable across a recipe.
     required: true
+  window:
+    type: dict
+    description: >
+      Mapping carrying the line path under ``window_key``, used instead of
+      ``line_file_path``.
+
+      This is the form a mapped fan-out needs. ${_item} is an all-or-nothing
+      token with no attribute access, so a step mapped over a list of window
+      dicts cannot pull the path out of the item as its own param and has to
+      take the dict. Wire it as ``window: ${_item}``.
+
+      A window also supplies file_time_start / file_time_end when those are not
+      given directly. Extra keys are ignored, and an optional ``label`` names
+      the instance in errors.
+
+      A dive profile is three separate .evl exports, so attaching a whole one
+      from a window is three steps differing only in window_key and line_name.
+      The click .csv form carries the whole profile in one file and needs only
+      one step.
+
+      Note that a window's path is NOT content-fingerprinted the way
+      line_file_path is: it arrives as a runtime value rather than a declared
+      param, so re-exporting that line does not by itself invalidate the step.
+      The upstream step that produced the window carries its identity instead.
+    required: false
+    default: null
+  window_key:
+    type: str
+    description: >
+      Key the line path is read from when ``window`` is given, e.g.
+      "dive_fit_evl", "dive_u99_evl" or "dive_l99_evl" as plan_dive_datasets
+      emits them. Required whenever window is given: a window normally carries
+      several lines and there is no sensible default among them.
+    required: false
+    default: null
+  file_format:
+    type: str
+    description: >
+      "auto" (the default) reads a .csv as CSV and anything else as EVL, which
+      also covers a folder or a list since neither has an extension to read.
+      Set "evl" or "csv" to say so outright.
+    required: false
+    default: "auto"
+  vertical_reference:
+    type: str
+    description: >
+      EVL only. What the line's depths are measured from. "surface" (the
+      default, and what a dive profile or seabed line normally records) is
+      metres below the water surface; "transducer" is metres along the beam
+      from the transducer face.
+    required: false
+    default: "surface"
+  min_status:
+    type: int
+    description: >
+      EVL only. Drop line points whose Echoview status is below this value
+      (0 = none, 1 = unverified, 2 = bad, 3 = good). When null (the default)
+      every point is kept. Dropped points leave a gap, subject to max_gap_s.
+    required: false
+    default: null
+  max_gap_s:
+    type: float
+    units: s
+    description: >
+      EVL only. Widest hole in the line, in seconds, to interpolate across;
+      pings inside a wider hole come back as NaN. A ping landing exactly on a
+      line point always keeps that point's depth. When null (the default)
+      holes of any width are interpolated across.
+    required: false
+    default: null
+  edge_extend_s:
+    type: float
+    units: s
+    description: >
+      EVL only. How many seconds past the line's first and last point to hold
+      that point's depth. The default 0.0 does no extrapolation, so pings
+      outside the line's span are NaN. For a dive profile that is usually what
+      you want: the line covers the localized dive and nothing either side of
+      it, and holding its end depth outward would invent whale positions. For a
+      sparsely sampled seabed export the opposite is true, and null holds the
+      end depths indefinitely.
+    required: false
+    default: 0.0
+  depth_offset_m:
+    type: float
+    units: m
+    description: >
+      EVL only. Constant metres added to the line, for when the draft
+      configured in Echoview differs from the one baked into ds['depth'].
+    required: false
+    default: 0.0
+  min_coverage:
+    type: float
+    description: >
+      EVL only. Fraction of pings (0-1) that must end up with a finite depth;
+      below it the step fails instead of adding a mostly-NaN line. Default 0.0
+      never fails. A dive profile covers only its own dive, so leave this at
+      0.0 when the dataset spans more than the dive.
+    required: false
+    default: 0.0
+  file_time_start:
+    type: str
+    description: >
+      EVL only. Optional inclusive ISO datetime selecting which line files in
+      an evl folder to read, by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in
+      their names. A file's span runs from its own name stamp to the *next*
+      file's, not to the end stamp in its own name. Selection is name-based, so
+      no line data is read to filter. Ignored when the path names a single
+      file.
+    required: false
+  file_time_end:
+    type: str
+    description: >
+      EVL only. Optional inclusive ISO datetime upper bound for line file
+      selection. See file_time_start.
+    required: false
+  long_name:
+    type: str
+    description: >
+      EVL only. Optional long_name attribute for the added variable. Defaults
+      to "<line_name> from Echoview line file".
+    required: false
+    default: null
 implementations:
   - key: default
-    callable_path: aa_si_utils.utils.add_dive_profile_to_dataset
+    callable_path: aa_si_utils.utils.add_line_overlay
     default: true
     dependency:
       name: aa-si-utils
       version: ">=0.1.0"
       source: git
       url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
-    param_map:
-      ds: ds_MVBS
-      line_file_path: csv_filepath
-      line_name: dive_profile_name
     output_map:
       ds: __return__

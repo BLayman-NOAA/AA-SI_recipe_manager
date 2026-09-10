@@ -50,7 +50,9 @@ params:
       in place (no download) since line files are small. The must_exist check is
       skipped at validation time for remote URLs and enforced by the step at run
       time instead.
-    required: true
+
+      Mutually exclusive with ``window``: exactly one of the two is required.
+    required: false
     constraints:
       must_exist: true
     # Content-addressed so re-exporting or hand-editing a line invalidates the
@@ -58,6 +60,36 @@ params:
     # covers every .evl in it, not just the ones the window selects, so adding an
     # unrelated line file also invalidates the step (same as raw_input_folder).
     fingerprint_mode: checksum
+  window:
+    type: dict
+    description: >
+      Mapping carrying the line path under ``window_key``, used instead of
+      ``evl_path``.
+
+      This is the form a mapped fan-out needs. ${_item} is an all-or-nothing
+      token with no attribute access - there is no ${_item.seabed_evl} - so a
+      step mapped over a list of window dicts cannot pull the path out of the
+      item as its own param and has to take the dict. Wire it as
+      ``window: ${_item}``.
+
+      A window also supplies file_time_start / file_time_end when those are not
+      given directly, so a folder of part-day seabed exports narrows to the
+      window without repeating its bounds. Extra keys are ignored, and an
+      optional ``label`` names the instance in errors.
+
+      Note that a window's path is NOT content-fingerprinted the way evl_path
+      is: it arrives as a runtime value rather than a declared param, so
+      re-exporting that line does not by itself invalidate the step. The
+      upstream step that produced the window is what carries its identity.
+    required: false
+    default: null
+  window_key:
+    type: str
+    description: >
+      Key the line path is read from when ``window`` is given. Defaults to
+      "seabed_evl", which is what plan_dive_datasets emits.
+    required: false
+    default: "seabed_evl"
   vertical_reference:
     type: str
     description: >

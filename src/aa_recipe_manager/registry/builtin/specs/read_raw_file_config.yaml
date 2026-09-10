@@ -46,23 +46,35 @@ params:
     type: int
     required: false
     description: >
-      Ceiling on how many leading bytes of a remote EK80 file may be read in
-      place of transferring it whole. The scan starts at 8 MiB and doubles up
-      to this cap, stopping as soon as the Configuration and Parameter
-      datagrams settle every channel, so a file that settles early pays only
-      the small read and the local prefix grows in place rather than being
-      re-read from zero.
+      Ceiling on how many leading bytes of a remote EK60 or EK80 file may be
+      read in place of transferring it whole. The scan starts at
+      min(8 MiB, this) and doubles up to this cap, stopping as soon as the
+      configuration settles every channel, so a file that settles early pays
+      only the small read and the local prefix grows in place rather than
+      being re-read from zero.
 
-      Size it for the deepest configuration in the survey. CW files settle
-      within a fraction of a MiB; FM files sit behind much larger RAW3
-      payloads and scale with file size, so a survey of ~1 GiB FM files needs
-      a cap in the tens of MiB. Too low is expensive, not wrong: files that
-      never settle are read whole.
+      Size it for the deepest configuration in the survey. Too low is
+      expensive, not wrong: a file that never settles is read whole.
 
-      Because a prefix cannot measure them, raw3_count and gps_data come back
-      null; last_ping_time is recovered from the file's tail. Leave unset for
-      the whole-file read, which is also what local files and
-      verify_start_time always get.
+      EK80: CW files settle within a fraction of a MiB; FM files sit behind
+      much larger RAW3 payloads and scale with file size, so a survey of
+      ~1 GiB FM files needs a cap in the tens of MiB.
+
+      EK60 settles far earlier, and the cap doubles as the starting read, so
+      setting it to 1 MiB turns a cruise-wide scan into one small read per
+      file. Measured on HB1603 (52 MB files, five channels), the configuration
+      settles at 256 KiB. Do not be tempted lower on the strength of the
+      channel list alone: at 64 KiB every channel is already listed and looks
+      complete, but three of the five carry CON0's configured 2000 W rather
+      than the 500, 300 and 750 W actually transmitted. The step guards
+      against that by requiring one RAW0 datagram per channel before it trusts
+      a prefix, so a too-small cap costs a whole-file read rather than wrong
+      calibration.
+
+      Because a prefix cannot measure them, the per-file datagram counts and
+      gps_data come back null; last_ping_time is recovered from the file's
+      tail. Leave unset for the whole-file read, which is also what local
+      files and verify_start_time always get.
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.read_raw_file_config

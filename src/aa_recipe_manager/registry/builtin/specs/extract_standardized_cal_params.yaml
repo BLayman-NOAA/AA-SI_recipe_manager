@@ -33,7 +33,11 @@ outputs:
     description: "Environmental parameters keyed by channel (sound_speed, sound_absorption)"
   other_params:
     type: dict
-    description: "Additional extracted calibration metadata keyed by channel and source file details"
+    description: >
+      Additional extracted calibration metadata keyed by channel and source
+      file details. Its unmapped_channels entry names the channels that fell
+      back to the raw file's own recorded values, and is empty when the
+      mapping covered every channel.
     required: false
 params:
   raw_file_path:
@@ -45,6 +49,27 @@ params:
       ${_item} in a per-file map_over chain so each instance picks its own
       file's calibration mapping instead of defaulting to the first file
       in the survey. Leave unset for whole-survey recipes.
+  unmapped_channels:
+    type: str
+    required: false
+    default: "warn"
+    description: >
+      What to do about a channel the mapping does not cover, which happens
+      when no calibration file matched it. "warn" (the default) reports the
+      channel on the terminal and falls back to the values the raw file itself
+      records, which is what echopype would calibrate that channel with given
+      no calibration file at all. "error" stops the run instead. The fallback
+      needs the echodata input; without it "warn" raises the way "error"
+      would.
+  output_logs_folder:
+    type: path
+    required: false
+    description: >
+      Where the fallback writes its calibration flags. A temporary folder is
+      used when omitted, which is what a per-file chain wants: several files
+      falling back at once would otherwise race on one flags file.
+    constraints:
+      must_exist: false
 implementations:
   - key: default
     callable_path: aa_si_calibration.calibration.extract_standardized_calibration_parameters

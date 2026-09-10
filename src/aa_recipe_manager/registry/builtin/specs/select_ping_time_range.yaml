@@ -50,6 +50,25 @@ params:
       selects no pings.
     required: false
     default: null
+  window:
+    type: dict
+    description: >
+      Mapping supplying start and end instead of passing them directly.
+      Mutually exclusive with them: giving both is an error rather than a
+      silent precedence rule.
+
+      This is the form a mapped fan-out needs. ${_item} is an all-or-nothing
+      token with no attribute access - there is no ${_item.start} - so a step
+      mapped over a list of window dicts cannot pull the two bounds out of the
+      item as separate params and has to take the dict itself. Wire it as
+      ``window: ${_item}``.
+
+      Extra keys are ignored, so one dict can carry everything an instance
+      needs (a label, its line files, its raw file list) while this step reads
+      only the bounds. An optional ``label`` key is printed to identify the
+      instance in the run log.
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.select_ping_time_range

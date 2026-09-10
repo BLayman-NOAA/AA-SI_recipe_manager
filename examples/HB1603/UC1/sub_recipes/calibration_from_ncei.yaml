@@ -1,0 +1,209 @@
+# HB1603 Calibration From NCEI - scanned in place, never downloaded
+#
+# The calibration half of a streaming survey. It answers the question that
+# otherwise blocks streaming entirely: generate_standardized_cal_mapping scans
+# raw_input_folder to read every file's channel configuration, and in a
+# streaming run that folder is empty when the step would run.
+#
+# The way out is that the scan does not need the files, only their opening
+# bytes. Each raw object is range-read in place over HTTPS, so nothing is
+# transferred whole and nothing lands on disk.
+#
+#   query_ncei          one catalogue query for the whole cruise
+#   scan_raw_config     one instance per file, reading its leading bytes
+#   record_raw_configs  fans the per-file results in, writes raw_file_configs.yaml
+#   standardize_cal     parses the manufacturer .cal files, one file per channel
+#   build_cal_mapping   matches raw channels to calibration data
+#
+# Modelled on AA-SI_calibration/recipes/calibration_pipeline_staged.yaml, with
+# two differences forced by the streaming source:
+#
+#   * No initial_setup. It resolves a raw file set from a local folder and
+#     fingerprints it, neither of which exists here. The map source is
+#     query_ncei's raw_urls instead, and output_base is passed directly.
+#   * The scan reads a prefix rather than a whole file.
+#
+# WHY max_scan_bytes IS 1 MiB AND NOT SMALLER
+#
+#   max_scan_bytes is both the ceiling and, through
+#   min(8 MiB, max_scan_bytes), where the ladder starts. Measured on
+#   HB1603_L1-D20160707-T192446 (52.6 MB, five channels) the configuration
+#   settles at 256 KiB, so 1 MiB is one small read per file with headroom:
+#   about 3 GB across the cruise against roughly 175 GB of whole files.
+#
+#   Do not cut it to 64 KiB on the strength of the channel list. At 64 KiB all
+#   five channels are already listed and every field is populated, but three of
+#   them carry CON0's configured 2000 W rather than the 500, 300 and 750 W
+#   actually transmitted: EK60 puts the real power in each channel's first RAW0
+#   datagram, not in the header. read_raw_file_config guards against this by
+#   refusing a prefix until it has seen one RAW0 per channel, so a cap that is
+#   too small costs a whole-file read rather than wrong calibration. It is
+#   still a cap worth setting deliberately.
+#
+# WHY transmit_power IS WIDENED TO 1000 W
+#
+#   HB1603 changed transmit power partway through. Files named HB1603_L1-*
+#   (3 and 7 July 2016) transmit 18 and 38 kHz at 2000 W; from 19 July onward
+#   they use 1000 W. 120/200/70 kHz are 500/300/750 W throughout. The only
+#   calibration, HBB_0{18,38}kHz_18July2016.cal, was measured at 1000 W, which
+#   is the setting in force from 19 July on, so leg 1 has no calibration of its
+#   own on those two channels.
+#
+#   The matcher compares transmit_power to 1 W, so leg 1's 18 and 38 kHz match
+#   nothing and four of the fourteen dives lose the two frequencies the whole
+#   SVCode analysis is built on. 1000 W is the smallest tolerance that admits
+#   the 2000/1000 pair. Frequency is matched before power and stays exact, so a
+#   wide power tolerance cannot pull in the wrong transducer's calibration.
+#
+#   This is a deliberate scientific trade, not a convenience. A calibration is
+#   formally valid only at the power it was measured at: transmit power changes
+#   the fitted gain through non-linear propagation loss, which for an ES38B is
+#   of order a few tenths of a dB at full power and less at 18 kHz. Applying
+#   the 1000 W gain to 2000 W data therefore biases leg-1 Sv low, by roughly
+#   0.2-0.6 dB on 38 kHz. The alternative is worse for this analysis: leaving
+#   leg 1 to fall back on the values the sounder happened to be carrying puts
+#   four dives on a different calibration from the other ten, and the
+#   clustering pools all fourteen, so a between-dive step in the 38-18 kHz
+#   difference is indistinguishable from real structure. One calibration for
+#   every dive is the choice that keeps the comparison honest.
+#
+#   The override is reported on the terminal every run.
+#
+# INCLUDE THIS BYTE-IDENTICALLY
+#
+#   The full pipeline includes this file unchanged and wires
+#   build_cal_mapping's calibration_dict and mapping_dict straight into
+#   extract_standardized_cal_params. Every step is then a cache hit and no raw
+#   object is read twice. Change anything here - the query, the cap, the cruise
+#   id - and the whole scan re-runs for every consumer, because step hashes are
+#   a Merkle chain.
+#
+#   conflict_resolution is "error" rather than "interactive" so an unattended
+#   run fails loudly instead of blocking on a prompt no one is watching.
+#
+# Usage:
+#   aa-recipe run calibration_from_ncei.yaml --executor dask --dask-workers 8
+
+recipe:
+  name: "hb1603_calibration_from_ncei"
+  description: "Scan HB1603 channel configurations in place from NCEI and build the calibration mapping."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  cruise_name:
+    type: str
+    default: "HB1603"
+    description: "CRUISE_NAME filter for the NCEI catalogue query."
+  file_time_start:
+    type: str
+    default: "2016-06-01T00:00:00"
+    description: >
+      Lower bound of the catalogue query. Deliberately wider than the cruise,
+      which runs 2016-06-27 to 2016-08-25, so the window states an intent
+      rather than a measurement and does not need editing if the catalogue
+      gains a file at either end. It must stay fixed once a scan has been
+      cached: it is a query param, so moving it re-runs every instance.
+  file_time_end:
+    type: str
+    default: "2016-09-01T00:00:00"
+    description: "Upper bound of the catalogue query. See file_time_start."
+  cal_input_folder:
+    type: path
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60). Local or a
+      gs:// URL. This is the one input the scan cannot get from NCEI.
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+    description: >
+      Root the calibration artifacts are written under. Passed directly rather
+      than taken from initial_setup, which needs a local raw folder.
+  cruise_id:
+    type: str
+    default: "HB1603"
+    description: "Recorded in every generated single-channel file."
+  record_author:
+    type: str
+    default: "<Your Name>"
+    description: "Recorded as the author of every generated single-channel file."
+  max_scan_bytes:
+    type: int
+    default: 1048576
+    description: "Leading bytes read per raw object. See the note above before lowering."
+  match_tolerances:
+    type: dict
+    default:
+      transmit_power: 1001.0
+    description: >
+      Per-field tolerances for matching a raw channel to a calibration file,
+      merged over the matcher's exact defaults. See the note below on why
+      transmit_power is widened for HB1603.
+
+steps:
+
+  - id: query_ncei
+    op: query_ncei_data
+    checkpoint: always
+    params:
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      filters:
+        CRUISE_NAME: ${inputs.cruise_name}
+
+  # One instance per file, content-addressed by its URL, so an interrupted
+  # scan resumes from what it already read rather than starting over.
+  # verbose is off because one banner per file buries the rest of the log.
+  - id: scan_raw_config
+    op: read_raw_file_config
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: always
+    params:
+      raw_file_path: ${_item}
+      verbose: false
+      max_scan_bytes: ${inputs.max_scan_bytes}
+
+  - id: record_raw_configs
+    op: record_raw_file_configs
+    collect: ${scan_raw_config.file_config}
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      file_configs: ${scan_raw_config.file_config}
+    params:
+      output_base: ${inputs.calibration_output_dir}
+
+  - id: standardize_cal
+    op: standardize_calibration_files
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      frequencies: ${record_raw_configs.frequencies}
+    params:
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${inputs.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+
+  # regenerate: always because the step's real product is the files on disk and
+  # its cache key is computed before the run, so a hand-edited or hand-deleted
+  # single-channel file cannot miss the cache. It is a few small local YAML
+  # reads and the matcher.
+  - id: build_cal_mapping
+    op: build_calibration_mapping
+    checkpoint: always
+    regenerate: always
+    inputs:
+      raw_file_configs: ${record_raw_configs.raw_file_configs}
+    params:
+      output_base: ${inputs.calibration_output_dir}
+      single_channel_dir: ${standardize_cal.single_channel_dir}
+      raw_configs_path: ${record_raw_configs.raw_configs_path}
+      short_filenames: true
+      tolerances: ${inputs.match_tolerances}
+      # Keep unmatched calibration files rather than deleting them: they are
+      # the evidence when a channel comes out unmapped.
+      keep_unused: true
+      conflict_resolution: "error"

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from aa_recipe_manager.exceptions import PipelineExecutionError
 from aa_recipe_manager.executor.base import StepRecord
 from aa_recipe_manager.executor.checkpoint import plan_execution
+from aa_recipe_manager.executor.disposal import dispose_value
 from aa_recipe_manager.executor.engine.hints import (
     resolve_unit_dask_config,
     resolve_unit_prefect_config,
@@ -251,11 +252,37 @@ class PipelineRunner:
         for key in plan.consumer_of_unit.get(unit.unit_id, ()):
             plan.remaining_consumers[key] -= 1
             if plan.remaining_consumers[key] == 0:
+                self._try_dispose(*key)
                 self._try_evict(*key)
         for step_id in unit.member_ids:
             for out in plan.producer_ports.get(step_id, ()):
                 if plan.remaining_consumers.get((step_id, out), -1) == 0:
+                    self._try_dispose(step_id, out)
                     self._try_evict(step_id, out)
+
+    def _try_dispose(self, step_id: str, output_name: str) -> None:
+        """Delete a disposable port's files once its last consumer has run.
+
+        The chain path disposes per instance in the worker (see
+        ``tasks._dispose_instance``), which is what bounds peak disk during a
+        fan-out. This covers a disposable port on a plain step, and is a
+        harmless second pass over an already-disposed chain port.
+        """
+        node = self._dag.nodes.get(step_id)
+        if node is None:
+            return
+        port = node.spec.outputs.get(output_name)
+        if port is None or not getattr(port, "disposable", False):
+            return
+        if not self._runtime.has_step(step_id) or not self._runtime.has_output(
+            step_id, output_name
+        ):
+            return
+        removed = dispose_value(self._runtime.get(step_id, output_name))
+        if removed:
+            self._result.logs.append(
+                f"disposed {removed} path(s): {step_id}.{output_name}"
+            )
 
     def _try_evict(self, step_id: str, output_name: str) -> None:
         """Evict ``(step_id, output_name)``, using *its own* producing unit
@@ -531,8 +558,9 @@ class PipelineRunner:
         result = self._result
         total = self._total
 
-        # A downstream cached terminal pruned this chain: skip all members.
-        if any(mid in self._plan.pruned for mid in member_ids):
+        # Skip the chain only when every member is pruned. A later cached
+        # branch may prune one member while another is still needed elsewhere.
+        if all(mid in self._plan.pruned for mid in member_ids):
             for mid in member_ids:
                 idx = self._step_index.get(mid, 0)
                 self._progress.on_step_start(mid, idx, total)

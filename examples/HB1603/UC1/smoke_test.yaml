@@ -1,0 +1,422 @@
+# HB1603 Smoke Test - three dives across two dates, the whole path end to end
+#
+# The first cross-date multi-profile run against live NCEI. Same steps as
+# dive_profiles.yaml and the same sub-recipes, narrowed to three sperm whale
+# dives so a full pass costs less than the full-cruise analysis.
+#
+# The July 7 configs name four unique files: T201039 belongs to both adjacent
+# profiles, so processing it once tests the survey fan-in before their distinct
+# dive windows branch below it. July 3 OE20 is deliberately separated by four
+# days, exercising fan-in of independent time regions. The continuous catalogue
+# query necessarily includes intervening files, so this is larger than the
+# adjacent-pair smoke test.
+#
+#   aa-recipe run smoke_test.yaml
+#
+# WHAT IT IS ACTUALLY TESTING
+#
+#   Three things could only be checked statically so far, and each fails in a
+#   way a dry-run cannot see:
+#
+#   1. Does the fixed per-file crop leave every file the same range_sample
+#      length? If HB1603's sample interval is not uniform, merge_datasets
+#      outer-joins and NaN-pads instead, and the NaN lands in echo_range where
+#      every later range binning reads it. Symptom: NaN in echo_range after
+#      merge_survey_sv, or a range axis longer than any single file's.
+#      Fix: crop by range_sample count rather than by metres.
+#
+#   2. Does build_cal_mapping match all five channels against the five .cal
+#      files? Symptom: an unmapped channel, or missing_params coming back
+#      non-empty. The unused files are kept rather than deleted, so they are
+#      the evidence when it does not.
+#
+#   3. Does the 1 MiB prefix cap actually settle the configuration, or does it
+#      fall back to whole-file reads? Symptom: the scan moves 50 MB per file
+#      instead of 1 MiB, which is obvious in the run's wall time. A fallback is
+#      safe, just slow: read_raw_file_config refuses a prefix until it has seen
+#      one RAW0 per channel, so a cap that is too small costs a download rather
+#      than wrong calibration.
+#
+# THIS DOES NOT PRIME THE FULL SURVEY'S CACHE
+#
+#   file_time_start / file_time_end are query params, so narrowing them changes
+#   query_ncei's hash and therefore every hash beneath it. The per-file Sv this
+#   writes is NOT reused by survey_preprocess.yaml, even for these same
+#   files. That is the same rule that makes narrowing a raw file list as cache
+#   destructive as moving a window: an instance is content-addressed by its
+#   item, but its base hash still descends from the query.
+#
+#   So treat this as a throwaway: run it, read the results, and let the full
+#   survey pass recompute. Point user_cache_dir somewhere separate if you would
+#   rather not mix the two.
+#
+# THE NEXT RUNG
+#
+#   A literal day is 67 files and 3.3 GB on 2016-07-07 (2016-07-03 is the
+#   biggest at 113). Widen file_time_start / file_time_end to
+#   2016-07-07T00:00:00 / 2016-07-08T00:00:00 for that, and drop
+#   dive_labels so all three of that day's dives run.
+
+recipe:
+  name: "hb1603_smoke_test"
+  description: "Three dives across two dates: test HB1603 cross-date profile merging end to end."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # July 3 18:30 to July 7 20:35 covers the full July 3 OE20 profile and both
+  # July 7 profiles. OE20 on July 3 runs 18:57:39 to 19:25:02; OE20 on July 7
+  # runs 19:48:56 to 20:06:12; OE29 runs 20:18:48 to 20:31:00. The early start
+  # preserves a leading raw file that may record into the July 3 window, while
+  # the final bound includes OE29's last source file, stamped T203335.
+  file_time_start:
+    type: str
+    default: "2016-07-03T18:30:00"
+    description: "Start of the cross-date catalogue slice."
+  file_time_end:
+    type: str
+    default: "2016-07-07T20:35:00"
+    description: "End of the catalogue slice, including the second dive's final source file."
+  dive_labels:
+    type: list
+    default: ["SWD_20160703-OE20", "SWD_20160707-OE20", "SWD_20160707-OE29"]
+    description: >
+      Two adjacent July 7 dives plus a non-adjacent July 3 dive. They exercise
+      both a shared raw file and the merge of independent time regions. Every
+      listed window must be covered by the catalogue slice, because
+      select_window correctly fails if it has no pings.
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+  calibration_output_dir:
+    type: path
+    default: "./outputs/smoke/calibration"
+  mvbs_range_var_max:
+    type: str
+    default: "2000m"
+    description: >
+      Depth the per-window MVBS grid is built out to, as the unit string
+      echopype parses. It is pinned rather than measured so every window shares
+      one depth axis and the fan-in has nothing to pad.
+
+      It must clear the deepest depth the survey tier can produce, which is not
+      crop_max_range_m: the crop is applied to echo_range, range from the
+      transducer, while depth adds the transducer's own depth below the surface
+      on top of it. HB1603's transducer sits about 8.9 m down, so a 1800 m
+      echo_range ceiling reaches roughly 1809 m of depth and 1810 m is the next
+      2 m bin edge above it. Raise both together, and keep the margin if you
+      move the crop: a ceiling below the data silently drops the deepest bins.
+  crop_max_range_m:
+    type: float
+    default: 2000.0
+  survey_chunk_ping_time:
+    type: int
+    default: 1000
+  json_dir:
+    type: path
+    default: "../../../../NEFSC_UC1/full_data/Auxiliary/JSON_Files"
+  evl_root:
+    type: path
+    default: "../../../../NEFSC_UC1/full_data/Auxiliary"
+  code_output_dir:
+    type: path
+    default: "./outputs/smoke/sv_codes"
+  # Two dives are still expected to fit within this sample, so this primarily
+  # exercises the fan-out/fan-in path rather than prediction of unsampled cells.
+  sample_size:
+    type: int
+    default: 250000
+  min_cluster_size_fraction:
+    type: float
+    default: 0.02
+  min_samples:
+    type: int
+    default: 4
+
+steps:
+
+  - include: sub_recipes/calibration_from_ncei.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  - include: sub_recipes/survey_sv.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
+
+  - id: plan_dives
+    op: custom
+    checkpoint: always
+    params:
+      json_dir: ${inputs.json_dir}
+      evl_root: ${inputs.evl_root}
+      pad_minutes: 0.0
+      include_labels: ${inputs.dive_labels}
+    custom_spec:
+      description: Select the dives this slice covers.
+      callable_path: aa_si_utils.dive_profiles.plan_dive_datasets
+      cache_key: dive_profiles_plan_dive_datasets
+      version: "1"
+      params:
+        json_dir: {type: path}
+        evl_root: {type: path}
+        pad_minutes: {type: float}
+        include_labels: {type: list}
+      outputs:
+        windows: {type: list}
+        raw_files: {type: list}
+      output_map:
+        windows: "['windows']"
+        raw_files: "['raw_files']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  - include: sub_recipes/dive_windows.yaml
+    input_overrides:
+      survey_sv: ${rechunk_survey_sv.ds_Sv}
+      windows: ${plan_dives.windows}
+      # One pinned depth axis for every window, so the fan-in has nothing to
+      # pad. Spelled as a unit string because echopype parses it, and kept
+      # above crop_max_range_m by hand: the crop is on echo_range and depth
+      # adds the transducer's own depth on top of it.
+      range_var_max: ${inputs.mvbs_range_var_max}
+
+  # --- Debug echograms -----------------------------------------------------
+  #
+  # Here rather than in dive_windows.yaml: they are for reading a run by eye,
+  # not part of the analysis, and dive_windows.yaml is shared with
+  # dive_profiles.yaml.
+  #
+  # They answer "what did the masking actually remove", which the per-cell CSV
+  # cannot: by the time a cell reaches the CSV it has survived every mask, so a
+  # thin result looks the same whether the data was absent, masked, or gated
+  # away downstream.
+  #
+  # WHY THEY READ THE FAN-IN RATHER THAN MAPPING OVER THE WINDOWS
+  #
+  #   remove_noise and mask_sparse are mapped, so a plain step reading them
+  #   gets the whole fanned-out list rather than one window's dataset. Mapping
+  #   these over the same windows does not fix it either: dive_windows.yaml
+  #   ends with its two collect steps, and a step declared in the parent lands
+  #   after those, in a different chain. The parser rejects that rather than
+  #   letting it through, so the fix is to read something already fanned in.
+  #
+  #   That also means one image per step however many dives run, instead of
+  #   fourteen instances overwriting one filename: a saved figure is named for
+  #   its step id, which every instance of a mapped step shares.
+
+  - id: merge_window_sv
+    op: merge_datasets
+    collect: ${remove_noise.ds_Sv}
+    checkpoint: never
+    inputs:
+      datasets: ${remove_noise.ds_Sv}
+    params:
+      dim: "ping_time"
+
+  - id: plot_window_sv
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${merge_window_sv.merged}
+    params:
+      min_depth: 0
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+
+  # ds_Sv_source puts the MVBS on the original Sv grid's axes, which is what
+  # the single-dive recipe this was scaled up from does.
+  - id: plot_window_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${merge_dive_mvbs.merged}
+      ds_Sv_source: ${merge_window_sv.merged}
+    params:
+      min_depth: 0
+      x_axis_units: "seconds"
+      y_axis_units: "meters"
+      overlay_lines:
+        - var: "dive_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+        - var: "dive_u99"
+          style:
+            color: "red"
+            linewidth: 1.0
+            linestyle: "--"
+        - var: "dive_l99"
+          style:
+            color: "red"
+            linewidth: 1.0
+            linestyle: "--"
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${merge_dive_mvbs.merged}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      ds_sv: ${merge_dive_cell_stats.merged}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size_fraction: ${inputs.min_cluster_size_fraction}
+      min_samples: ${inputs.min_samples}
+      sample_size: ${inputs.sample_size}
+      cluster_selection_method: "leaf"
+      use_hdbscan: true
+
+  - id: label_all_points
+    op: assign_clusters_to_all_points
+    checkpoint: never
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  - id: embed_results
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: plot_clustering_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+      clustering_model: ${label_all_points.clustering_model}
+      ds_Sv: ${merge_dive_mvbs.merged}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      overlay_line_var: "dive_fit"
+      cluster_stats_sv_data_var: "Sv"
+
+  # This run must write one CSV per selected label and the combined summary
+  # must contain both. Each CSV should align with its matching reference under
+  # NEFSC_UC1/full_data/Auxiliary/Sv_codes/: the DateTime/depth_m grid and the
+  # two Sv columns should match, while the HDBSCAN codes may differ.
+  - id: generate_sv_codes
+    op: custom
+    checkpoint: always
+    inputs:
+      ds: ${embed_results.ds_normalized}
+    params:
+      windows: ${plan_dives.windows}
+      output_dir: ${inputs.code_output_dir}
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      range_var: "depth"
+      ping_time_bin_s: 10.0
+    custom_spec:
+      description: Write the dive's SVCode CSV.
+      callable_path: aa_si_utils.dive_profiles.generate_sv_codes
+      cache_key: dive_profiles_generate_sv_codes
+      version: "1"
+      inputs:
+        ds: {type: Dataset}
+      params:
+        windows: {type: list}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        dataset_name: {type: str}
+        ml_result_name: {type: str}
+        range_var: {type: str}
+        ping_time_bin_s: {type: float}
+      outputs:
+        code_csv_paths: {type: list}
+        summary_csv_path: {type: path}
+        dive_labels: {type: list}
+      output_map:
+        code_csv_paths: "['code_csv_paths']"
+        summary_csv_path: "['summary_csv_path']"
+        dive_labels: "['dive_labels']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  - id: sv_code_depth_table
+    op: custom
+    checkpoint: always
+    params:
+      summary_csv_path: ${generate_sv_codes.summary_csv_path}
+      output_dir: ${inputs.code_output_dir}
+      depth_interval_m: 200.0
+    custom_spec:
+      description: Percent of dive duration per depth interval per code.
+      callable_path: aa_si_utils.dive_profiles.sv_code_depth_table
+      cache_key: dive_profiles_sv_code_depth_table
+      version: "1"
+      params:
+        summary_csv_path: {type: path}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        depth_interval_m: {type: float}
+      outputs:
+        per_dive_csv_path: {type: path}
+        combined_csv_path: {type: path}
+        totals_csv_path: {type: path}
+      output_map:
+        per_dive_csv_path: "['per_dive_csv_path']"
+        combined_csv_path: "['combined_csv_path']"
+        totals_csv_path: "['totals_csv_path']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
