@@ -548,26 +548,44 @@ def _validate_disposable_outputs(
 ) -> None:
     """Reject a disposable output on a step whose result is checkpointed.
 
+    Covers both ways a port becomes disposable: the spec's ``disposable`` flag
+    and the step's ``dispose_outputs`` opt-in.
+
     Disposal deletes the files the port names. If the step were checkpointed,
     the checkpoint would record paths to files that no longer exist, and a
     later partial resume would load that checkpoint and hand a consumer a
     dangling path. Requiring ``checkpoint: never`` keeps the two features from
     contradicting each other, and is also the honest declaration: an output you
     are about to delete is not one worth caching.
+
+    A ``dispose_outputs`` entry naming a port the op does not produce is an
+    error rather than a no-op, so a typo fails the build instead of silently
+    leaving the scratch it was meant to remove.
     """
-    for node in nodes.values():
+    for step_id, node in nodes.items():
+        requested = list(node.step.dispose_outputs or [])
+        unknown = [name for name in requested if name not in node.spec.outputs]
+        if unknown:
+            errors.append(
+                f"Step '{step_id}': dispose_outputs names port(s) "
+                f"{', '.join(sorted(unknown))}, which op '{node.step.op}' does "
+                f"not produce. Available outputs: "
+                f"{', '.join(sorted(node.spec.outputs)) or '(none)'}."
+            )
+            continue
         ports = [
             name
             for name, port in node.spec.outputs.items()
             if getattr(port, "disposable", False)
         ]
+        ports += [name for name in requested if name not in ports]
         if not ports:
             continue
         if node.step.checkpoint != "never":
             listed = ", ".join(sorted(ports))
             errors.append(
-                f"Step '{node.step.id}': op '{node.step.op}' declares "
-                f"disposable output(s) {listed}, so the step must set "
+                f"Step '{node.step.id}': disposable output(s) {listed} "
+                f"(op '{node.step.op}'), so the step must set "
                 f"'checkpoint: never'. A checkpoint would record paths to "
                 f"files disposal deletes, and a later resume would load them "
                 f"as dangling paths."

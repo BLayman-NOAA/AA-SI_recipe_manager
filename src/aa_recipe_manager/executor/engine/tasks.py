@@ -331,7 +331,7 @@ def _dispose_instance(
     removed = 0
     for mid in task.member_ids:
         member = wctx.dag.nodes[mid]
-        removed += dispose_step_outputs(member.spec, elem_ctx.own_outputs(mid))
+        removed += dispose_step_outputs(member, elem_ctx.own_outputs(mid))
     if removed:
         with capture_output(log_buffer):
             print(f"disposed {removed} path(s) for instance {task.instance_index}")

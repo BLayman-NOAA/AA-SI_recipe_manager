@@ -90,11 +90,11 @@ inputs:
     description: "Must match survey_preprocess.yaml exactly."
   json_dir:
     type: path
-    default: "../../../../NEFSC_UC1/full_data/Auxiliary/JSON_Files"
+    default: "./Auxiliary/JSON_Files"
     description: "Folder of SWD_*.json dive configs."
   evl_root:
     type: path
-    default: "../../../../NEFSC_UC1/full_data/Auxiliary"
+    default: "./Auxiliary"
     description: "Searched recursively for the .evl files the configs name."
   pad_minutes:
     type: float

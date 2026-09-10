@@ -115,10 +115,10 @@ inputs:
     default: 1000
   json_dir:
     type: path
-    default: "../../../../NEFSC_UC1/full_data/Auxiliary/JSON_Files"
+    default: "./Auxiliary/JSON_Files"
   evl_root:
     type: path
-    default: "../../../../NEFSC_UC1/full_data/Auxiliary"
+    default: "./Auxiliary"
   code_output_dir:
     type: path
     default: "./outputs/smoke/sv_codes"

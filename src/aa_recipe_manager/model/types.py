@@ -233,6 +233,22 @@ class Step(BaseModel):
     sweep: SweepDeclaration | None = None
     execution: StepExecutionHints | None = None
     checkpoint: Literal["always", "never", "save"] | None = None
+    dispose_outputs: list[str] = []
+    """Output ports whose on-disk artifacts this step should delete once the
+    mapped instance that produced them finishes.
+
+    The recipe-side counterpart to a spec port's ``disposable`` flag. An op
+    cannot decide this for itself: whether a scratch store is worth deleting
+    depends on the recipe's disk budget and on whether that recipe checkpoints
+    the step, neither of which the op author knows. So the op declares what is
+    *safe* to dispose and a recipe opts in per step.
+
+    Requires ``checkpoint: never`` on the same step, and is only meaningful
+    when whatever survives the chain is itself checkpointed - a value still
+    lazily rooted in the deleted store cannot outlive it. Not part of the
+    step's cache key: disposal changes what is left on scratch, not what the
+    step produces."""
+
     regenerate: Literal["if-missing", "always", "never"] | None = None
     """Whether to regenerate this step's user-facing artifacts (plots, logs,
     reports) when they are absent from the current run's outputs directory.

@@ -1,0 +1,107 @@
+{
+    "path_config" : {
+        "EK_data_path" : "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/EK60_Data/netCDF4_Files",
+        "EK_data_filenames" : ["HB1603_L1-D20160703-T183957.nc", "HB1603_L1-D20160703-T185125.nc", 
+        		       "HB1603_L1-D20160703-T190259.nc", "HB1603_L1-D20160703-T191429.nc"],
+        "save_path" : "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/EK60_Data/netCDF4_Files/generated",
+        "fig_path" : "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/figures"
+        },
+    "output_to_csv" : false,
+    "analysis" : {
+    	"frequency_list": ["18kHz", "38kHz"],
+    	"eqval": 3.0
+    },
+    "sonar_model" : "EK60",
+    "encode" : "power",
+    "waveform" : "CW",
+    "kmeans_config" : {
+        "frequency_list" : ["120kHz", "200kHz"],
+        "cluster_count" : 6,
+        "random_state" : 42,
+        "model" : "DIRECT",
+        "n_init" : 100,
+        "max_iter" : 300
+    },
+    "plotting" : {
+    	"Sv": {
+		"color_map" : "viridis",
+        	"plot" : true,
+        	"dB_min" : -90,
+        	"dB_max" : -30,
+        	"zoom" : false,
+        	"depth_min" : 490.0,
+        	"depth_max" : 1350.0,
+        	"time_min" : "2016-07-03 18:57:00.00",
+        	"time_max" : "2016-07-03 19:26:00.00",
+        	"title" : "SWD_20160703-OE20",
+        	"save_fig" : false,
+        	"fig_fn" : "SWD_20160703-OE20_Sv.png"
+        },
+    	"PWcode": {
+		"color_map" : "viridis",
+        	"plot" : true,
+        	"dB_min" : 0,
+        	"dB_max" : 4,
+        	"zoom" : false,
+        	"depth_min" : 490.0,
+        	"depth_max" : 1350.0,
+        	"time_min" : "2016-07-03 18:57:00.00",
+        	"time_max" : "2016-07-03 19:26:00.00",
+        	"title" : "SWD_20160703-OE20_PWcode",
+        	"save_fig" : false,
+        	"fig_fn" : "SWD_20160703-OE20_PWcode.png"
+        }
+    },
+    "data_reduction" : {
+	"range_var" : "depth",
+        "data_reduction_type" : "sample_number",
+        "range_meter_bin" : "2m",
+        "ping_time_bin" : "10S",
+        "range_sample_num" : 1,
+        "ping_num" : 1,
+        "fixed_line_apply" : true,
+        "fixed_line_name" : "bubble_layer",
+        "fixed_line_m" : 10.0,
+        "fixed_line_ab" : "above",
+        "seabed_line_apply" : true
+    },
+    "noise_removal" : true,
+    "sub_selection" : {
+        "rectangular" : {
+            "ping_time_begin" : null,
+            "ping_time_end" : null,
+            "range_sample_begin" : null,
+            "range_sample_end" : null
+        },
+        "region_path" : "",
+        "region_filenames" : [],
+        "align_line_time": true,
+        "EV_lines" : {
+            "SWdiveprofile" : {
+                "path": "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/ClickDepth_data_smoothed_0.2/EVL_Files",
+                "filenames" : ["HB1603_SpermWhaleDive_Span0.2_07032016_1853_UTC_depth.evl"],
+                "linecolor" : "magenta",
+                "linewidth" : 1
+            },
+            "U99CI" : {
+                "path": "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/ClickDepth_data_smoothed_0.2/EVL_Files",
+                "filenames" : ["HB1603_SpermWhaleDive_Span0.2_07032016_1853_UTC_U99CI.evl"],
+                "linecolor" : "cyan",
+                "linewidth" : 0.5
+            },
+            "L99CI" : {
+                "path": "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/ClickDepth_data_smoothed_0.2/EVL_Files",
+                "filenames" : ["HB1603_SpermWhaleDive_Span0.2_07032016_1853_UTC_L99CI.evl"],
+                "linecolor" : "cyan",
+                "linewidth" : 0.5
+            },
+            "ev_bottom" : {
+                "path": "/home/mjech/NOAA_Gdrive/AMAPPS/EK60_SpermWhaleDives/EK60_Data/export_seabedlines",
+                "filenames" : ["d20160703_t120556-t235103_seabed.evl"],
+                "linecolor" : "red",
+                "linewidth" : 1.0
+            }
+        }
+    }
+}
+

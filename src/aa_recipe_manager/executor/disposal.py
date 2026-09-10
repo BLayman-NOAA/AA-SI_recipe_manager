@@ -101,11 +101,31 @@ def dispose_value(value: Any) -> int:
     return removed
 
 
-def dispose_step_outputs(spec: Any, outputs: dict[str, Any] | None) -> int:
+def requested_ports(node: Any) -> list[str]:
+    """Ports a node disposes: its spec's ``disposable`` flags plus its step's
+    ``dispose_outputs`` opt-in.
+
+    Declaration order is preserved and duplicates collapse, so a port marked
+    both ways is deleted once.
+
+    Args:
+        node: DAG node carrying ``spec`` and ``step``.
+
+    Returns:
+        list: Port names, empty when the node disposes nothing.
+    """
+    names = list(disposable_ports(getattr(node, "spec", None)))
+    for name in getattr(getattr(node, "step", None), "dispose_outputs", None) or []:
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def dispose_step_outputs(node: Any, outputs: dict[str, Any] | None) -> int:
     """Delete every disposable port's files from one step's outputs.
 
     Args:
-        spec: Step specification declaring the ports.
+        node: DAG node whose spec and step name the ports to delete.
         outputs: The step's runtime outputs, or None.
 
     Returns:
@@ -114,5 +134,5 @@ def dispose_step_outputs(spec: Any, outputs: dict[str, Any] | None) -> int:
     if not outputs:
         return 0
     return sum(
-        dispose_value(outputs.get(name)) for name in disposable_ports(spec)
+        dispose_value(outputs.get(name)) for name in requested_ports(node)
     )

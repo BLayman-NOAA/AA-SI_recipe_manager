@@ -65,7 +65,13 @@ def helpers(tmp_path: Path) -> types.ModuleType:
 DEP = '{name: pytest, version: ">=7.0", source: pypi}'
 
 
-def _recipe(checkpoint: str = "never", disposable: bool = True) -> str:
+def _recipe(
+    checkpoint: str = "never",
+    disposable: bool = True,
+    dispose_outputs: str = "",
+) -> str:
+    """Recipe text. ``dispose_outputs`` is the recipe-side opt-in line, if any."""
+    opt_in = f"    dispose_outputs: [{dispose_outputs}]\n" if dispose_outputs else ""
     return f"""
 recipe:
   name: streaming
@@ -87,7 +93,7 @@ steps:
     op: custom
     map_over: ${{seg.items}}
     checkpoint: {checkpoint}
-    params:
+{opt_in}    params:
       item: ${{_item}}
     custom_spec:
       description: download one item
@@ -284,3 +290,65 @@ def test_disposal_does_not_delete_the_non_disposable_sibling_port(tmp_path, help
 
     # The port value is still reported, it is only the bytes that are gone.
     assert result.outputs["fetch"]["path"]
+
+
+# ---------------------------------------------------------------------------
+# The recipe-side opt-in: dispose_outputs
+# ---------------------------------------------------------------------------
+
+
+def test_dispose_outputs_disposes_a_port_the_spec_did_not_mark(tmp_path, helpers):
+    """An op cannot know a recipe's disk budget, so the recipe opts in.
+
+    Marking the port on the spec instead would force checkpoint: never on every
+    recipe that uses the op, which is not the op author's call to make.
+    """
+    recipe = _write(tmp_path, _recipe(disposable=False, dispose_outputs="written"))
+
+    api.execute(
+        recipe,
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+    )
+
+    for i in range(3):
+        assert not (helpers.scratch_root / f"item{i}" / "data.raw").exists()
+
+
+def test_dispose_outputs_leaves_the_sibling_port_alone(tmp_path, helpers):
+    """Opting one port in must not widen to the whole step."""
+    recipe = _write(tmp_path, _recipe(disposable=False, dispose_outputs="path"))
+
+    api.execute(
+        recipe,
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+    )
+
+    # 'path' named the file, so it goes; 'written' was never requested, and the
+    # companions directory it names survives.
+    for i in range(3):
+        assert (helpers.scratch_root / f"item{i}" / "companions").exists()
+
+
+def test_dispose_outputs_still_requires_checkpoint_never(tmp_path, helpers):
+    """The opt-in does not get to bypass the rule the spec flag obeys."""
+    recipe = _write(
+        tmp_path, _recipe(checkpoint="always", disposable=False, dispose_outputs="written")
+    )
+
+    # dry_run collects validation errors into its report rather than raising.
+    message = " ".join(api.dry_run(recipe).errors)
+    assert "disposable output(s) written" in message
+    assert "checkpoint: never" in message
+
+
+def test_dispose_outputs_naming_an_unknown_port_is_an_error(tmp_path, helpers):
+    """A typo must fail the build, not silently leave the scratch behind."""
+    recipe = _write(tmp_path, _recipe(disposable=False, dispose_outputs="wrtten"))
+
+    message = " ".join(api.dry_run(recipe).errors)
+    assert "does not produce" in message
+    assert "wrtten" in message

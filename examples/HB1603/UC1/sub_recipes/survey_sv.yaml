@@ -99,10 +99,35 @@ steps:
   # run deletes; the Sv below is what is worth caching. Mapping over plain URL
   # strings keeps each instance content-addressed by its own file, so an
   # interrupted survey resumes from what it already converted.
+  #
+  # intermediate_format IS THE RUN'S LARGEST CONSUMER OF LOCAL DISK
+  #
+  #   temp_dir/data is cleared once, when the run ends, not as instances
+  #   finish. So "zarr" and "netcdf" both leave one store per CATALOGUE FILE on
+  #   disk simultaneously - per file, not per worker, so changing the worker
+  #   count does not change the total. Measured on the three-dive smoke test:
+  #   335 files in the slice, 36+ GB in exe_temp.
+  #
+  #   "zarr" is what lets those stores live on a bucket instead, by pointing
+  #   temp_dir at a gs:// URL. "none" writes nothing at all and holds each
+  #   file's EchoData in memory, which does scale with worker count and has
+  #   read_raw_files' use_swap="auto" as its backstop.
+  #
+  #   It is a literal rather than an input on purpose: a step's fingerprint
+  #   folds in the pipeline inputs it references, so merely wiring this to an
+  #   input changes read_raw's hash and re-runs the whole survey tier even when
+  #   the value is unchanged. Editing the literal costs the same recompute, but
+  #   only when you actually change it.
   - id: read_raw
     op: read_raw_files
     map_over: ${query_ncei.raw_urls}
     checkpoint: never
+    # Delete each file's intermediate store as soon as its instance finishes,
+    # instead of letting temp_dir/data grow to one store per catalogue file.
+    # Safe because crop_survey_range below is checkpointed: the client reloads
+    # a checkpointed member from the cache when it folds the chain in, so
+    # nothing that outlives the instance is still rooted in the deleted store.
+    dispose_outputs: [raw_stores]
     execution:
       dask_config:
         scheduler: processes
@@ -187,9 +212,17 @@ steps:
     params:
       depth_offset: ${compute_transducer_depth.transducer_depth}
 
+  # checkpoint: always because this is the chain's surviving output and
+  # read_raw's stores are disposable. The client reloads a checkpointed member
+  # from the cache when it folds the chain in (_member_outputs), so the fan-in
+  # below reads durable artifacts; left uncheckpointed it would carry a dask
+  # graph still rooted in the exe_temp store that disposal has just deleted.
+  # This is what lets exe_temp hold one store per concurrent worker instead of
+  # one per file in the survey.
   - id: crop_survey_range
     op: crop_range
     map_over: ${query_ncei.raw_urls}
+    checkpoint: always
     inputs:
       ds_Sv: ${ep_add_depth.ds_Sv}
     params:
