@@ -186,6 +186,10 @@ class TaskResult:
 
     members: list[MemberResult]
     log_text: str = ""
+    #: Scratch paths this instance's disposal removed. Reported on the chain's
+    #: completion line: disposal that silently does nothing looks exactly like
+    #: disposal that is working, so the count has to be visible.
+    disposed: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +305,7 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
 
     log_buffer = io.StringIO()
     members: list[MemberResult] = []
+    disposed = 0
     try:
         _run_chain_members(task, wctx, store, elem_ctx, log_buffer, members)
     except BaseException as exc:
@@ -312,8 +317,10 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
         # for the length of the fan-out, which is the thing this exists to
         # avoid. Runs on the failure path too, so a crashed instance does not
         # strand its scratch.
-        _dispose_instance(task, wctx, elem_ctx, log_buffer)
-    return TaskResult(members=members, log_text=log_buffer.getvalue())
+        disposed = _dispose_instance(task, wctx, elem_ctx, log_buffer)
+    return TaskResult(
+        members=members, log_text=log_buffer.getvalue(), disposed=disposed
+    )
 
 
 def _dispose_instance(
@@ -321,8 +328,8 @@ def _dispose_instance(
     wctx: WorkerContext,
     elem_ctx: "_ElementContext",
     log_buffer: io.StringIO,
-) -> None:
-    """Delete this instance's disposable outputs.
+) -> int:
+    """Delete this instance's disposable outputs, returning how many paths went.
 
     Safe to run as soon as the instance's members are done: a disposable port
     is validated to be uncheckpointed, and a collector reads a chain's outputs
@@ -335,6 +342,7 @@ def _dispose_instance(
     if removed:
         with capture_output(log_buffer):
             print(f"disposed {removed} path(s) for instance {task.instance_index}")
+    return removed
 
 
 def _run_chain_members(

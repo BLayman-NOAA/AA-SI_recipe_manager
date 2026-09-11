@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING, Any
 from aa_recipe_manager.exceptions import PipelineExecutionError
 from aa_recipe_manager.executor.base import StepRecord
 from aa_recipe_manager.executor.checkpoint import plan_execution
-from aa_recipe_manager.executor.disposal import dispose_value
+from aa_recipe_manager.executor.console import console_print
+from aa_recipe_manager.executor.disposal import dispose_value, requested_ports
 from aa_recipe_manager.executor.engine.hints import (
     resolve_unit_dask_config,
     resolve_unit_prefect_config,
@@ -885,6 +886,7 @@ class PipelineRunner:
     ) -> None:
         state = chain_state[unit.unit_id]
         state["remaining"] -= 1
+        state["disposed"] = state.get("disposed", 0) + task_result.disposed
         for member in task_result.members:
             state["results"].append((getattr(task, "instance_index", 0), member))
         if task_result.log_text:
@@ -1025,6 +1027,30 @@ class PipelineRunner:
                 skipped=(computed == 0), elapsed=member_elapsed,
                 instance_seconds=instance_times,
             )
+
+        self._report_disposal(unit, state, len(instance_order))
+
+    def _report_disposal(self, unit: Unit, state: dict, n_instances: int) -> None:
+        """Say what the chain's disposal removed, on the terminal.
+
+        One line for the chain rather than one per instance. Disposal that
+        quietly does nothing is indistinguishable from disposal that works, and
+        the difference is a disk that fills up hours into a run, so a chain that
+        asked for disposal reports its total either way.
+        """
+        wanted = any(
+            requested_ports(self._dag.nodes[mid]) for mid in unit.member_ids
+        )
+        if not wanted:
+            return
+        removed = state.get("disposed", 0)
+        note = (
+            f"{unit.first}: disposed {removed} scratch path(s) "
+            f"across {n_instances} instance(s)"
+        )
+        self._log_sink.write(f"--- {note} ---\n")
+        self._log_sink.flush()
+        console_print(note if removed else f"{note} - nothing was removed")
 
     def _member_outputs(self, member: MemberResult) -> dict[str, Any]:
         """Resolve a member result to its output dict.

@@ -220,6 +220,13 @@ class ExecutionHints(BaseModel):
 class Step(BaseModel):
     """A single step in the pipeline DAG."""
 
+    # Unknown keys are rejected rather than dropped. A misspelled or
+    # not-yet-supported step key used to vanish silently, which is the worst
+    # case for anything whose absence looks like normal operation: an ignored
+    # dispose_outputs simply means scratch accumulates, with nothing in the log
+    # to say why.
+    model_config = _STRICT_DECLARATION
+
     id: str
     op: str
     description: str | None = None

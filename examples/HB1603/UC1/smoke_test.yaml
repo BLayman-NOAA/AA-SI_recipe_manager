@@ -76,7 +76,7 @@ inputs:
     description: "Start of the cross-date catalogue slice."
   file_time_end:
     type: str
-    default: "2016-07-07T20:35:00"
+    default: "2016-07-03T20:35:00"
     description: "End of the catalogue slice, including the second dive's final source file."
   dive_labels:
     type: list

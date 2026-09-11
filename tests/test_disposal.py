@@ -352,3 +352,43 @@ def test_dispose_outputs_naming_an_unknown_port_is_an_error(tmp_path, helpers):
     message = " ".join(api.dry_run(recipe).errors)
     assert "does not produce" in message
     assert "wrtten" in message
+
+
+def test_a_chain_that_asked_for_disposal_reports_even_when_nothing_went(
+    tmp_path, helpers, capsys
+):
+    """Silence is the failure mode that cost a real run 30 GB.
+
+    Disposal that quietly does nothing looks exactly like disposal that works,
+    so the chain reports its total either way rather than only when it removed
+    something.
+    """
+    recipe = _write(tmp_path, _recipe(disposable=False, dispose_outputs="written"))
+    api.execute(
+        recipe,
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+    )
+    assert "disposed" in capsys.readouterr().out
+
+
+def test_a_chain_without_disposal_stays_quiet(tmp_path, helpers, capsys):
+    """The control: no line for a chain that never asked."""
+    recipe = _write(tmp_path, _recipe(disposable=False))
+    api.execute(
+        recipe,
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+    )
+    assert "disposed" not in capsys.readouterr().out
+
+
+def test_an_unknown_step_key_is_rejected_not_ignored(tmp_path, helpers):
+    """A misspelled step key used to vanish silently, disposal included."""
+    text = _recipe().replace(
+        "    checkpoint: never\n", "    checkpoint: never\n    dispose_output: [written]\n", 1
+    )
+    message = " ".join(api.dry_run(_write(tmp_path, text)).errors)
+    assert "dispose_output" in message
