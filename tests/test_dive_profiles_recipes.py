@@ -27,6 +27,10 @@ RECIPES = (
 )
 SURVEY_RECIPE = RECIPES / "survey_preprocess.yaml"
 ANALYSIS_RECIPE = RECIPES / "dive_profiles.yaml"
+FULL_RECIPE = RECIPES / "full_analysis.yaml"
+
+#: The dive full_analysis.yaml leaves out, whose dive data is incorrect.
+EXCLUDED_DIVE = "SWD_20160703-OE20"
 
 #: Every step at or above the shared Sv checkpoint.
 SURVEY_STEPS = (
@@ -99,16 +103,23 @@ def test_analysis_recipe_validates(in_recipe_dir):
     assert not report.errors
 
 
+@requires_data
+def test_full_analysis_recipe_validates(in_recipe_dir):
+    report = api.dry_run(str(FULL_RECIPE))
+    assert not report.errors
+
+
 # ---------------------------------------------------------------------------
 # The tier split
 # ---------------------------------------------------------------------------
 
 
 @requires_data
-def test_survey_tier_hashes_identically_in_both_recipes(in_recipe_dir):
+@pytest.mark.parametrize("analysis_recipe", [ANALYSIS_RECIPE, FULL_RECIPE])
+def test_survey_tier_hashes_identically_in_both_recipes(in_recipe_dir, analysis_recipe):
     """The property the whole workflow's economy rests on."""
     survey = _hashes(str(SURVEY_RECIPE))
-    analysis = _hashes(str(ANALYSIS_RECIPE))
+    analysis = _hashes(str(analysis_recipe))
 
     mismatched = {
         step: (survey.get(step), analysis.get(step))
@@ -116,8 +127,9 @@ def test_survey_tier_hashes_identically_in_both_recipes(in_recipe_dir):
         if survey.get(step) is None or survey.get(step) != analysis.get(step)
     }
     assert not mismatched, (
-        "survey steps differ between the two recipes, so the analysis run will "
-        f"recompute Sv for the whole cruise: {sorted(mismatched)}"
+        f"survey steps differ between survey_preprocess.yaml and "
+        f"{analysis_recipe.name}, so the analysis run will recompute Sv for "
+        f"the whole cruise: {sorted(mismatched)}"
     )
 
 
@@ -127,6 +139,106 @@ def test_the_analysis_recipe_actually_contains_its_own_tier(in_recipe_dir):
     analysis = _hashes(str(ANALYSIS_RECIPE))
     for step in SURVEY_STEPS + ANALYSIS_ONLY_STEPS:
         assert step in analysis, f"{step} missing from the analysis recipe"
+
+
+# ---------------------------------------------------------------------------
+# full_analysis.yaml: the 13-dive production run
+# ---------------------------------------------------------------------------
+
+
+@requires_data
+def test_full_analysis_names_every_dive_but_the_bad_one(in_recipe_dir):
+    """The recipe states its study population, so a typo must not survive here.
+
+    include_labels is only read by plan_dive_datasets, which runs below the
+    survey tier. A misspelled label would therefore raise hours into a run,
+    after the whole cruise had been through compute_sv. Checking the labels
+    against the configs on disk turns that into a test failure.
+    """
+    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
+    labels = dag.nodes["plan_dives"].resolved_params["include_labels"]
+
+    available = {p.stem for p in (RECIPES / "Auxiliary" / "JSON_Files").glob("SWD_*.json")}
+    unknown = sorted(set(labels) - available)
+    assert not unknown, f"include_labels names dives with no config: {unknown}"
+
+    assert EXCLUDED_DIVE not in labels, (
+        f"{EXCLUDED_DIVE} has incorrect dive data and must stay out of the "
+        "pooled clustering, which has no way to quarantine one bad dive"
+    )
+    # Every single-dive config except the excluded one. The combined
+    # SWD_20160707-OE20-OE29-OE32 view is not a dive and plan_dive_datasets
+    # skips it, so it is absent from both sides.
+    expected = available - {EXCLUDED_DIVE, "SWD_20160707-OE20-OE29-OE32"}
+    assert set(labels) == expected, (
+        "the analysis population has drifted from the configs on disk: "
+        f"missing {sorted(expected - set(labels))}, extra {sorted(set(labels) - expected)}"
+    )
+
+
+@requires_data
+def test_choosing_the_dives_does_not_disturb_the_survey_tier(in_recipe_dir):
+    """Naming dives is an analysis input and must stay below the checkpoint."""
+    base = _hashes(str(FULL_RECIPE))
+    fewer = _hashes(str(FULL_RECIPE), {"dive_labels": ["SWD_20160719-OE07"]})
+
+    disturbed = [s for s in SURVEY_STEPS if base.get(s) != fewer.get(s)]
+    assert not disturbed, (
+        f"changing dive_labels re-hashed survey steps {disturbed}; the dive "
+        "selection has leaked above the shared checkpoint"
+    )
+    assert base["plan_dives"] != fewer["plan_dives"], (
+        "dive_labels changed nothing at all, so it is not reaching the planner"
+    )
+
+
+@requires_data
+def test_full_analysis_plots_on_a_bin_axis(in_recipe_dir):
+    """A clock-time axis would squeeze all 13 dives into a hairline.
+
+    The pooled fan-in concatenates on real ping_time, and the dives carry 214
+    minutes spread across 38 days. Both "datetime" and "seconds" draw that span
+    literally, so an echogram of the combined set is 0.4% data. "bins" plots
+    against MVBS bin index, which the empty time between dives never entered.
+    """
+    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
+    plotting = {
+        node_id: node
+        for node_id, node in dag.nodes.items()
+        if str(node.step.op).startswith("plot_")
+    }
+    assert plotting, "expected the pooled echograms to be wired up"
+
+    wrong = {
+        node_id: node.resolved_params.get("x_axis_units")
+        for node_id, node in plotting.items()
+        if node.resolved_params.get("x_axis_units") not in ("bins", "pings")
+    }
+    assert not wrong, (
+        "these plots use a clock-time x axis over a 38-day span, so every dive "
+        f"collapses to a hairline: {wrong}"
+    )
+
+
+@requires_data
+def test_the_mvbs_plot_has_its_ping_reference(in_recipe_dir):
+    """plot_sv_echogram raises on MVBS data when ds_Sv_source is absent.
+
+    ping_min and ping_max index the original Sv ping axis, and ds_Sv_source is
+    what converts them onto the MVBS grid, so the op refuses to guess. Leaving
+    it unwired fails only once the run reaches the figure, hours in.
+    """
+    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
+    sources = {
+        edge.source_step_id
+        for edge in dag.edges
+        if edge.target_step_id == "plot_window_mvbs"
+        and edge.target_input == "ds_Sv_source"
+    }
+    assert sources == {"merge_window_sv"}, (
+        "plot_window_mvbs plots MVBS and needs ds_Sv_source wired to the "
+        f"pre-MVBS Sv fan-in; found {sources or 'nothing'}"
+    )
 
 
 @requires_data
@@ -174,7 +286,7 @@ def test_the_chunk_size_only_touches_the_rechunk(in_recipe_dir):
 
 @requires_data
 @pytest.mark.parametrize(
-    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, RECIPES / "smoke_test.yaml"]
+    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, FULL_RECIPE, RECIPES / "smoke_test.yaml"]
 )
 def test_the_per_file_chain_stays_one_chain(in_recipe_dir, recipe):
     """read_raw through crop_survey_range must run as a single mapped chain.
@@ -204,7 +316,7 @@ def test_the_per_file_chain_stays_one_chain(in_recipe_dir, recipe):
 
 @requires_data
 @pytest.mark.parametrize(
-    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, RECIPES / "smoke_test.yaml"]
+    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, FULL_RECIPE, RECIPES / "smoke_test.yaml"]
 )
 def test_transmit_power_tolerance_is_wide_enough_for_leg_one(in_recipe_dir, recipe):
     """HB1603 ran 18/38 kHz at 2000 W on leg 1 and the only .cal is 1000 W.

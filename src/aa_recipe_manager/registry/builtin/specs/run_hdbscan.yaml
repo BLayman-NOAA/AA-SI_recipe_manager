@@ -71,9 +71,14 @@ params:
   min_cluster_size_fraction:
     type: float
     description: >
-      Fraction of extracted data points used to derive min_cluster_size when
-      min_cluster_size is omitted. Mutually exclusive with min_cluster_size.
-      When omitted, the ML function defaults to 0.03.
+      Fraction of the points actually fitted used to derive min_cluster_size
+      when min_cluster_size is omitted. Mutually exclusive with
+      min_cluster_size. When omitted, the ML function defaults to 0.03.
+
+      Taken of the subsample when sample_size binds, so the number means the
+      same thing at any scale: a cluster must hold this share of what the
+      model saw. Raising sample_size therefore raises the absolute floor
+      proportionally, and lowering it lowers it.
     required: false
     default: null
   min_samples:
