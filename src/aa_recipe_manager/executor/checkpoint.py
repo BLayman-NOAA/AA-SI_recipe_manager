@@ -1205,24 +1205,66 @@ def _write_zarr(
             write_remote()
 
 
+_DEFAULT_CHUNK_TARGET_BYTES = 128 * 2**20
+_CHUNK_TARGET_ENV_VAR = "AA_RECIPE_ZARR_CHUNK_TARGET_BYTES"
+
+
+def _chunk_target_bytes() -> int:
+    """Byte budget for one rechunked block. ``0`` disables the cap.
+
+    Override with ``$AA_RECIPE_ZARR_CHUNK_TARGET_BYTES``.
+    """
+    raw = os.environ.get(_CHUNK_TARGET_ENV_VAR)
+    if raw is None:
+        return _DEFAULT_CHUNK_TARGET_BYTES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_CHUNK_TARGET_BYTES
+
+
+def _slice_bytes(ds: Any, dim: str) -> int:
+    """In-memory cost of one index along ``dim``, in the worst variable carrying it.
+
+    Measured against each variable's *chunk* extent in the other dimensions
+    rather than its full shape, since that is what a single block actually
+    materializes.
+    """
+    worst = 0
+    for var in ds.variables.values():
+        if var.chunks is None or dim not in var.dims:
+            continue
+        row = var.dtype.itemsize
+        for other, other_chunks in zip(var.dims, var.chunks):
+            if other != dim:
+                row *= max(other_chunks)
+        worst = max(worst, row)
+    return worst
+
+
 def _zarr_uniform_chunks(ds: Any) -> Any:
     """Rechunk a Dataset's dask arrays so every dimension is Zarr-writable.
 
     Zarr requires each dimension's chunks to be uniform except for a final
     chunk no larger than the first. Dask arrays coming out of coarsen/reindex
     style ops (e.g. echopype's ``remove_background_noise``) routinely violate
-    this: a dimension ends up chunked ``(103, ..., 105)`` — final chunk *larger*
-    than the first — or with ragged interior blocks. When such a variable has no
+    this: a dimension ends up chunked ``(103, ..., 105)`` - final chunk *larger*
+    than the first - or with ragged interior blocks. When such a variable has no
     target ``encoding['chunks']`` to align against, neither ``align_chunks=True``
     nor ``safe_chunks=False`` rescues the write (verified against xarray
     2026.4), so ``to_zarr`` raises "Final chunk of Zarr array must be the same
     size or smaller than the first".
 
     For each offending dimension this rechunks to that dimension's largest
-    current block, which makes the interior uniform and the remainder no larger
-    than a full block while staying close to the existing layout (well-formed
-    variables and eager, non-dask data are left untouched). Returns ``ds``
-    unchanged when nothing needs fixing.
+    current block, capped so one block stays within :func:`_chunk_target_bytes`.
+    The cap is what makes an N-way fan-in safe: a survey merged from thousands
+    of per-file stores has one block per file along the concat dimension, so the
+    uncapped rule would size every block after the single longest file in the
+    cruise and the write would then hold that much per in-flight task. The cap
+    does not bind on the coarsen case above, whose blocks are already small.
+
+    Well-formed variables and eager, non-dask data are left untouched; returns
+    ``ds`` unchanged when nothing needs fixing.
     """
     problem_dims: dict[str, int] = {}
     for var in ds.variables.values():
@@ -1237,6 +1279,12 @@ def _zarr_uniform_chunks(ds: Any) -> Any:
                 problem_dims[dim] = max(problem_dims.get(dim, 0), max(dim_chunks))
     if not problem_dims:
         return ds
+    target = _chunk_target_bytes()
+    if target:
+        for dim, length in problem_dims.items():
+            per_index = _slice_bytes(ds, dim)
+            if per_index:
+                problem_dims[dim] = max(1, min(length, target // per_index))
     return ds.chunk(problem_dims)
 
 

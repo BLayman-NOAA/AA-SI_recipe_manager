@@ -5,8 +5,9 @@ description: >
 
   Loads the raw file configurations and the standardized single-channel files,
   runs the matching algorithm, moves aside any calibration file no raw channel
-  matched, resolves conflicts, writes mapping_files/channel_mapping.yaml and
-  calibration_configurations.yaml, and verifies the result.
+  matched, resolves conflicts, writes mapping_files/channel_mapping.yaml,
+  calibration_configurations.yaml and calibration_provenance.yaml, and
+  verifies the result.
 
   Reads the single-channel files from disk rather than taking them as data.
   The mapping keys are those files' names, which only the on-disk loader
@@ -52,6 +53,31 @@ outputs:
       every calibration file matched a raw channel, so a non-empty one is the
       signal that a channel went unmapped. Under "report" no mapping exists to
       check against, so this carries only the files the run moved aside.
+  provenance:
+    type: dict
+    required: false
+    description: >
+      Per-channel account of what calibration was applied over which stretch
+      of the cruise, and why. Each channel carries segments, one per run of
+      raw files that behaved the same way, with a time range, the raw and
+      calibration settings behind it, and an outcome: the calibration was
+      applied, it was applied only because a tolerance was widened, or nothing
+      matched and the channel fell back or stopped the run. A cruise of
+      thousands of files reports as a handful of segments per channel.
+
+      JSON-safe, so a server can hand it to a client without reading the file
+      off disk. The same content is written to
+      mapping_files/calibration_provenance.yaml.
+
+      Complete whatever happens downstream: the mapping stage sees every file
+      in the catalogue, so this covers the whole cruise even when the per-file
+      tier that consumes the mapping is still running or stopped early.
+  provenance_path:
+    type: str
+    required: false
+    description: >
+      Where the provenance report was written as YAML, under
+      mapping_files/ in output_base.
   conflicts:
     type: dict
     required: false
@@ -138,6 +164,20 @@ params:
       on the terminal. Reach for it when a survey changed a setting mid-cruise
       and no calibration exists for the other side of the change, and record
       why in the recipe.
+  unmapped_channels:
+    type: str
+    required: false
+    description: >
+      The policy the extract_standardized_cal_params step that consumes this
+      mapping runs with, "warn" or "error". Informational only: it changes
+      nothing about the matching, and only lets the provenance report state
+      what actually happened to an unmatched channel instead of listing both
+      possibilities. Set it to the same value that step uses, or leave it out
+      and the report says the outcome is decided downstream.
+  cruise_id:
+    type: str
+    required: false
+    description: Recorded in the provenance report when given.
   keep_unused:
     type: bool
     required: false
@@ -175,3 +215,5 @@ implementations:
       # Path list the function also returns.
       unused_files: "['unused_file_names']"
       conflicts: "['conflicts']"
+      provenance: "['provenance']"
+      provenance_path: "['provenance_path']"

@@ -168,6 +168,7 @@ EXPECTED_BUILTIN_OPS = {
     "record_raw_file_configs",
     "standardize_calibration_files",
     "build_calibration_mapping",
+    "save_calibration_archive",
     "read_raw_files",
     "combine_raw_files",
     "extract_standardized_cal_params",
@@ -352,6 +353,8 @@ class TestBuiltinLoader:
                     # Paths are not JSON-safe, so the name list is mapped.
                     "unused_files": "['unused_file_names']",
                     "conflicts": "['conflicts']",
+                    "provenance": "['provenance']",
+                    "provenance_path": "['provenance_path']",
                 },
             ),
         }

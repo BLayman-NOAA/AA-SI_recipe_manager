@@ -345,6 +345,79 @@ def _dispose_instance(
     return removed
 
 
+def _instance_discriminator_kwargs(task: ChainInstanceTask) -> dict[str, Any]:
+    """Discriminator inputs identifying one instance within its chain."""
+    disc: dict[str, Any] = {
+        "index": task.instance_index,
+        "param_overrides": task.combo,
+    }
+    if task.has_item:
+        disc["item"] = task.item
+    return disc
+
+
+def _member_instance_hash(
+    task: ChainInstanceTask, wctx: WorkerContext, store: Any, mid: str
+) -> str | None:
+    """This instance's checkpoint address for member ``mid``, or ``None``.
+
+    ``None`` whenever the member is not checkpointed at all: no store, no base
+    hash, not among the chain's ``checkpoint_members``, or a side-effect step
+    with no outputs to store.
+    """
+    if store is None or mid not in task.checkpoint_members:
+        return None
+    base_hash = wctx.step_hashes.get(mid)
+    if not base_hash:
+        return None
+    member = wctx.dag.nodes[mid]
+    if member.spec.sink or not member.spec.outputs:
+        return None
+    return derive_instance_hash(
+        base_hash, instance_discriminator(**_instance_discriminator_kwargs(task))
+    )
+
+
+def _resumable_members(
+    task: ChainInstanceTask, wctx: WorkerContext, store: Any
+) -> set[str]:
+    """Members this instance can skip because a later member loads from cache.
+
+    A chain instance runs its members in order and consults the cache one
+    member at a time, so a chain whose only checkpointed member is its last one
+    re-ran every earlier member on every run even when that last member was a
+    hit for every instance. On a survey-scale fan-out that is most of the cost
+    of the run: the checkpoint is found, but only after everything that
+    produced it has been recomputed to reach it.
+
+    This finds the latest member holding a checkpoint for this instance and
+    returns the members before it, whose outputs nothing still to run can
+    observe. It gives up altogether, returning an empty set, unless every one
+    of those members is consumed only at or before that frontier: an output
+    read from outside the chain, or by a member that still has to run, has to
+    be computed.
+    """
+    if store is None or wctx.force:
+        return set()
+    member_ids = list(task.member_ids)
+    frontier = -1
+    for index in range(len(member_ids) - 1, 0, -1):
+        inst_hash = _member_instance_hash(task, wctx, store, member_ids[index])
+        if inst_hash is not None and store.has_checkpoint(
+            member_ids[index], instance_hash=inst_hash
+        ):
+            frontier = index
+            break
+    if frontier < 1:
+        return set()
+    skippable = set(member_ids[:frontier])
+    reachable = set(member_ids[: frontier + 1])
+    for edge in wctx.dag.edges:
+        if edge.source_step_id in skippable and edge.target_step_id not in reachable:
+            return set()
+    return skippable
+
+
 def _run_chain_members(
     task: ChainInstanceTask,
     wctx: WorkerContext,
@@ -354,30 +427,28 @@ def _run_chain_members(
     members: list[MemberResult],
 ) -> None:
     """Run every member of one chain instance, appending to ``members``."""
+    skippable = _resumable_members(task, wctx, store)
     with capture_output(log_buffer):
         for mid in task.member_ids:
-            member = wctx.dag.nodes[mid]
-            base_hash = wctx.step_hashes.get(mid)
-            is_side_effect = member.spec.sink or not member.spec.outputs
-            disc_kwargs: dict[str, Any] = {
-                "index": task.instance_index,
-                "param_overrides": task.combo,
-            }
-            if task.has_item:
-                disc_kwargs["item"] = task.item
-            want_ckpt = (
-                store is not None
-                and base_hash
-                and mid in task.checkpoint_members
-                and not is_side_effect
-            )
-            inst_hash = (
-                derive_instance_hash(
-                    base_hash, instance_discriminator(**disc_kwargs)
+            if mid in skippable:
+                # Nothing still to run reads this member (see
+                # _resumable_members), so its output is never materialized. It
+                # still reports a result: the client indexes every member of
+                # every instance when it folds the chain in.
+                members.append(
+                    MemberResult(
+                        step_id=mid,
+                        disposition="skipped",
+                        tier=None,
+                        elapsed=0.0,
+                        artifacts=[],
+                        checkpointed=False,
+                    )
                 )
-                if want_ckpt
-                else None
-            )
+                continue
+            member = wctx.dag.nodes[mid]
+            disc_kwargs = _instance_discriminator_kwargs(task)
+            inst_hash = _member_instance_hash(task, wctx, store, mid)
 
             start = time.perf_counter()
             if (

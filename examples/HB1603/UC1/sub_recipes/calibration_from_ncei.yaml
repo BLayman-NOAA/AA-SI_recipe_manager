@@ -69,6 +69,25 @@
 #
 #   The override is reported on the terminal every run.
 #
+# WHERE TO READ WHAT THE MATCH ACTUALLY DID
+#
+#   build_cal_mapping writes mapping_files/calibration_provenance.yaml: one
+#   entry per channel, each a few segments carrying a time range, the raw and
+#   calibration settings behind them, and whether the calibration matched
+#   outright, matched only under the widened tolerance above, or matched
+#   nothing. It is built from the raw file configurations, so it covers the
+#   whole cruise even when the per-file tier below is still running.
+#
+#   It reports HB1603's two separate problems separately: 3 and 7 July as
+#   matched_under_widened_tolerance on power, and 27 to 28 June as unmatched on
+#   pulse length, which no power tolerance reaches. See survey_sv.yaml.
+#
+#   unmapped_channels is deliberately NOT passed to build_cal_mapping here.
+#   The step would only use it to say "fell back" instead of "the consuming
+#   step decides", and params are fingerprinted: adding one changes this step's
+#   hash and every descendant's, which is the whole survey Sv. The report is
+#   written either way, and survey_sv.yaml leaves the setting at "warn".
+#
 # INCLUDE THIS BYTE-IDENTICALLY
 #
 #   The full pipeline includes this file unchanged and wires

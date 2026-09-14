@@ -150,10 +150,23 @@ steps:
   #
   # unmapped_channels is left at its "warn" default, so a channel no
   # calibration file matched falls back to the values the raw file records for
-  # it and says so on the terminal. HB1603 needs this: leg 1 transmitted 18 and
-  # 38 kHz at 2000 W and the 18 July calibration was measured at 1000 W, which
-  # transmit_power matching rejects. Set it to "error" for a survey where an
+  # it and says so on the terminal. Set it to "error" for a survey where an
   # unmatched channel should stop the run.
+  #
+  # HB1603 needs this, but not for the transmit power difference the match
+  # tolerance in calibration_from_ncei.yaml now covers. It is pulse length: on
+  # the first 151 files of the cruise, 27 and 28 June, the 18 kHz channel ran
+  # at 2.048 ms and 120 and 200 kHz at 0.256 ms, against calibrations measured
+  # at 1.024 ms. 120 and 200 kHz transmit at exactly their calibrated power, so
+  # no power tolerance reaches them. Widening transmit_duration_nominal is not
+  # the answer either: pulse length sets the effective pulse duration and the
+  # equivalent beam correction, so a 2x or 4x difference is a different
+  # measurement rather than a tolerance question. Those files end on 28 June
+  # and the earliest dive is 7 July, so no dive is affected, but the merged
+  # survey Sv store does carry them on fallback calibration.
+  #
+  # mapping_files/calibration_provenance.yaml is where that is written down
+  # per channel, with the time range of each stretch and the field behind it.
   - id: extract_cal_params
     op: extract_standardized_cal_params
     map_over: ${query_ncei.raw_urls}

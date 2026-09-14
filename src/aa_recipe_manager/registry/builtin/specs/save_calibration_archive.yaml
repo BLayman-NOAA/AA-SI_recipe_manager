@@ -1,0 +1,128 @@
+op: save_calibration_archive
+cache_key: save_calibration_archive  # pinned cache identity - keep stable across op renames
+description: >
+  Write the finished calibration outputs to a directory the survey keeps.
+
+  Writes channel_mapping.yaml and calibration_provenance.yaml at the top of
+  archive_dir, and one file per standardized channel under
+  Standardized_Reports/ - the same files a local run writes to
+  single_channel_calibration_files/. The channel files are named by each
+  channel's calibration file key, which is what the mapping refers to, so the
+  archive resolves against itself.
+
+  Everything is rendered from the data the standardization and mapping steps
+  return, so a caller that never sees the run's outputs folder can archive
+  what those steps handed it. Omit an input and it is read from the outputs
+  folder of the run in progress instead, which is how a local run archives
+  with nothing but a directory.
+
+  archive_dir may be a remote fsspec URL, which is the point for a client
+  whose run directory disappears when the container does.
+
+  Mark it regenerate: always in a recipe. Its product is files outside the
+  run's outputs directory, where the executor cannot verify them, so a cache
+  hit would return the paths without writing anything.
+category: calibration
+inputs:
+  single_channel_data:
+    type: dict
+    required: false
+    description: >
+      The standardized channels, from the standardization step's
+      single_channel_data output. Read from single_channel_calibration_files/
+      under output_base when omitted.
+  mapping_dict:
+    type: dict
+    required: false
+    description: >
+      Each raw file's channels mapped to their calibration key, from
+      build_calibration_mapping. Read from mapping_files/channel_mapping.yaml
+      under output_base when omitted. An empty mapping is an error: that is
+      what the mapping step returns while conflicts are unresolved, and an
+      archive that looks complete and is not is worse than a failed run.
+  provenance:
+    type: dict
+    required: false
+    description: >
+      The provenance report from build_calibration_mapping. Read from
+      mapping_files/calibration_provenance.yaml under output_base when
+      omitted.
+outputs:
+  archive_dir:
+    type: str
+    description: The directory the archive was written to.
+  mapping_path:
+    type: str
+    description: Full path of the archived channel_mapping.yaml.
+  provenance_path:
+    type: str
+    description: Full path of the archived calibration_provenance.yaml.
+  reports_dir:
+    type: str
+    description: The Standardized_Reports folder holding the channel files.
+  channel_count:
+    type: int
+    description: How many channel files were written.
+  files_written:
+    type: list
+    description: >
+      Every path written, in write order, so a caller can report the archive
+      without listing the destination.
+params:
+  archive_dir:
+    type: path
+    required: true
+    description: >
+      Directory to write the archive into. May be a local path or a remote
+      fsspec URL (e.g. gs://bucket/surveys/RL2307/calibration). Not
+      fingerprinted: it is where this step writes, not something it reads.
+    constraints:
+      must_exist: false
+  output_base:
+    type: path
+    required: false
+    description: >
+      Calibration outputs folder to read anything omitted from. Defaults to
+      the folder the run in progress is writing, resolved the way
+      initial_setup resolves it, so a local run after the mapping phase finds
+      the files it just wrote.
+    constraints:
+      must_exist: false
+  calibration_outputs:
+    type: str
+    required: false
+    default: "calibration"
+    description: >
+      Subdirectory name under the run's outputs folder, used only to build the
+      default output_base. Match the value the earlier phases ran with.
+  overwrite:
+    type: bool
+    required: false
+    default: false
+    description: >
+      Replace an archive already in archive_dir. Off by default: an archive
+      directory is written once and kept, so a non-empty destination stops the
+      run rather than overwriting it. When on, Standardized_Reports/ is
+      cleared first, so a channel dropped during review leaves no orphan file
+      behind.
+  verbose:
+    type: bool
+    required: false
+    default: true
+    description: Print what was written.
+implementations:
+  - key: default
+    callable_path: aa_si_calibration.archive.save_calibration_archive
+    default: true
+    dependency:
+      name: aa-si-calibration
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+    output_map:
+      archive_dir: "['archive_dir']"
+      mapping_path: "['mapping_path']"
+      provenance_path: "['provenance_path']"
+      reports_dir: "['reports_dir']"
+      channel_count: "['channel_count']"
+      files_written: "['files_written']"
