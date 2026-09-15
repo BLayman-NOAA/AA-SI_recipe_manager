@@ -76,6 +76,21 @@ params:
       Pin it whenever the results will be merged.
     required: false
     default: null
+  cells_only:
+    type: bool
+    description: >
+      Return only the statistic arrays instead of a copy of ds_Sv carrying
+      them.
+
+      The default keeps the source variables, which is what a single call on a
+      merged dataset wants. Set it true whenever this step is checkpointed or
+      its results are merged: otherwise the fine-resolution Sv is written a
+      second time, and a merge on cell_ping_time drags ping_time and
+      range_sample into the join, which across files with differing
+      range_sample lengths outer-joins and NaN-pads them. That is the same trap
+      the survey tier exists to avoid, reintroduced one dimension over.
+    required: false
+    default: false
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.compute_per_cell_statistics
