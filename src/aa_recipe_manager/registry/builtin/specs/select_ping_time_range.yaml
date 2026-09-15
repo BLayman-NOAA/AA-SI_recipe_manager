@@ -31,7 +31,9 @@ inputs:
 outputs:
   ds_Sv:
     type: Dataset
-    description: The ping_time slice of the input, lazy when the input is lazy.
+    description: >
+      The ping_time slice of the input, lazy when the input is lazy. ``None``
+      when the window selects no pings and ``allow_empty`` is set.
     expected_coords:
       - ping_time
 params:
@@ -69,6 +71,31 @@ params:
       instance in the run log.
     required: false
     default: null
+  dim:
+    type: str
+    description: >
+      Time coordinate to slice. Binned products carry the bin's left edge under
+      a different name, so a compute_per_cell_statistics dataset is windowed
+      with "cell_ping_time" while raw Sv uses the default. The coordinate has to
+      be datetime-valued either way, which the cell grid's left edges are.
+    required: false
+    default: "ping_time"
+  allow_empty:
+    type: bool
+    description: >
+      Return nothing instead of failing when the window selects no pings.
+
+      This is what lets the step be mapped over a whole survey's per-file Sv
+      rather than applied to one merged store. Most files lie outside any one
+      window, and ``merge_datasets`` drops the empty instances when it collects,
+      so the fan-in keeps exactly the files the window touches. That is the
+      route to a windowed analysis that reuses the per-file checkpoints without
+      a survey-wide merge ever being built.
+
+      Left false by default: against a single merged store, a window that
+      selects nothing is a mistake and should fail loudly.
+    required: false
+    default: false
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.select_ping_time_range
@@ -78,5 +105,11 @@ implementations:
       version: ">=0.1.0"
       source: git
       url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    param_map:
+      start: start
+      end: end
+      window: window
+      allow_empty: allow_empty
+      dim: dim
     output_map:
       ds_Sv: __return__

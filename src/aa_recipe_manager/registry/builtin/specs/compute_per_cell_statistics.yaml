@@ -59,6 +59,23 @@ params:
       add_auxiliary_features selects on them by name.
     required: false
     default: "echo_range"
+  range_var_max:
+    type: str
+    units: m
+    description: >
+      Deepest value the cells cover, as a unit string (e.g. '1810m'), matching
+      the value given to compute_mvbs.
+
+      When unset the extent is read from the data. That forces a compute on a
+      lazy dataset, and it lets each dataset choose its own cell grid length,
+      which is only safe when this step runs once on one merged dataset. Mapped
+      over a survey's per-file Sv it is the bug: each file bins to its own
+      extent and the fan-in outer-joins cell_echo_range and NaN-pads the short
+      ones, the same trap the survey tier guards against on range_sample.
+
+      Pin it whenever the results will be merged.
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.compute_per_cell_statistics
