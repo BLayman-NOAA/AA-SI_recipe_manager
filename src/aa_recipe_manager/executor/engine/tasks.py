@@ -381,41 +381,78 @@ def _member_instance_hash(
 def _resumable_members(
     task: ChainInstanceTask, wctx: WorkerContext, store: Any
 ) -> set[str]:
-    """Members this instance can skip because a later member loads from cache.
+    """Members this instance can skip because nothing that still runs reads them.
 
     A chain instance runs its members in order and consults the cache one
-    member at a time, so a chain whose only checkpointed member is its last one
-    re-ran every earlier member on every run even when that last member was a
-    hit for every instance. On a survey-scale fan-out that is most of the cost
-    of the run: the checkpoint is found, but only after everything that
+    member at a time, so a chain whose cached members all sit near the end
+    re-ran every earlier member on every run even when those cached members
+    were hits for every instance. On a survey-scale fan-out that is most of the
+    cost of the run: the checkpoint is found, but only after everything that
     produced it has been recomputed to reach it.
 
-    This finds the latest member holding a checkpoint for this instance and
-    returns the members before it, whose outputs nothing still to run can
-    observe. It gives up altogether, returning an empty set, unless every one
-    of those members is consumed only at or before that frontier: an output
-    read from outside the chain, or by a member that still has to run, has to
-    be computed.
+    Need is propagated backwards from the members that must produce a value:
+    the ones read outside the chain, the ones a recipe names in its ``outputs``
+    block, sinks, output-less steps, steps that regenerate artifacts, and the
+    last member. A member holding a checkpoint for this instance is loaded
+    rather than computed, so it needs no inputs and need stops there. Whatever
+    is left unneeded is skipped.
+
+    The invariant that makes this safe is about reference resolution, not cost.
+    A skipped member is never recorded into the element context, and
+    ``_ElementContext.get`` falls through to the parent when a step is absent
+    from its store - which for a chain member is another instance's value or
+    the whole fanned-out list, silently. So a member may only be skipped when
+    every consumer of it is itself skipped or is a cache hit, since a hit loads
+    its outputs and never resolves its inputs. Propagating need through
+    uncached members is exactly that condition. It relies on every reference
+    producing a DAG edge: ``extract_edge_refs`` covers ``inputs`` and
+    ``params`` including nested lists and dicts, and ``depends_on``,
+    ``map_over`` and ``collect`` are edged separately by the DAG builder.
     """
     if store is None or wctx.force:
         return set()
     member_ids = list(task.member_ids)
-    frontier = -1
-    for index in range(len(member_ids) - 1, 0, -1):
-        inst_hash = _member_instance_hash(task, wctx, store, member_ids[index])
+    inside = set(member_ids)
+
+    cached = set()
+    for mid in member_ids:
+        inst_hash = _member_instance_hash(task, wctx, store, mid)
         if inst_hash is not None and store.has_checkpoint(
-            member_ids[index], instance_hash=inst_hash
+            mid, instance_hash=inst_hash
         ):
-            frontier = index
-            break
-    if frontier < 1:
+            cached.add(mid)
+    if not cached:
         return set()
-    skippable = set(member_ids[:frontier])
-    reachable = set(member_ids[: frontier + 1])
+
+    producers: dict[str, set[str]] = {}
+    needed = {member_ids[-1]}
     for edge in wctx.dag.edges:
-        if edge.source_step_id in skippable and edge.target_step_id not in reachable:
-            return set()
-    return skippable
+        if edge.source_step_id not in inside:
+            continue
+        if edge.target_step_id in inside:
+            producers.setdefault(edge.target_step_id, set()).add(edge.source_step_id)
+        else:
+            needed.add(edge.source_step_id)
+    declared = getattr(wctx.dag.recipe, "outputs", None) or {}
+    for output in declared.values():
+        step_id = getattr(output, "step_id", None)
+        if step_id in inside:
+            needed.add(step_id)
+    for mid in member_ids:
+        member = wctx.dag.nodes[mid]
+        # A step whose value nothing reads may still be the point of the run.
+        # Sinks and output-less steps exist only for their side effects, and a
+        # regenerate policy is a step saying outright that running it writes
+        # artifacts.
+        if member.spec.sink or not member.spec.outputs:
+            needed.add(mid)
+        elif member.step.regenerate not in (None, "never"):
+            needed.add(mid)
+
+    for mid in reversed(member_ids):
+        if mid in needed and mid not in cached:
+            needed |= producers.get(mid, set())
+    return inside - needed
 
 
 def _externally_read_members(

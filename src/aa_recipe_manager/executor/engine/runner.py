@@ -948,13 +948,19 @@ class PipelineRunner:
         instance_order = sorted(by_instance)
 
         member_outputs: dict[str, list[dict[str, Any]]] = {m: [] for m in member_ids}
-        member_stats: dict[str, list[int]] = {m: [0, 0] for m in member_ids}
+        # computed / cache hit / skipped, counted apart. A skipped member was
+        # never reached at all (see _resumable_members), so folding it into the
+        # hit count would put "hit-user-cache" in the provenance record for a
+        # step this run neither ran nor loaded.
+        member_stats: dict[str, list[int]] = {m: [0, 0, 0] for m in member_ids}
         for inst_index in instance_order:
             for mid in member_ids:
                 member = by_instance[inst_index][mid]
                 member_outputs[mid].append(self._member_outputs(member))
                 if member.disposition == "computed":
                     member_stats[mid][0] += 1
+                elif member.disposition == "skipped":
+                    member_stats[mid][2] += 1
                 else:
                     member_stats[mid][1] += 1
 
@@ -970,7 +976,7 @@ class PipelineRunner:
                 self._chain_instance_hashes[(unit.unit_id, mid)] = tuple(
                     by_instance[i][mid].instance_hash for i in instance_order
                 )
-            computed, hits = member_stats[mid]
+            computed, hits, skipped = member_stats[mid]
             if computed:
                 result.executed_steps.append(mid)
             else:
@@ -980,6 +986,9 @@ class PipelineRunner:
                     self._checkpoints.hit_tier(mid) if self._checkpoints else None
                 ) or "user"
                 disposition = f"hit-{tier}-cache"
+                write_tier = None
+            elif computed == 0 and skipped:
+                disposition = "skipped"
                 write_tier = None
             else:
                 disposition = "computed"

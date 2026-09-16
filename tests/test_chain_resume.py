@@ -12,6 +12,7 @@ output is still read by something.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -41,6 +42,13 @@ def helpers() -> types.ModuleType:
         module.calls.append(("consume", value))  # type: ignore[attr-defined]
         return value + 1
 
+    def audit_effect(value: int) -> None:
+        module.calls.append(("audit_effect", value))  # type: ignore[attr-defined]
+
+    def summarize(value: int) -> int:
+        module.calls.append(("summarize", value))  # type: ignore[attr-defined]
+        return value * 2
+
     def total(values: list[int]) -> int:
         module.calls.append(("total", tuple(values)))  # type: ignore[attr-defined]
         return sum(v for v in values if v is not None)
@@ -48,19 +56,82 @@ def helpers() -> types.ModuleType:
     module.make_items = make_items  # type: ignore[attr-defined]
     module.fetch = fetch  # type: ignore[attr-defined]
     module.consume = consume  # type: ignore[attr-defined]
+    module.summarize = summarize  # type: ignore[attr-defined]
+    module.audit_effect = audit_effect  # type: ignore[attr-defined]
     module.total = total  # type: ignore[attr-defined]
     sys.modules[MOD] = module
     yield module
     sys.modules.pop(MOD, None)
 
 
-def _recipe(*, extra_consumer: bool = False) -> str:
+def _recipe(
+    *,
+    extra_consumer: bool = False,
+    second_checkpoint: bool = False,
+    side_effect_member: bool = False,
+) -> str:
     """fetch -> consume (checkpointed) -> total.
 
     ``extra_consumer`` adds a second fan-in reading ``fetch`` directly, which
     must stop the skip: its input has to be computed.
     """
     tail = ""
+    middle = ""
+    if second_checkpoint:
+        # consume is checkpointed AND fanned in from outside, and a second
+        # checkpointed member sits below it. This is HB1603's per-file chain:
+        # survey_file_mvbs feeds merge_survey_mvbs while survey_cell_stats sits
+        # below it, and the skip has to survive that.
+        middle = f"""
+  - id: summarize
+    op: custom
+    map_over: ${{seg.items}}
+    checkpoint: always
+    inputs:
+      value: ${{consume.size}}
+    custom_spec:
+      description: a second checkpointed member below the fanned-in one
+      callable_path: {MOD}.summarize
+      inputs:
+        value: {{type: int}}
+      outputs:
+        doubled: {{type: int}}
+      output_map: {{doubled: __return__}}
+      dependency: {DEP}
+"""
+        tail += f"""
+  - id: total_doubled
+    op: custom
+    collect: ${{summarize.doubled}}
+    inputs:
+      values: ${{summarize.doubled}}
+    custom_spec:
+      description: fan in the second checkpointed member
+      callable_path: {MOD}.total
+      inputs:
+        values: {{type: int, many: true}}
+      outputs:
+        n: {{type: int}}
+      output_map: {{n: __return__}}
+      dependency: {DEP}
+"""
+    if side_effect_member:
+        # No outputs, so nothing can read it and need propagation alone would
+        # drop it. It sits BETWEEN the two cached members so being last is not
+        # what saves it.
+        middle = f"""
+  - id: audit_effect
+    op: custom
+    map_over: ${{seg.items}}
+    inputs:
+      value: ${{consume.size}}
+    custom_spec:
+      description: a side-effect-only member with no outputs
+      callable_path: {MOD}.audit_effect
+      inputs:
+        value: {{type: int}}
+      dependency: {DEP}
+""" + middle
     if extra_consumer:
         tail = f"""
   - id: audit
@@ -124,7 +195,7 @@ steps:
         size: {{type: int}}
       output_map: {{size: __return__}}
       dependency: {DEP}
-  - id: total
+{middle}  - id: total
     op: custom
     collect: ${{consume.size}}
     inputs:
@@ -206,3 +277,179 @@ def test_force_recomputes_the_whole_chain(tmp_path, helpers):
 
     assert _ran(helpers, "fetch") == 3
     assert _ran(helpers, "consume") == 3
+
+
+def test_a_fanned_in_checkpointed_member_still_lets_the_chain_resume(
+    tmp_path, helpers
+):
+    """A cached member read from outside is loaded, not computed.
+
+    The first version of this guard bailed whenever any skippable member had a
+    reader outside the chain, without asking whether that member was itself a
+    cache hit. On HB1603 survey_file_mvbs is exactly that - checkpointed, and
+    fanned in by merge_survey_mvbs - so the frontier never fired and all 3322
+    instances re-read their raw file to reach a checkpoint they already had.
+    """
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    helpers.calls.clear()
+
+    result = _run(tmp_path, _recipe(second_checkpoint=True))
+
+    assert _ran(helpers, "fetch") == 0, "the expensive member must not re-run"
+    assert _ran(helpers, "consume") == 0
+    assert _ran(helpers, "summarize") == 0
+    assert result.outputs["total"]["n"] == 33
+    assert result.outputs["total_doubled"]["n"] == 66
+
+
+def test_resume_needs_a_cached_member_to_stop_at(tmp_path, helpers):
+    """With nothing cached for the instance, every member is computed."""
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    helpers.calls.clear()
+
+    recipe = tmp_path / "recipe.yaml"
+    recipe.write_text(_recipe(second_checkpoint=True), encoding="utf-8")
+    api.execute(
+        recipe,
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+        force=True,
+    )
+
+    assert _ran(helpers, "fetch") == 3
+    assert _ran(helpers, "summarize") == 3
+
+
+def test_a_mid_chain_gap_resumes_from_each_cached_member_separately(
+    tmp_path, helpers
+):
+    """Need stops at every cache hit, not just the last one.
+
+    ``summarize``'s checkpoint is deleted while ``consume``'s is kept, so the
+    chain has to recompute ``summarize`` from a loaded ``consume`` without
+    reaching back to ``fetch``.
+    """
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    cache = tmp_path / "cache"
+    removed = [p for p in cache.rglob("*") if p.is_dir() and p.name == "summarize"]
+    assert removed, "expected a summarize checkpoint directory to drop"
+    for path in removed:
+        shutil.rmtree(path)
+    helpers.calls.clear()
+
+    result = _run(tmp_path, _recipe(second_checkpoint=True))
+
+    assert _ran(helpers, "fetch") == 0, "consume is still a hit, so stop there"
+    assert _ran(helpers, "consume") == 0
+    assert _ran(helpers, "summarize") == 3, "its checkpoint is gone, so recompute"
+    assert result.outputs["total_doubled"]["n"] == 66
+
+
+def test_a_regenerating_member_is_never_skipped(tmp_path, helpers):
+    """``regenerate`` is a step saying that running it writes artifacts.
+
+    ``fetch`` feeds only a cached member, so need propagation alone would skip
+    it. The artifacts are the point, so it has to run anyway.
+
+    This covers an uncheckpointed member deliberately. A *checkpointed* chain
+    member with a regenerate policy is a plain cache hit in the member loop,
+    which has never consulted regenerate - a pre-existing limitation that the
+    resume rule neither creates nor can fix from here.
+    """
+    text = _recipe(second_checkpoint=True).replace(
+        """  - id: fetch
+    op: custom""",
+        """  - id: fetch
+    op: custom
+    regenerate: always""",
+    )
+    assert "regenerate: always" in text
+    _run(tmp_path, text)
+    helpers.calls.clear()
+
+    result = _run(tmp_path, text)
+
+    assert _ran(helpers, "fetch") == 3, "a regenerating member must re-run"
+    assert _ran(helpers, "consume") == 0, "its consumer is still a hit"
+    assert result.outputs["total"]["n"] == 33
+
+
+def test_an_unread_branch_inside_the_chain_is_skipped(tmp_path, helpers):
+    """A member nothing reads is skipped even though it is not upstream of a hit.
+
+    ``fetch`` feeds ``consume`` (cached) and nothing else, so the whole branch
+    above the hit goes, which is the point. This pins that the rule is
+    reachability and not a positional frontier.
+    """
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    helpers.calls.clear()
+
+    _run(tmp_path, _recipe(second_checkpoint=True))
+
+    assert sorted(helpers.calls) == [
+        ("total", (1, 11, 21)),
+        ("total", (2, 22, 42)),
+    ], f"only the two collectors should run, got {helpers.calls}"
+
+
+def test_a_member_with_no_outputs_is_never_skipped(tmp_path, helpers):
+    """A step with nothing to read exists only for its side effect.
+
+    Nothing can reference it, so need propagation alone would drop it, and it
+    is not the last member either. Sinks are kept for the same reason.
+    """
+    text = _recipe(second_checkpoint=True, side_effect_member=True)
+    _run(tmp_path, text)
+    helpers.calls.clear()
+
+    _run(tmp_path, text)
+
+    assert _ran(helpers, "audit_effect") == 3, "a side effect must still happen"
+    assert _ran(helpers, "fetch") == 0, "and it must not drag the chain with it"
+
+
+def test_the_skip_is_the_same_under_the_dask_executor(tmp_path, helpers):
+    """The resume rule lives in the chain task, so every backend gets it.
+
+    Worth pinning separately: the survey runs that this was written for use
+    ``--executor dask``, and a rule that only held under the inline backend
+    would be silently useless there.
+    """
+    pytest.importorskip("distributed")
+    text = _recipe(second_checkpoint=True)
+    recipe = tmp_path / "recipe.yaml"
+    recipe.write_text(text, encoding="utf-8")
+    kwargs = dict(
+        user_cache_dir=str(tmp_path / "cache"),
+        outputs_dir=str(tmp_path / "out"),
+        temp_dir=str(tmp_path / "tmp"),
+        executor="dask",
+        executor_options={"n_workers": 2},
+    )
+    api.execute(recipe, **kwargs)
+    helpers.calls.clear()
+
+    result = api.execute(recipe, **kwargs)
+
+    assert _ran(helpers, "fetch") == 0
+    assert result.outputs["total"]["n"] == 33
+    assert result.outputs["total_doubled"]["n"] == 66
+
+
+def test_a_skipped_member_is_not_reported_as_a_cache_hit(tmp_path, helpers):
+    """Provenance has to tell "never needed" apart from "loaded from cache".
+
+    ``fetch`` is not checkpointed at all, so calling it a hit would claim a
+    cache entry that does not exist. ``consume`` genuinely was loaded.
+    """
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    helpers.calls.clear()
+
+    result = _run(tmp_path, _recipe(second_checkpoint=True))
+
+    assert result.step_dispositions["fetch"].disposition == "skipped"
+    assert result.step_dispositions["consume"].disposition == "hit-user-cache"
+    assert result.step_dispositions["summarize"].disposition == "hit-user-cache"
+    # Both are "not executed this run", which is what skipped_steps means.
+    assert set(result.skipped_steps) >= {"fetch", "consume", "summarize"}
