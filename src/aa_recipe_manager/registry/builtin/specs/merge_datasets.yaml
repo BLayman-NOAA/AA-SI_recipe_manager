@@ -28,6 +28,28 @@ params:
     required: false
     default: ping_time
     description: Dimension to concatenate the collected Datasets along.
+  on_duplicate:
+    type: str
+    description: >
+      What to do when two collected segments carry the same label on ``dim``.
+
+      Unset (the default) leaves both, which is right when segments cannot
+      overlap - per-file Sv concatenated on raw ping_time, for instance.
+
+      "mean" averages them into one entry. That is what a fan-in over per
+      segment BINNED products needs: compute_mvbs and
+      compute_per_cell_statistics anchor their time bins to a global origin, so
+      a segment boundary falling inside a bin makes the segment on each side
+      emit that bin, each holding part of its pings. Left alone the merged store
+      carries a duplicate index, which every downstream reindex rejects -
+      add_auxiliary_features raises InvalidIndexError on it.
+
+      Variables carrying "units: dB" are averaged in the linear domain and
+      converted back, since a mean of decibels is not the mean of what they
+      measure. The average is unweighted: the partial bins do not record how
+      many pings each held.
+    required: false
+    default: null
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.concat_datasets
@@ -40,5 +62,6 @@ implementations:
     param_map:
       datasets: datasets
       dim: dim
+      on_duplicate: on_duplicate
     output_map:
       merged: __return__
