@@ -44,6 +44,14 @@ params:
       carries a duplicate index, which every downstream reindex rejects -
       add_auxiliary_features raises InvalidIndexError on it.
 
+      "first" keeps the first entry for a label and sorts the result. That is
+      what a fan-in over overlapping SLICES OF ONE STORE needs: dive windows
+      cut from the survey grid, where two dives sharing a minute are the same
+      cells twice, so nothing should be averaged. A per-segment variable that
+      differs on the overlap is kept from the first segment only, which is the
+      sign it does not belong on the shared axis; attach it per segment after
+      the fan-in.
+
       Variables carrying "units: dB" are averaged in the linear domain and
       converted back, since a mean of decibels is not the mean of what they
       measure. The average is unweighted: the partial bins do not record how

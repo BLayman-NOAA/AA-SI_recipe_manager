@@ -1019,16 +1019,17 @@ class PipelineRunner:
                 instance_seconds=instance_times,
             )
             result.logs.append(
-                f"mapped {mid}: {computed + hits} instance(s) "
-                f"({computed} computed, {hits} cached)"
+                f"mapped {mid}: {computed + hits + skipped} instance(s) "
+                f"({computed} computed, {hits} cached, {skipped} skipped)"
             )
             # Chains need the same closing line a plain step gets, or the run log
             # has no record of when the fan-out finished.
             self._log_sink.write(
                 f"--- {mid}: done ({_instance_note(instance_times)}"
                 f"{_save_note(save_total)}, "
-                f"{computed + hits} instance(s): "
-                f"{computed} computed, {hits} cached) ---\n"
+                f"{computed + hits + skipped} instance(s): "
+                f"{computed} computed, {hits} cached, "
+                f"{skipped} skipped) ---\n"
             )
             self._log_sink.flush()
             self._progress.on_step_end(

@@ -509,6 +509,33 @@ def _inline_outputs(
     return None
 
 
+def _members_read_inside_chain(
+    task: ChainInstanceTask, wctx: WorkerContext, skippable: set[str]
+) -> set[str]:
+    """Members whose value another member of this chain still has to read.
+
+    A cache hit is recorded into the element context so a later member can
+    resolve a reference to it, and that recording is the only reason the worker
+    loads it at all: the client reloads every checkpointed member from the
+    store when it folds the chain in (``_member_outputs``). So a hit that no
+    surviving member reads was being opened from the bucket twice and used
+    once. On HB1603 both fanned-in members are in exactly that position, which
+    is 6644 wasted zarr opens over GCS per run.
+
+    A skipped consumer reads nothing, so it does not count. A consumer that
+    turns out to be a hit reads nothing either, but that is not known until the
+    loop reaches it, so it is counted here and the load is kept.
+    """
+    inside = set(task.member_ids)
+    return {
+        edge.source_step_id
+        for edge in wctx.dag.edges
+        if edge.source_step_id in inside
+        and edge.target_step_id in inside
+        and edge.target_step_id not in skippable
+    }
+
+
 def _run_chain_members(
     task: ChainInstanceTask,
     wctx: WorkerContext,
@@ -520,6 +547,7 @@ def _run_chain_members(
     """Run every member of one chain instance, appending to ``members``."""
     skippable = _resumable_members(task, wctx, store)
     externally_read = _externally_read_members(task, wctx)
+    read_in_chain = _members_read_inside_chain(task, wctx, skippable)
     with capture_output(log_buffer):
         for mid in task.member_ids:
             if mid in skippable:
@@ -548,8 +576,9 @@ def _run_chain_members(
                 and not wctx.force
                 and store.has_checkpoint(mid, instance_hash=inst_hash)
             ):
-                out = store.load(mid, instance_hash=inst_hash)
-                elem_ctx.record(mid, out or {})
+                if mid in read_in_chain:
+                    out = store.load(mid, instance_hash=inst_hash)
+                    elem_ctx.record(mid, out or {})
                 members.append(
                     MemberResult(
                         step_id=mid,

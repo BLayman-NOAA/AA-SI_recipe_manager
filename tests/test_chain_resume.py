@@ -453,3 +453,53 @@ def test_a_skipped_member_is_not_reported_as_a_cache_hit(tmp_path, helpers):
     assert result.step_dispositions["summarize"].disposition == "hit-user-cache"
     # Both are "not executed this run", which is what skipped_steps means.
     assert set(result.skipped_steps) >= {"fetch", "consume", "summarize"}
+
+
+def test_a_skipped_member_still_reports_its_instance_count(tmp_path, helpers):
+    """The run log must not claim a skipped member had zero instances.
+
+    Counting skipped members apart from cache hits is what keeps the
+    disposition honest, but both summary lines add the counts up, so dropping
+    the third state turned "3322 instances, all skipped" into "0 instances".
+    """
+    _run(tmp_path, _recipe(second_checkpoint=True))
+    helpers.calls.clear()
+
+    result = _run(tmp_path, _recipe(second_checkpoint=True))
+
+    line = next(entry for entry in result.logs if entry.startswith("mapped fetch:"))
+    assert line == "mapped fetch: 3 instance(s) (0 computed, 0 cached, 3 skipped)"
+    hit = next(entry for entry in result.logs if entry.startswith("mapped consume:"))
+    assert hit == "mapped consume: 3 instance(s) (0 computed, 3 cached, 0 skipped)"
+
+
+def test_a_hit_nothing_in_the_chain_reads_is_not_loaded_twice(tmp_path, helpers):
+    """The worker only opens a cache hit that a surviving member will read.
+
+    The client reloads every checkpointed member itself when it folds the
+    chain in, so a worker-side load exists purely to satisfy an in-chain
+    reference. ``summarize`` has none - it is fanned in from outside - and was
+    being opened from the store twice per instance and used once.
+    """
+    from aa_recipe_manager.executor.tiered import TieredCheckpointStore
+
+    loads: list[str] = []
+    original = TieredCheckpointStore.load
+
+    def counting_load(self, step_id, **kwargs):
+        loads.append(step_id)
+        return original(self, step_id, **kwargs)
+
+    text = _recipe(second_checkpoint=True)
+    _run(tmp_path, text)
+    TieredCheckpointStore.load = counting_load
+    try:
+        result = _run(tmp_path, text)
+    finally:
+        TieredCheckpointStore.load = original
+
+    # Three instances, one client-side load each, and no worker-side load.
+    assert loads.count("summarize") == 3
+    # consume is read by summarize, which is not skipped, so its load stays.
+    assert loads.count("consume") == 6
+    assert result.outputs["total_doubled"]["n"] == 66
