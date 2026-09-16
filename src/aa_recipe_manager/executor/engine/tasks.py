@@ -418,6 +418,60 @@ def _resumable_members(
     return skippable
 
 
+def _externally_read_members(
+    task: ChainInstanceTask, wctx: WorkerContext
+) -> set[str]:
+    """Chain members whose outputs something outside the chain reads.
+
+    The client keeps a MemberResult per member per instance until the chain
+    finalizes, and an uncheckpointed member carries its output by value. On a
+    survey-scale fan-out that is the dominant cost of the run: measured at 76
+    MiB per instance on HB1603's per-file chain, which is 57 GiB by instance
+    766 - and every byte of it for members nothing outside the chain ever looks
+    at, since within the chain each member reads the previous one's value out
+    of the element context in the worker.
+
+    Membership is by DAG edge, plus any member a recipe names in its ``outputs``
+    block, which is a reader the edges do not show.
+
+    Only *heavy* outputs are dropped on the strength of this: a small
+    JSON-native result (a count, a path, a params dict) costs nothing to carry
+    and ``result.outputs`` is expected to hold it. The rule is the one
+    :meth:`TaskClosure.heavy_value_ref_steps` already uses in the other
+    direction.
+    """
+    inside = set(task.member_ids)
+    read = {
+        edge.source_step_id
+        for edge in wctx.dag.edges
+        if edge.source_step_id in inside and edge.target_step_id not in inside
+    }
+    declared = getattr(wctx.dag.recipe, "outputs", None) or {}
+    for output in declared.values():
+        step_id = getattr(output, "step_id", None)
+        if step_id in inside:
+            read.add(step_id)
+    return read
+
+
+def _inline_outputs(
+    out: dict[str, Any] | None, checkpointed: bool, externally_read: bool
+) -> dict[str, Any] | None:
+    """What of a member's result travels back to the client, and is then kept.
+
+    Nothing when the member is checkpointed (the client reloads it lazily), and
+    nothing when a heavy result has no reader outside the chain. A small
+    JSON-native result is carried either way; see _externally_read_members.
+    """
+    from aa_recipe_manager.parallel import _UNSERIALIZABLE, _json_native
+
+    if checkpointed:
+        return None
+    if externally_read or _json_native(out) is not _UNSERIALIZABLE:
+        return out or {}
+    return None
+
+
 def _run_chain_members(
     task: ChainInstanceTask,
     wctx: WorkerContext,
@@ -428,6 +482,7 @@ def _run_chain_members(
 ) -> None:
     """Run every member of one chain instance, appending to ``members``."""
     skippable = _resumable_members(task, wctx, store)
+    externally_read = _externally_read_members(task, wctx)
     with capture_output(log_buffer):
         for mid in task.member_ids:
             if mid in skippable:
@@ -516,7 +571,9 @@ def _run_chain_members(
                     artifacts=artifact_paths,
                     checkpointed=checkpointed,
                     instance_hash=inst_hash,
-                    inline_outputs=None if checkpointed else (out or {}),
+                    inline_outputs=_inline_outputs(
+                        out, checkpointed, mid in externally_read
+                    ),
                     save_seconds=save_seconds,
                 )
             )
