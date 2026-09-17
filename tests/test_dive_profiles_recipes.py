@@ -3,15 +3,19 @@
 """Tests for the HB1603 dive-profile recipes, chiefly their tier split.
 
 The workflow's whole economy rests on one property: the survey tier must hash
-identically in survey_preprocess.yaml and dive_profiles.yaml, so that building
-the shared Sv store once makes every survey step a cache hit in the analysis
-run. If that breaks, each analysis silently recomputes Sv for a 3322-file
-cruise, and nothing about the output looks wrong.
+identically in survey_preprocess.yaml and full_analysis.yaml, so that building
+the shared store once makes every survey step a cache hit in the analysis run,
+and the per-file half must hash identically in sv_window_example.yaml too, so
+a subset analysis reuses the per-file Sv. If that breaks, an analysis silently
+recomputes Sv for a 3322-file cruise, and nothing about the output looks wrong.
 
 It is easy to break by accident, because a step's hash folds in its parents'.
 Reordering an include, adding a param to a shared sub-recipe, or letting
-crop_max_range_m drift between the two files is enough. These tests fail loudly
+crop_max_range_m drift between the files is enough. These tests fail loudly
 when it happens.
+
+The recipes live in the AA-SI_Full_Pipeline_Example repo, a sibling of this
+one in the workspace; the tests skip when it is not checked out alongside.
 """
 
 from pathlib import Path
@@ -21,19 +25,21 @@ import pytest
 from aa_recipe_manager import api
 from aa_recipe_manager.api import _load_dag
 from aa_recipe_manager.executor.checkpoint import compute_step_hashes
+from aa_recipe_manager.parallel import group_mapped_chains
 
 RECIPES = (
-    Path(__file__).resolve().parent.parent / "examples" / "HB1603" / "UC1"
+    Path(__file__).resolve().parents[2]
+    / "AA-SI_Full_Pipeline_Example" / "example_recipes" / "HB1603" / "UC1"
 )
 SURVEY_RECIPE = RECIPES / "survey_preprocess.yaml"
-ANALYSIS_RECIPE = RECIPES / "dive_profiles.yaml"
 FULL_RECIPE = RECIPES / "full_analysis.yaml"
+WINDOW_RECIPE = RECIPES / "sv_window_example.yaml"
 
 #: The dive full_analysis.yaml leaves out, whose dive data is incorrect.
 EXCLUDED_DIVE = "SWD_20160703-OE20"
 
-#: Every step at or above the shared Sv checkpoint.
-SURVEY_STEPS = (
+#: Every step of the per-file chain, through the checkpointed per-file Sv.
+PER_FILE_STEPS = (
     "query_ncei",
     "scan_raw_config",
     "record_raw_configs",
@@ -46,39 +52,53 @@ SURVEY_STEPS = (
     "compute_transducer_depth",
     "ep_add_depth",
     "crop_survey_range",
-    "merge_survey_sv",
-    "rechunk_survey_sv",
 )
 
-#: Steps that only exist below it.
+#: The per-file grid and the fan-ins that complete the shared store.
+GRID_STEPS = (
+    "survey_surface_mask",
+    "survey_frequency_mask",
+    "survey_combine_masks",
+    "survey_apply_mask",
+    "survey_remove_noise",
+    "survey_mask_sparse",
+    "survey_file_mvbs",
+    "survey_cell_stats",
+    "merge_survey_mvbs",
+    "rechunk_survey_mvbs",
+    "merge_survey_cell_stats",
+)
+
+SURVEY_STEPS = PER_FILE_STEPS + GRID_STEPS
+
+#: Steps that only exist below the survey tier.
 ANALYSIS_ONLY_STEPS = (
     "plan_dives",
     "select_window",
-    "compute_mvbs",
     "merge_dive_mvbs",
+    "merge_dive_cell_stats",
     "run_hdbscan",
     "label_all_points",
     "generate_sv_codes",
     "sv_code_depth_table",
 )
 
-# The dive configs and line files live outside this repo.
 requires_data = pytest.mark.skipif(
-    not (RECIPES / "sub_recipes" / "survey_sv.yaml").exists()
-    or not (RECIPES.parents[3] / "NEFSC_UC1" / "full_data" / "Auxiliary").exists(),
-    reason="HB1603 dive-profile inputs not available",
+    not FULL_RECIPE.exists()
+    or not (RECIPES / "Auxiliary" / "JSON_Files").exists(),
+    reason="HB1603 UC1 recipes not checked out alongside this repo",
 )
 
 
-def _hashes(recipe, inputs=None, monkeypatch=None):
-    """Step hashes for a recipe, resolved from its own directory.
-
-    The recipes use paths relative to themselves, which is the convention the
-    other example recipes follow.
-    """
+def _hashes(recipe, inputs=None):
+    """Step hashes for a recipe, resolved from its own directory."""
     inputs = inputs or {}
-    dag = _load_dag(recipe, input_values=inputs, check_versions=False)
+    dag = _load_dag(str(recipe), input_values=inputs, check_versions=False)
     return compute_step_hashes(dag, inputs)
+
+
+def _dag(recipe, inputs=None):
+    return _load_dag(str(recipe), input_values=inputs or {}, check_versions=False)
 
 
 @pytest.fixture
@@ -87,25 +107,14 @@ def in_recipe_dir(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Both recipes are valid
+# All three recipes are valid
 # ---------------------------------------------------------------------------
 
 
 @requires_data
-def test_survey_recipe_validates(in_recipe_dir):
-    report = api.dry_run(str(SURVEY_RECIPE))
-    assert not report.errors
-
-
-@requires_data
-def test_analysis_recipe_validates(in_recipe_dir):
-    report = api.dry_run(str(ANALYSIS_RECIPE))
-    assert not report.errors
-
-
-@requires_data
-def test_full_analysis_recipe_validates(in_recipe_dir):
-    report = api.dry_run(str(FULL_RECIPE))
+@pytest.mark.parametrize("recipe", [SURVEY_RECIPE, FULL_RECIPE, WINDOW_RECIPE])
+def test_recipe_validates(in_recipe_dir, recipe):
+    report = api.dry_run(str(recipe))
     assert not report.errors
 
 
@@ -115,30 +124,129 @@ def test_full_analysis_recipe_validates(in_recipe_dir):
 
 
 @requires_data
-@pytest.mark.parametrize("analysis_recipe", [ANALYSIS_RECIPE, FULL_RECIPE])
-def test_survey_tier_hashes_identically_in_both_recipes(in_recipe_dir, analysis_recipe):
+def test_survey_tier_hashes_identically_in_preprocess_and_analysis(in_recipe_dir):
     """The property the whole workflow's economy rests on."""
-    survey = _hashes(str(SURVEY_RECIPE))
-    analysis = _hashes(str(analysis_recipe))
+    survey = _hashes(SURVEY_RECIPE)
+    analysis = _hashes(FULL_RECIPE)
 
-    mismatched = {
-        step: (survey.get(step), analysis.get(step))
-        for step in SURVEY_STEPS
+    mismatched = sorted(
+        step for step in SURVEY_STEPS
         if survey.get(step) is None or survey.get(step) != analysis.get(step)
-    }
+    )
     assert not mismatched, (
-        f"survey steps differ between survey_preprocess.yaml and "
-        f"{analysis_recipe.name}, so the analysis run will recompute Sv for "
-        f"the whole cruise: {sorted(mismatched)}"
+        "survey steps differ between survey_preprocess.yaml and "
+        f"full_analysis.yaml, so the analysis run will recompute the survey: "
+        f"{mismatched}"
+    )
+
+
+@requires_data
+def test_per_file_chain_hashes_identically_in_the_window_example(in_recipe_dir):
+    """A subset analysis must find the per-file Sv the survey run wrote."""
+    analysis = _hashes(FULL_RECIPE)
+    window = _hashes(WINDOW_RECIPE)
+
+    mismatched = sorted(
+        step for step in PER_FILE_STEPS
+        if window.get(step) is None or window.get(step) != analysis.get(step)
+    )
+    assert not mismatched, (
+        "per-file steps differ between full_analysis.yaml and "
+        f"sv_window_example.yaml, so the window run recomputes Sv: {mismatched}"
     )
 
 
 @requires_data
 def test_the_analysis_recipe_actually_contains_its_own_tier(in_recipe_dir):
-    """Guards the test above from passing because the steps are simply absent."""
-    analysis = _hashes(str(ANALYSIS_RECIPE))
+    """Guards the tests above from passing because the steps are simply absent."""
+    analysis = _hashes(FULL_RECIPE)
     for step in SURVEY_STEPS + ANALYSIS_ONLY_STEPS:
-        assert step in analysis, f"{step} missing from the analysis recipe"
+        assert step in analysis, f"{step} missing from full_analysis.yaml"
+
+
+# ---------------------------------------------------------------------------
+# What each shared input invalidates
+# ---------------------------------------------------------------------------
+
+
+def _survey_steps_from(step):
+    return set(SURVEY_STEPS[SURVEY_STEPS.index(step):])
+
+
+@requires_data
+def test_the_survey_ceiling_invalidates_the_crop_and_below_only(in_recipe_dir):
+    """Raising the ceiling re-crops and re-grids; it does not recompute Sv."""
+    base = _hashes(FULL_RECIPE)
+    raised = _hashes(FULL_RECIPE, {"crop_max_range_m": 2000.0})
+
+    changed = {s for s in SURVEY_STEPS if base.get(s) != raised.get(s)}
+    assert changed == _survey_steps_from("crop_survey_range")
+    assert base["compute_sv"] == raised["compute_sv"]
+    assert base["read_raw"] == raised["read_raw"]
+
+
+@requires_data
+def test_the_grid_extent_invalidates_the_grid_and_below_only(in_recipe_dir):
+    """A new depth extent re-bins every file; the per-file Sv survives."""
+    base = _hashes(FULL_RECIPE)
+    deeper = _hashes(FULL_RECIPE, {"mvbs_range_var_max": "2010m"})
+
+    changed = {s for s in SURVEY_STEPS if base.get(s) != deeper.get(s)}
+    assert changed == {
+        "survey_file_mvbs", "survey_cell_stats",
+        "merge_survey_mvbs", "rechunk_survey_mvbs", "merge_survey_cell_stats",
+    }
+    assert base["crop_survey_range"] == deeper["crop_survey_range"]
+
+
+@requires_data
+def test_the_chunk_size_only_touches_the_rechunk(in_recipe_dir):
+    base = _hashes(FULL_RECIPE)
+    rechunked = _hashes(FULL_RECIPE, {"survey_chunk_ping_time": 2000})
+
+    changed = {s for s in SURVEY_STEPS if base.get(s) != rechunked.get(s)}
+    assert changed == {"rechunk_survey_mvbs"}
+
+
+@requires_data
+def test_choosing_the_dives_does_not_disturb_the_survey_tier(in_recipe_dir):
+    """Naming dives is an analysis input and must stay below the checkpoint."""
+    base = _hashes(FULL_RECIPE)
+    fewer = _hashes(FULL_RECIPE, {"dive_labels": ["SWD_20160719-OE07"]})
+
+    disturbed = [s for s in SURVEY_STEPS if base.get(s) != fewer.get(s)]
+    assert not disturbed, (
+        f"changing dive_labels re-hashed survey steps {disturbed}; the dive "
+        "selection has leaked above the shared checkpoint"
+    )
+    assert base["plan_dives"] != fewer["plan_dives"], (
+        "dive_labels changed nothing at all, so it is not reaching the planner"
+    )
+
+
+@requires_data
+def test_a_dive_input_does_not_disturb_the_survey_tier(in_recipe_dir):
+    """A window is allowed to change the analysis and nothing above it."""
+    base = _hashes(FULL_RECIPE)
+    moved = _hashes(FULL_RECIPE, {"pad_minutes": 5.0})
+
+    disturbed = [s for s in SURVEY_STEPS if base.get(s) != moved.get(s)]
+    assert not disturbed, (
+        f"changing pad_minutes re-hashed survey steps {disturbed}; a dive input "
+        "has leaked above the shared checkpoint"
+    )
+    assert base["plan_dives"] != moved["plan_dives"]
+
+
+@requires_data
+def test_a_window_input_does_not_disturb_the_per_file_chain(in_recipe_dir):
+    """The window example must vary its window without touching the Sv."""
+    base = _hashes(WINDOW_RECIPE)
+    moved = _hashes(WINDOW_RECIPE, {"window_start": "2016-07-25T00:00:00"})
+
+    disturbed = [s for s in PER_FILE_STEPS if base.get(s) != moved.get(s)]
+    assert not disturbed, f"the window leaked above crop_survey_range: {disturbed}"
+    assert base["window_sv"] != moved["window_sv"]
 
 
 # ---------------------------------------------------------------------------
@@ -151,12 +259,11 @@ def test_full_analysis_names_every_dive_but_the_bad_one(in_recipe_dir):
     """The recipe states its study population, so a typo must not survive here.
 
     include_labels is only read by plan_dive_datasets, which runs below the
-    survey tier. A misspelled label would therefore raise hours into a run,
-    after the whole cruise had been through compute_sv. Checking the labels
-    against the configs on disk turns that into a test failure.
+    survey tier. A misspelled label would therefore raise after the survey
+    tier had run. Checking the labels against the configs on disk turns that
+    into a test failure.
     """
-    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
-    labels = dag.nodes["plan_dives"].resolved_params["include_labels"]
+    labels = _dag(FULL_RECIPE).nodes["plan_dives"].resolved_params["include_labels"]
 
     available = {p.stem for p in (RECIPES / "Auxiliary" / "JSON_Files").glob("SWD_*.json")}
     unknown = sorted(set(labels) - available)
@@ -177,22 +284,6 @@ def test_full_analysis_names_every_dive_but_the_bad_one(in_recipe_dir):
 
 
 @requires_data
-def test_choosing_the_dives_does_not_disturb_the_survey_tier(in_recipe_dir):
-    """Naming dives is an analysis input and must stay below the checkpoint."""
-    base = _hashes(str(FULL_RECIPE))
-    fewer = _hashes(str(FULL_RECIPE), {"dive_labels": ["SWD_20160719-OE07"]})
-
-    disturbed = [s for s in SURVEY_STEPS if base.get(s) != fewer.get(s)]
-    assert not disturbed, (
-        f"changing dive_labels re-hashed survey steps {disturbed}; the dive "
-        "selection has leaked above the shared checkpoint"
-    )
-    assert base["plan_dives"] != fewer["plan_dives"], (
-        "dive_labels changed nothing at all, so it is not reaching the planner"
-    )
-
-
-@requires_data
 def test_full_analysis_plots_on_a_bin_axis(in_recipe_dir):
     """A clock-time axis would squeeze all 13 dives into a hairline.
 
@@ -201,13 +292,12 @@ def test_full_analysis_plots_on_a_bin_axis(in_recipe_dir):
     literally, so an echogram of the combined set is 0.4% data. "bins" plots
     against MVBS bin index, which the empty time between dives never entered.
     """
-    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
+    dag = _dag(FULL_RECIPE)
     plotting = {
-        node_id: node
-        for node_id, node in dag.nodes.items()
+        node_id: node for node_id, node in dag.nodes.items()
         if str(node.step.op).startswith("plot_")
     }
-    assert plotting, "expected the pooled echograms to be wired up"
+    assert plotting, "expected the pooled report to be wired up"
 
     wrong = {
         node_id: node.resolved_params.get("x_axis_units")
@@ -221,62 +311,30 @@ def test_full_analysis_plots_on_a_bin_axis(in_recipe_dir):
 
 
 @requires_data
-def test_the_mvbs_plot_has_its_ping_reference(in_recipe_dir):
-    """plot_sv_echogram raises on MVBS data when ds_Sv_source is absent.
+def test_overlapping_dives_are_deduplicated_and_carry_no_lines(in_recipe_dir):
+    """Four of the 13 dives overlap another in time.
 
-    ping_min and ping_max index the original Sv ping axis, and ds_Sv_source is
-    what converts them onto the MVBS grid, so the op refuses to guess. Leaving
-    it unwired fails only once the run reaches the figure, hours in.
+    The shared minutes are the same survey cells cut twice, so both dive
+    fan-ins must dedup with "first" or the merged index is duplicated and out
+    of order. And no dive line may ride on the merged axis: two dives at one
+    ping have two depths, so generate_sv_codes attaches each dive's lines to
+    its own slice instead.
     """
-    dag = _load_dag(str(FULL_RECIPE), input_values={}, check_versions=False)
-    sources = {
-        edge.source_step_id
-        for edge in dag.edges
-        if edge.target_step_id == "plot_window_mvbs"
-        and edge.target_input == "ds_Sv_source"
-    }
-    assert sources == {"merge_window_sv"}, (
-        "plot_window_mvbs plots MVBS and needs ds_Sv_source wired to the "
-        f"pre-MVBS Sv fan-in; found {sources or 'nothing'}"
-    )
+    dag = _dag(FULL_RECIPE)
+    for step in ("merge_dive_mvbs", "merge_dive_cell_stats"):
+        assert dag.nodes[step].resolved_params.get("on_duplicate") == "first", step
+
+    overlays = [n for n, node in dag.nodes.items() if node.step.op == "add_line_overlay"]
+    assert not overlays, f"dive lines attached before the fan-in: {overlays}"
+    assert dag.nodes["generate_sv_codes"].implementation is not None
 
 
 @requires_data
-def test_a_dive_input_does_not_disturb_the_survey_tier(in_recipe_dir):
-    """A window is allowed to change the analysis and nothing above it."""
-    base = _hashes(str(ANALYSIS_RECIPE))
-    moved = _hashes(str(ANALYSIS_RECIPE), {"pad_minutes": 5.0})
-
-    disturbed = [s for s in SURVEY_STEPS if base.get(s) != moved.get(s)]
-    assert not disturbed, (
-        f"changing pad_minutes re-hashed survey steps {disturbed}; a dive input "
-        "has leaked above the shared checkpoint"
-    )
-    assert base["plan_dives"] != moved["plan_dives"], (
-        "pad_minutes changed nothing at all, so it is not reaching the planner"
-    )
-
-
-@requires_data
-def test_the_survey_ceiling_invalidates_the_crop_and_below_only(in_recipe_dir):
-    """Raising the ceiling re-crops and re-merges; it does not recompute Sv."""
-    base = _hashes(str(ANALYSIS_RECIPE))
-    raised = _hashes(str(ANALYSIS_RECIPE), {"crop_max_range_m": 2000.0})
-
-    changed = {s for s in SURVEY_STEPS if base.get(s) != raised.get(s)}
-    assert changed == {"crop_survey_range", "merge_survey_sv", "rechunk_survey_sv"}
-    # The expensive half is above the crop and must survive.
-    assert base["compute_sv"] == raised["compute_sv"]
-    assert base["read_raw"] == raised["read_raw"]
-
-
-@requires_data
-def test_the_chunk_size_only_touches_the_rechunk(in_recipe_dir):
-    base = _hashes(str(ANALYSIS_RECIPE))
-    rechunked = _hashes(str(ANALYSIS_RECIPE), {"survey_chunk_ping_time": 2000})
-
-    changed = {s for s in SURVEY_STEPS if base.get(s) != rechunked.get(s)}
-    assert changed == {"rechunk_survey_sv"}
+def test_survey_fan_ins_average_the_boundary_bins(in_recipe_dir):
+    """Per-file binning emits a boundary bin from both sides; they are averaged."""
+    dag = _dag(FULL_RECIPE)
+    for step in ("merge_survey_mvbs", "merge_survey_cell_stats"):
+        assert dag.nodes[step].resolved_params.get("on_duplicate") == "mean", step
 
 
 # ---------------------------------------------------------------------------
@@ -286,46 +344,36 @@ def test_the_chunk_size_only_touches_the_rechunk(in_recipe_dir):
 
 @requires_data
 @pytest.mark.parametrize(
-    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, FULL_RECIPE, RECIPES / "smoke_test.yaml"]
+    "recipe, tail",
+    [
+        (SURVEY_RECIPE, GRID_STEPS[:8]),
+        (FULL_RECIPE, GRID_STEPS[:8]),
+        (WINDOW_RECIPE, ("window_sv", "window_mvbs")),
+    ],
 )
-def test_the_per_file_chain_stays_one_chain(in_recipe_dir, recipe):
-    """read_raw through crop_survey_range must run as a single mapped chain.
+def test_the_per_file_chain_stays_one_chain(in_recipe_dir, recipe, tail):
+    """read_raw through the last per-file step must run as a single mapped chain.
 
     The calibration steps are independent of the per-file chain, so a
-    breadth-first topological order used to place them between read_raw and
+    breadth-first topological order once placed them between read_raw and
     combine_raw. That split the chain, and combine_raw then received every
-    file's store instead of its own, which surfaced downstream as
-    extract_standardized_calibration_parameters indexing a list of EchoData
-    with a string.
+    file's store instead of its own. A split anywhere has the same effect on
+    whatever member follows it.
     """
-    from aa_recipe_manager.parallel import group_mapped_chains
-
-    dag = _load_dag(str(recipe), input_values={}, check_versions=False)
+    dag = _dag(recipe)
     chains = {c.member_ids[0]: c.member_ids for c in group_mapped_chains(dag)}
     assert chains["scan_raw_config"] == ["scan_raw_config"]
-    assert chains["read_raw"] == [
-        "read_raw",
-        "combine_raw",
-        "extract_cal_params",
-        "compute_sv",
-        "compute_transducer_depth",
-        "ep_add_depth",
-        "crop_survey_range",
-    ]
+    assert chains["read_raw"] == list(PER_FILE_STEPS[5:]) + list(tail)
 
 
 @requires_data
-@pytest.mark.parametrize(
-    "recipe", [SURVEY_RECIPE, ANALYSIS_RECIPE, FULL_RECIPE, RECIPES / "smoke_test.yaml"]
-)
+@pytest.mark.parametrize("recipe", [SURVEY_RECIPE, FULL_RECIPE, WINDOW_RECIPE])
 def test_transmit_power_tolerance_is_wide_enough_for_leg_one(in_recipe_dir, recipe):
     """HB1603 ran 18/38 kHz at 2000 W on leg 1 and the only .cal is 1000 W.
 
     Without the widened tolerance those two channels match nothing and four of
-    the fourteen dives lose the frequencies the SVCode analysis is built on.
-    1000 W is the smallest tolerance that admits the pair, so a smaller one is
-    the same as none at all.
+    the dives lose the frequencies the SVCode analysis is built on. 1000 W is
+    the smallest tolerance that admits the pair.
     """
-    dag = _load_dag(str(recipe), input_values={}, check_versions=False)
-    tolerances = dag.nodes["build_cal_mapping"].resolved_params["tolerances"]
+    tolerances = _dag(recipe).nodes["build_cal_mapping"].resolved_params["tolerances"]
     assert tolerances["transmit_power"] >= 1000.0

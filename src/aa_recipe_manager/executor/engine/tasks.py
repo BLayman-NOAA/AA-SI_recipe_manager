@@ -455,6 +455,26 @@ def _resumable_members(
     return inside - needed
 
 
+def chain_external_readers(member_ids, dag) -> set[str]:
+    """Chain members whose outputs something outside the chain reads.
+
+    Membership is by DAG edge, plus any member a recipe names in its
+    ``outputs`` block, which is a reader the edges do not show.
+    """
+    inside = set(member_ids)
+    read = {
+        edge.source_step_id
+        for edge in dag.edges
+        if edge.source_step_id in inside and edge.target_step_id not in inside
+    }
+    declared = getattr(dag.recipe, "outputs", None) or {}
+    for output in declared.values():
+        step_id = getattr(output, "step_id", None)
+        if step_id in inside:
+            read.add(step_id)
+    return read
+
+
 def _externally_read_members(
     task: ChainInstanceTask, wctx: WorkerContext
 ) -> set[str]:
@@ -477,18 +497,39 @@ def _externally_read_members(
     :meth:`TaskClosure.heavy_value_ref_steps` already uses in the other
     direction.
     """
+    return chain_external_readers(task.member_ids, wctx.dag)
+
+
+def _empty_upstream(
+    member: Any, task: ChainInstanceTask, wctx: WorkerContext, elem_ctx: _ElementContext
+) -> bool:
+    """True when a data input of this member is an in-chain output of None.
+
+    An op may declare an instance empty by returning None: select_ping_time_range
+    does with allow_empty, for a file the window does not touch. Nothing
+    downstream of it can run on None, so every later member of the chain that
+    reads it is empty for the same instance, and reports None outputs without
+    being invoked. The fan-in at the end drops them.
+
+    Only ``inputs`` count, not ``params``, and only an output that was actually
+    recorded for this instance: a member skipped by _resumable_members has no
+    record, and is not empty.
+    """
     inside = set(task.member_ids)
-    read = {
-        edge.source_step_id
-        for edge in wctx.dag.edges
-        if edge.source_step_id in inside and edge.target_step_id not in inside
-    }
-    declared = getattr(wctx.dag.recipe, "outputs", None) or {}
-    for output in declared.values():
-        step_id = getattr(output, "step_id", None)
-        if step_id in inside:
-            read.add(step_id)
-    return read
+    data_ports = set(member.step.inputs)
+    for edge in wctx.dag.edges:
+        if edge.target_step_id != member.step.id or edge.source_step_id not in inside:
+            continue
+        if edge.target_input not in data_ports or not edge.source_output:
+            continue
+        produced = elem_ctx.own_outputs(edge.source_step_id)
+        if (
+            produced is not None
+            and edge.source_output in produced
+            and produced[edge.source_output] is None
+        ):
+            return True
+    return False
 
 
 def _inline_outputs(
@@ -592,6 +633,22 @@ def _run_chain_members(
                 )
                 continue
 
+            if _empty_upstream(member, task, wctx, elem_ctx):
+                out = {port: None for port in (member.spec.outputs or {})}
+                elem_ctx.record(mid, out)
+                members.append(
+                    MemberResult(
+                        step_id=mid,
+                        disposition="computed",
+                        tier=None,
+                        elapsed=0.0,
+                        artifacts=[],
+                        checkpointed=False,
+                        inline_outputs=out,
+                    )
+                )
+                continue
+
             artifact_paths: list[str] = []
             checkpointed = False
             save_seconds = 0.0
@@ -613,7 +670,9 @@ def _run_chain_members(
                     param_overrides=task.combo,
                 )
 
-                if inst_hash is not None and out:
+                if inst_hash is not None and out and any(
+                    value is not None for value in out.values()
+                ):
                     save_start = time.perf_counter()
                     store.save(
                         mid,

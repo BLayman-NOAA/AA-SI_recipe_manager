@@ -83,6 +83,23 @@ params:
     description: Name of a variable in ds_normalized to draw as a line overlay
     required: false
     default: null
+  overlay_windows:
+    type: list
+    description: >
+      Window dicts (as plan_dive_datasets emits) whose line files are drawn
+      onto the echogram. Each window's lines are read onto its own pings, so
+      every window is a separate segment and windows that overlap in time each
+      keep their own line. Empty draws nothing.
+    required: false
+    default: []
+  overlay_window_keys:
+    type: list
+    description: >
+      Window keys naming the line files to draw. Defaults to the three dive
+      profile keys dive_fit_evl, dive_u99_evl and dive_l99_evl. A window
+      missing a key is skipped for that key.
+    required: false
+    default: []
   cluster_colors:
     type: list
     description: Hex color strings for each cluster label

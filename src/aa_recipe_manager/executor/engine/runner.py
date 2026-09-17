@@ -45,6 +45,7 @@ from aa_recipe_manager.executor.engine.tasks import (
     StepTask,
     TaskClosure,
     ValueRef,
+    chain_external_readers,
 )
 from aa_recipe_manager.executor.invocation import RuntimeContext
 from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
@@ -953,10 +954,29 @@ class PipelineRunner:
         # hit count would put "hit-user-cache" in the provenance record for a
         # step this run neither ran nor loaded.
         member_stats: dict[str, list[int]] = {m: [0, 0, 0] for m in member_ids}
+        # A checkpointed member that nothing outside the chain reads is not
+        # loaded here at all. Its in-chain readers already read it in the
+        # worker, and loading it now only builds a list that eviction replaces
+        # with a lazy ref moments later: on HB1603 that was 3322 sequential
+        # bucket reads of crop_survey_range per analysis window, about half an
+        # hour, for a value nobody looked at. It is recorded as that lazy ref
+        # from the start instead.
+        external = chain_external_readers(member_ids, self._dag)
+        all_checkpointed = {
+            mid: bool(instance_order)
+            and all(by_instance[i][mid].checkpointed for i in instance_order)
+            for mid in member_ids
+        }
+        deferred = {
+            mid for mid in member_ids
+            if mid not in external and all_checkpointed[mid]
+        }
         for inst_index in instance_order:
             for mid in member_ids:
                 member = by_instance[inst_index][mid]
-                member_outputs[mid].append(self._member_outputs(member))
+                member_outputs[mid].append(
+                    {} if mid in deferred else self._member_outputs(member)
+                )
                 if member.disposition == "computed":
                     member_stats[mid][0] += 1
                 elif member.disposition == "skipped":
@@ -969,13 +989,21 @@ class PipelineRunner:
             folded = _fold_instance_outputs(node.spec.outputs, member_outputs[mid])
             self._runtime.record(mid, folded)
             result.outputs[mid] = folded
-            if instance_order and all(
-                by_instance[i][mid].checkpointed for i in instance_order
-            ):
+            if all_checkpointed[mid]:
                 self._durable.add(mid)
-                self._chain_instance_hashes[(unit.unit_id, mid)] = tuple(
+                instance_hashes = tuple(
                     by_instance[i][mid].instance_hash for i in instance_order
                 )
+                self._chain_instance_hashes[(unit.unit_id, mid)] = instance_hashes
+                if mid in deferred:
+                    for out_name in node.spec.outputs or {}:
+                        self._evict(
+                            mid, out_name,
+                            FoldedCheckpointRef(mid, out_name, instance_hashes),
+                        )
+                        if self._eviction is not None:
+                            self._eviction.evicted.add((mid, out_name))
+                    self._chain_instance_hashes.pop((unit.unit_id, mid), None)
             computed, hits, skipped = member_stats[mid]
             if computed:
                 result.executed_steps.append(mid)
