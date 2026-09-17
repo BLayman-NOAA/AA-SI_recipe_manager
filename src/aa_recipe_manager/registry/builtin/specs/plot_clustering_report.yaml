@@ -16,8 +16,15 @@ inputs:
     type: Dataset
     many: true
     description: >
-      Clustering result Dataset from run_hdbscan. Legacy dict results and
-      collected lists are also accepted (many: true).
+      Clustering result Dataset from run_hdbscan or
+      assign_clusters_to_all_points. Legacy dict results and collected lists
+      are also accepted (many: true). Optional: every panel but the HDBSCAN
+      hierarchy reads the labels embed_clustering_results stored in
+      ds_normalized, so a report can be drawn from that checkpointed dataset
+      alone and the fit never has to be rerun for it. Leave it out to do that;
+      the hierarchy panel is then skipped.
+    required: false
+    default: null
   clustering_model:
     type: object
     description: >
@@ -100,6 +107,15 @@ params:
       missing a key is skipped for that key.
     required: false
     default: []
+  normalization_name:
+    type: str
+    description: >
+      Normalized feature set to plot statistics for when
+      cluster_stats_sv_data_var is "ml_features" and no clustering_results
+      input is wired. Ignored otherwise; with a result wired, its own
+      normalization_name is used.
+    required: false
+    default: null
   cluster_colors:
     type: list
     description: Hex color strings for each cluster label

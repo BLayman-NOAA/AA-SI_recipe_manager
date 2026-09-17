@@ -25,7 +25,10 @@ description: >
   clustering_results Dataset does not carry one: converting a result for Zarr
   drops the model and records only model_type and model_available. The
   clustering_model port is a plain object, so it falls back to pickle format,
-  which the tiered store refuses to write to the shared survey tier. Keep this
+  which the tiered store refuses to write to the shared survey tier. To
+  checkpoint this step without pickle, set keep_model: false: the model port
+  is then null, every output is Zarr or JSON, and a downstream
+  plot_clustering_report simply skips the hierarchy panel. Otherwise keep this
   step adjacent to the run_hdbscan that feeds it, in the user tier, or set
   checkpoint: never and let it recompute.
 category: ml_clustering
@@ -97,6 +100,15 @@ params:
       change the labels.
     required: false
     default: 200000
+  keep_model:
+    type: bool
+    description: >
+      Pass the fitted model through on the clustering_model output. Set false
+      when this step is checkpointed and pickle is unwanted; the model is only
+      used by the hierarchy panel of plot_clustering_report, which is skipped
+      when no model reaches it.
+    required: false
+    default: true
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.assign_clusters_by_prediction
