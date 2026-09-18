@@ -80,6 +80,21 @@ params:
       be datetime-valued either way, which the cell grid's left edges are.
     required: false
     default: "ping_time"
+  windows:
+    type: list
+    description: >
+      Several window dicts at once, each with ``start`` and ``end`` as the
+      single ``window`` form takes. Keeps every ping inside at least one of
+      them, in time order, each ping once even where windows overlap.
+
+      This is how a step mapped over the survey's per-file Sv pulls a whole
+      set of dive windows out of each file in one pass: the instance sees one
+      file and cannot loop over the list itself. Wire it straight from the
+      planner, ``windows: ${plan_dives.windows}``, and pair it with
+      ``allow_empty: true`` so the files no window touches drop out at the
+      fan-in. Mutually exclusive with ``window`` and ``start``/``end``.
+    required: false
+    default: []
   allow_empty:
     type: bool
     description: >
@@ -109,6 +124,7 @@ implementations:
       start: start
       end: end
       window: window
+      windows: windows
       allow_empty: allow_empty
       dim: dim
     output_map:

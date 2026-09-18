@@ -107,6 +107,24 @@ params:
       missing a key is skipped for that key.
     required: false
     default: []
+  overlay_fit_style:
+    type: dict
+    description: >
+      Matplotlib line keywords for the fitted dive profile drawn by
+      overlay_windows, for example {color: "#23FFFF", linewidth: 3.0}. Merged
+      over the built-in style, so naming only one key leaves the rest alone.
+      Empty uses the built-in style: solid cyan.
+    required: false
+    default: {}
+  overlay_bound_style:
+    type: dict
+    description: >
+      The same for both 99% confidence bound lines, for example
+      {color: "#D08BFF", linestyle: ":"}. Empty uses the built-in style:
+      dotted violet, thinner than the fitted profile. Both bounds always share
+      one style, since they are two edges of one interval.
+    required: false
+    default: {}
   normalization_name:
     type: str
     description: >
