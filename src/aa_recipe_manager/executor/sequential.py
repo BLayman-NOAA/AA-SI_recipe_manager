@@ -7,6 +7,7 @@ from __future__ import annotations
 import gc
 import io
 import json
+import logging
 import os
 import time
 import warnings
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
         PipelineDAG,
     )
 
+
+logger = logging.getLogger(__name__)
 
 LOGS_DIR = "logs"
 STANDARD_OUT_FILENAME = "standard_out.txt"
@@ -75,6 +78,33 @@ class _Tee:
 
 _TEMP_DIR_CLEANUP_RETRIES = 5
 _TEMP_DIR_CLEANUP_BASE_DELAY = 0.25
+
+
+def _with_cached_raw_list_sources(
+    dag: PipelineDAG,
+    outputs: dict[str, dict[str, Any]],
+    checkpoints: Any,
+) -> dict[str, dict[str, Any]]:
+    """Outputs plus the checkpointed raw-list source steps a cached run pruned.
+
+    A fully cached run never loads the step that produced the file list, so its
+    outputs hold nothing to harvest. Loading is best effort: provenance capture
+    must not fail a run that has already finished.
+    """
+    from aa_recipe_manager.provenance.recorder import raw_list_source_step_ids
+
+    if checkpoints is None:
+        return outputs
+    merged = dict(outputs)
+    for step_id in raw_list_source_step_ids(dag):
+        if step_id in merged:
+            continue
+        try:
+            if checkpoints.has_checkpoint(step_id):
+                merged[step_id] = checkpoints.load(step_id)
+        except Exception:
+            logger.debug("could not load %s for raw input provenance", step_id, exc_info=True)
+    return merged
 
 
 def _is_transient_windows_lock(exc: OSError) -> bool:
@@ -291,7 +321,7 @@ class SequentialExecutor:
         if raw_record is None:
             raw_record = build_raw_inputs_record(
                 dag,
-                result.outputs,
+                _with_cached_raw_list_sources(dag, result.outputs, checkpoints),
                 pipeline_inputs,
                 storage_options,
                 run_id=run_id,

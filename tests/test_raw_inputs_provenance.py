@@ -335,3 +335,128 @@ def test_executor_run_records_and_stamps_raw_inputs(tmp_path):
     ]
     consume_meta = next(m for m in stamped if m["step_id"] == "consume")
     assert consume_meta["raw_inputs"]["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Mapped readers: the file list is the map source, not the item placeholder
+# ---------------------------------------------------------------------------
+
+
+def _mapped_reader_dag() -> PipelineDAG:
+    """A catalogue step, then a reader mapped over its list one file at a time."""
+    catalogue = DAGNode(
+        step=Step(id="catalogue", op="catalogue"),
+        spec=Spec(
+            op="catalogue", description="", outputs={"raw_urls": PortDeclaration(type="list")}
+        ),
+    )
+    reader = DAGNode(
+        step=Step(
+            id="read_raw",
+            op="reader",
+            map_over="${catalogue.raw_urls}",
+            inputs={"raw_file_paths": ["${_item}"]},
+        ),
+        spec=Spec(
+            op="reader",
+            description="",
+            inputs={
+                "raw_file_paths": PortDeclaration(
+                    type="list", provenance_role="raw_file_list"
+                )
+            },
+        ),
+    )
+    recipe = Recipe(
+        name="r", version="1", schema_version="1", steps=[catalogue.step, reader.step]
+    )
+    return PipelineDAG(
+        recipe=recipe,
+        nodes={"catalogue": catalogue, "read_raw": reader},
+        edges=[],
+        topological_order=["catalogue", "read_raw"],
+    )
+
+
+def test_mapped_reader_records_the_map_source(tmp_path):
+    paths = _write_raw_files(tmp_path)
+
+    record = build_raw_inputs_record(
+        _mapped_reader_dag(), {"catalogue": {"raw_urls": paths}}, {}, run_id="run-1"
+    )
+
+    assert record is not None
+    assert [(f.name, f.size) for f in record.files] == [("a.raw", 5), ("b.raw", 2)]
+    assert record.producing_step == "read_raw.raw_file_paths"
+
+
+def test_mapped_reader_with_a_pruned_source_records_nothing():
+    """No list to harvest is reported as no record, never as the placeholder."""
+    assert build_raw_inputs_record(_mapped_reader_dag(), {}, {}, run_id="run-1") is None
+
+
+def test_a_list_still_holding_a_reference_is_not_a_file_list(tmp_path):
+    dag = _reader_output_dag()
+    outputs = {"reader": {"raw_file_paths": ["${_item}"]}}
+    assert build_raw_inputs_record(dag, outputs, {}, run_id="run-1") is None
+
+
+def test_raw_list_source_step_ids_follows_map_over():
+    from aa_recipe_manager.provenance.recorder import raw_list_source_step_ids
+
+    assert raw_list_source_step_ids(_mapped_reader_dag()) == ("catalogue",)
+    assert raw_list_source_step_ids(_reader_output_dag()) == ()
+
+
+def test_a_placeholder_record_is_not_inherited():
+    """Sidecars written before the fix name one file called ${_item}."""
+    hashes = {"read_raw": "hash-reader", "later": "hash-later"}
+    poisoned = {
+        "files": [{"name": "${_item}", "size": None}],
+        "count": 1,
+        "digest": "a381",
+        "source": "resolved",
+        "producing_step": "read_raw.raw_file_paths",
+        "origin_run_id": "old-run",
+    }
+    good = {
+        "files": [{"name": "a.raw", "size": 5}],
+        "count": 1,
+        "digest": "d",
+        "source": "resolved",
+        "producing_step": "read_raw.raw_file_paths",
+        "origin_run_id": "old-run",
+    }
+    store = TieredCheckpointStore(
+        user=CheckpointManager(
+            USER_ROOT, hashes, preferred_format="json", run_id="new-run"
+        ),
+        write_tier="user",
+    )
+    store.save("read_raw", {"out": 1}, raw_inputs=poisoned)
+    assert store.recovered_raw_inputs(("read_raw",)) is None
+
+    store.save("later", {"out": 1}, raw_inputs=good)
+    recovered = store.recovered_raw_inputs(("read_raw",))
+    assert recovered is not None and recovered["files"] == good["files"]
+
+
+def test_cached_run_loads_the_pruned_source_step(tmp_path):
+    from aa_recipe_manager.executor.sequential import _with_cached_raw_list_sources
+
+    paths = _write_raw_files(tmp_path)
+    hashes = {"catalogue": "hash-catalogue"}
+    store = TieredCheckpointStore(
+        user=CheckpointManager(
+            USER_ROOT, hashes, preferred_format="json", run_id="run-1"
+        ),
+        write_tier="user",
+    )
+    store.save("catalogue", {"raw_urls": paths})
+    dag = _mapped_reader_dag()
+
+    outputs = _with_cached_raw_list_sources(dag, {}, store)
+    record = build_raw_inputs_record(dag, outputs, {}, run_id="run-2")
+
+    assert record is not None and record.count == 2
+    assert _with_cached_raw_list_sources(dag, {}, None) == {}

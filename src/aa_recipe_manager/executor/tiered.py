@@ -177,6 +177,8 @@ class TieredCheckpointStore:
         another run reads as ``inherited`` (preserving the *original* resolving
         run across chained extensions).
         """
+        from aa_recipe_manager.provenance.recorder import raw_inputs_record_is_resolved
+
         seen = set(preferred_step_ids)
         order = [sid for sid in preferred_step_ids if sid in self._hit_tier]
         order += sorted(sid for sid in self._hit_tier if sid not in seen)
@@ -185,7 +187,7 @@ class TieredCheckpointStore:
             if tier is None:
                 continue
             meta = self._managers[tier].read_meta(step_id)
-            if meta is None or not meta.raw_inputs:
+            if meta is None or not raw_inputs_record_is_resolved(meta.raw_inputs):
                 continue
             record = dict(meta.raw_inputs)
             origin = record.get("origin_run_id") or meta.run_id

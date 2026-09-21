@@ -95,6 +95,21 @@ params:
       fan-in. Mutually exclusive with ``window`` and ``start``/``end``.
     required: false
     default: []
+  snap_to_bin:
+    type: str
+    description: >
+      Bin width such as "10s". Widens every window outward to whole bins of
+      that width before selecting: the start moves back to its bin's left edge
+      and the end forward to the last instant of its bin.
+
+      Set it to the downstream ping_time_bin when this selection feeds
+      compute_mvbs. A window cut at its exact bounds leaves the first and last
+      bins averaged over only part of their pings, and a window that ends just
+      inside a bin can leave that bin with no ping at all, so the grid comes
+      out one bin short. A later selection on the binned grid still trims to
+      the true window.
+    required: false
+    default: null
   allow_empty:
     type: bool
     description: >

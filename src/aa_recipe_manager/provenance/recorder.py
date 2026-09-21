@@ -31,6 +31,10 @@ RAW_FILE_LIST_ROLE = "raw_file_list"
 #: Recipe pipeline-input reference, e.g. ``${inputs.raw_folder}``.
 _PIPELINE_INPUT_REF = re.compile(r"^\$\{inputs\.([^}]+)\}$")
 
+#: Per-instance token of a mapped step. Its value exists only inside an
+#: instance, so wiring that mentions it cannot be read off the declared step.
+_ITEM_TOKEN = "${_item}"
+
 
 def _installed_version(package_name: str) -> str:
     try:
@@ -110,10 +114,16 @@ def _resolve_tagged_input_value(
     ``${inputs.name}`` reference into ``pipeline_inputs``; a literal value is
     returned as-is. Lets a recipe that reads raw files directly (no reader step
     that materializes the list as an output) still be harvested.
+
+    A mapped reader wires the port to ``${_item}``, one file per instance. The
+    list the run read is then the step's ``map_over`` source, so that is what
+    gets resolved.
     """
     from aa_recipe_manager.resolver.params import parse_ref
 
     wiring = node.step.inputs.get(port)
+    if _mentions_item(wiring):
+        wiring = getattr(node.step, "map_over", None)
     ref = parse_ref(wiring)
     if ref is not None:
         src_step, src_out = ref
@@ -125,8 +135,55 @@ def _resolve_tagged_input_value(
     return wiring
 
 
+def _mentions_item(wiring: Any) -> bool:
+    if isinstance(wiring, str):
+        return _ITEM_TOKEN in wiring
+    if isinstance(wiring, (list, tuple)):
+        return any(_mentions_item(entry) for entry in wiring)
+    return False
+
+
 def _is_raw_list(value: Any) -> bool:
-    return isinstance(value, (list, tuple)) and len(value) > 0
+    """A non-empty list of resolved paths, with no recipe reference left in it."""
+    if not isinstance(value, (list, tuple)) or len(value) == 0:
+        return False
+    return all(isinstance(entry, (str, Path)) and "${" not in str(entry) for entry in value)
+
+
+def raw_inputs_record_is_resolved(record: dict[str, Any] | None) -> bool:
+    """Whether a stored raw-inputs record names real files.
+
+    Records written before mapped readers were handled hold the literal
+    ``${_item}`` as their one file name. Those are refused on recovery so they
+    stop being inherited, and the list is harvested again instead.
+    """
+    if not record:
+        return False
+    files = record.get("files") or []
+    return bool(files) and all("${" not in str(entry.get("name", "")) for entry in files)
+
+
+def raw_list_source_step_ids(dag: PipelineDAG) -> tuple[str, ...]:
+    """Steps whose output a tagged raw-file-list input is resolved from.
+
+    These are the steps a fully cached run has to load to rebuild the record,
+    since a pruned step leaves nothing in the run's outputs.
+    """
+    from aa_recipe_manager.resolver.params import parse_ref
+
+    ids: list[str] = []
+    for step_id in dag.topological_order:
+        node = dag.nodes[step_id]
+        for in_port, decl in (node.spec.inputs or {}).items():
+            if getattr(decl, "provenance_role", None) != RAW_FILE_LIST_ROLE:
+                continue
+            wiring = node.step.inputs.get(in_port)
+            if _mentions_item(wiring):
+                wiring = getattr(node.step, "map_over", None)
+            ref = parse_ref(wiring)
+            if ref is not None and ref[0] not in ids:
+                ids.append(ref[0])
+    return tuple(ids)
 
 
 def build_raw_inputs_record(
