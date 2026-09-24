@@ -252,13 +252,20 @@ class DryRunEngine:
     def _build_mermaid(self, dag: PipelineDAG) -> str:
         """Build a Mermaid graph TD string from the DAG.
 
-        Mapped / swept / collector nodes are tagged, and the synthetic
-        ``map_over`` / ``collect`` fan-out edges are drawn dotted so the
-        parallelism is visible in ``dry-run --visualize``.
+        Solid arrows are data: an output, or a param reference, feeding an
+        input. Each mapped chain is drawn as one box, entered by a single
+        dotted ``map_over`` arrow from the list it fans out over, and the
+        members that read the item itself get a solid ``(item)`` arrow. A
+        collector is entered by one dotted ``collect`` arrow. Membership in a
+        chain is therefore shown by the box, not by an arrow per member.
         """
-        lines = ["graph TD"]
+        from aa_recipe_manager.parallel import group_mapped_chains
 
-        for step_id, node in dag.nodes.items():
+        chains = [c for c in group_mapped_chains(dag) if c.member_ids]
+        chain_of = {m: i for i, c in enumerate(chains) for m in c.member_ids}
+
+        def declare(step_id: str, indent: str = "    ") -> str:
+            node = dag.nodes[step_id]
             tags = []
             if node.is_mapped:
                 tags.append("map")
@@ -267,28 +274,77 @@ class DryRunEngine:
             if node.is_collector:
                 tags.append("collect")
             suffix = f"\\n[{' + '.join(tags)}]" if tags else ""
-            label = f"{step_id}\\n({node.spec.op}){suffix}"
-            lines.append(f'    {step_id}["{label}"]')
+            return f'{indent}{step_id}["{step_id}\\n({node.spec.op}){suffix}"]'
 
+        lines = ["graph TD"]
+        drawn_chains: set[int] = set()
+        for step_id in dag.nodes:
+            index = chain_of.get(step_id)
+            if index is None:
+                lines.append(declare(step_id))
+                continue
+            if index in drawn_chains:
+                continue
+            drawn_chains.add(index)
+            chain = chains[index]
+            if chain.source_ref:
+                title = f"map_over: {_ref_text(chain.source_ref)}, one instance per item"
+            else:
+                title = "sweep, one instance per parameter set"
+            lines.append(f'    subgraph chain_{index} ["{title}"]')
+            lines.extend(declare(m, "        ") for m in chain.member_ids)
+            lines.append("    end")
+
+        # A collector names the same value twice, as ``collect:`` and as an
+        # input; one dotted arrow stands for both.
+        collected = {
+            (e.source_step_id, e.source_output, e.target_step_id)
+            for e in dag.edges
+            if e.target_input == "__collect__"
+        }
+        fanned_out: set[int] = set()
         for edge in dag.edges:
-            src = edge.source_step_id
-            tgt = edge.target_step_id
-            output = edge.source_output
-            # Synthetic fan-out edges (see dag_builder ``_MAP_OVER_TARGET`` /
-            # ``_COLLECT_TARGET``) are rendered dotted and labeled by directive.
-            if edge.target_input in ("__map_over__", "__collect__"):
-                kind = (
-                    "map_over"
-                    if edge.target_input == "__map_over__"
-                    else "collect"
-                )
-                lines.append(f'    {src} -. "{kind}: {output}" .-> {tgt}')
+            src, tgt, output = edge.source_step_id, edge.target_step_id, edge.source_output
+            if edge.target_input == "__map_over__":
+                index = chain_of.get(tgt)
+                if index is None or index in fanned_out:
+                    continue
+                fanned_out.add(index)
+                lines.append(f'    {src} -. "map_over: {output}" .-> chain_{index}')
+            elif edge.target_input == "__collect__":
+                lines.append(f'    {src} -. "collect: {output}" .-> {tgt}')
+            elif (src, output, tgt) in collected:
+                continue
             elif output:
                 lines.append(f'    {src} -->|"{output}"| {tgt}')
             else:
                 lines.append(f"    {src} --> {tgt}")
 
+        for index, chain in enumerate(chains):
+            if not chain.source_ref:
+                continue
+            src, output = _ref_text(chain.source_ref).split(".", 1)
+            for member in chain.member_ids:
+                step = dag.nodes[member].step
+                if _uses_item(step.inputs) or _uses_item(step.params):
+                    lines.append(f'    {src} -->|"{output} (item)"| {member}')
         return "\n".join(lines)
+
+
+def _ref_text(ref: str) -> str:
+    """``${step.output}`` as ``step.output``."""
+    return ref.strip()[2:-1] if ref.strip().startswith("${") else ref.strip()
+
+
+def _uses_item(value: Any) -> bool:
+    """True when a wiring value reads the mapped item anywhere inside it."""
+    if isinstance(value, str):
+        return "${_item}" in value
+    if isinstance(value, dict):
+        return any(_uses_item(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_uses_item(v) for v in value)
+    return False
 
 
 __all__ = ["DryRunEngine", "DryRunReport", "DryRunStepInfo"]

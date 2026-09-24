@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: phase_detect_seafloor op
+
+- `phase_detect_seafloor`: seafloor detection with the phase-aware
+  dynamic-programming picker in `aa_si_utils.seabed`. Drop-in swap with
+  `detect_seafloor`, `ep_detect_seafloor`, `read_seafloor_line` and
+  `hdbscan_detect_seafloor`: same `seafloor_depth` output port and shape,
+  so `create_seafloor_mask` is unchanged. Reads split-beam angles off
+  `ds_Sv` when `ep_add_splitbeam_angle` ran upstream and runs amplitude-only
+  with a warning otherwise; takes an optional `z_prior` line to bound the
+  search window. Returns the seabed echo's leading edge, so the dead-zone
+  offset belongs in `seafloor_buffer_m`. Pings with no candidate are bridged
+  and interpolated up to `max_gap_s`; longer gaps stay NaN and are masked
+  entirely, as with `read_seafloor_line`. Backed by
+  `aa_si_utils.seabed.detect_seafloor_phase`.
+  `mode: 2` adds the local shape features for surveys where a school sits
+  on the bottom. With no `r_min` / `r_max` / `z_prior` the op runs the Mode
+  0 slab estimator first and uses it as the search window, so a recipe needs
+  no .bot or .evl input to mask the seabed. `examples/HB1603/sub_recipes/processing_lvl_2_phase.yaml`
+  shows the swap with `ep_add_splitbeam_angle` enabled, and
+  `examples/HB1603/processing_levels_pipeline_phase.yaml` runs the whole
+  HB1603 pipeline with it.
+
 ### Added: the calibration pipeline as four separately cached steps
 
 `generate_standardized_cal_mapping` did four jobs in one step, so it was one

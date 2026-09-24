@@ -1,0 +1,145 @@
+# Processing Level 2 - Sv Computation and Noise Removal, phase-aware seabed
+#
+# processing_lvl_2.yaml with the seafloor step swapped from the .bot pick to
+# phase_detect_seafloor, the dynamic-programming line picker that scores Sv
+# and split-beam phase stability. Everything downstream of detect_seafloor is
+# unchanged. Swap it in from processing_levels_pipeline.yaml by pointing the
+# level 2 include at this file.
+#
+# ep_add_splitbeam_angle is enabled here because the detector reads
+# angle_alongship / angle_athwartship off ds_Sv; without them it falls back to
+# amplitude-only with a warning. create_seafloor_mask and apply_mask read the
+# split-beam dataset so the line, the mask and the masked Sv share one
+# surface-referenced depth axis (see the header of processing_lvl_2.yaml).
+#
+# The detector returns the seabed echo's leading edge, so the dead-zone
+# offset belongs in seafloor_buffer_m. No search window or .bot line is
+# given: the op first estimates the seabed from a few dozen slabs of pings
+# across the whole recorded range and searches only around that estimate,
+# so the same step works on any depth without survey-specific bounds.
+# Set r_min / r_max, or wire z_prior, only to override that.
+
+recipe:
+  name: "processing_lvl_2_phase"
+  description: "Compute Sv, detect the seabed with the phase-aware DP picker, build masks, and remove noise."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  echodata:
+    type: echodata
+    description: "Combined EchoData object from the raw ingest stage."
+  cal_params:
+    type: dict
+    description: "Calibration parameters extracted from the standardized mapping."
+  env_params:
+    type: dict
+    description: "Environmental parameters extracted from the standardized mapping."
+  noise_chunk_ping_time:
+    type: int
+    default: 1000
+    description: >
+      Ping-time chunk size to apply before remove_noise, so it can run in dask-parallel chunks instead of one
+      in-memory block.
+
+steps:
+
+  - id: compute_sv
+    op: compute_sv
+    checkpoint: always
+    inputs:
+      echodata: ${inputs.echodata}
+      cal_params: ${inputs.cal_params}
+      env_params: ${inputs.env_params}
+
+  - id: ep_add_depth
+    op: ep_add_depth
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      use_platform_vertical_offsets: true
+
+  - id: ep_add_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${inputs.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  - id: detect_seafloor
+    op: phase_detect_seafloor
+    checkpoint: save
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+    params:
+      channel: "38"
+      max_slope_deg: 30.0
+      max_gap_s: 30.0
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    inputs:
+      # Must be the same depth-carrying dataset detect_seafloor read.
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
+    params:
+      seafloor_buffer_m: 10
+
+  - id: create_surface_mask
+    op: create_surface_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      surface_depth_m: 10.0
+
+  - id: create_frequency_mask
+    op: create_frequency_mask
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      frequencies_to_mask: [70, 120, 200]
+
+  - id: combine_masks
+    op: combine_masks
+    inputs:
+      masks:
+        - ${create_seafloor_mask.mask}
+        - ${create_surface_mask.mask}
+        - ${create_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: apply_mask
+    op: apply_sv_mask
+    inputs:
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      mask: ${combine_masks.mask}
+
+  - id: crop_range
+    op: crop_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${apply_mask.ds_Sv}
+    params:
+      drop_trailing_all_nan: true
+
+  - id: rechunk_before_noise
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${crop_range.ds_Sv}
+    params:
+      ping_time_chunk: ${inputs.noise_chunk_ping_time}
+
+  - id: remove_noise
+    op: remove_background_noise
+    checkpoint: always
+    inputs:
+      ds_Sv: ${rechunk_before_noise.ds_Sv}
+    params:
+      range_sample_num: 10
+      ping_num: 5

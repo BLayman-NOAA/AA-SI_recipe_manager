@@ -1,0 +1,303 @@
+op: phase_detect_seafloor
+cache_key: phase_detect_seafloor  # pinned cache identity - keep stable across op renames
+description: >
+  Detect the seafloor with a phase-aware dynamic-programming line picker and
+  return a 1-D (ping_time,) DataArray of the seabed echo's leading edge in
+  metres. On the primary channel the detector finds phase-stable, loud seed
+  regions, scores every sample inside a search window on Sv, local phase
+  stability, echo asymmetry, SNR and the leading-edge energy gradient
+  (Mode 1 of the v4 design; ``mode: 2`` adds the below-versus-above Sv
+  contrast, below-region stationarity and below-region phase activity, for
+  when dense near-bottom aggregations are confused with the seabed), then
+  runs a Viterbi pass over the top score
+  maxima per ping with a Huber transition whose break-point scales with the
+  distance the vessel travelled between pings. The pick is walked back to
+  the -10 dB point of the echo. A forward-backward pass gives a confidence
+  and margin per ping.
+
+  Drop-in swap with the ``detect_seafloor``, ``ep_detect_seafloor``,
+  ``read_seafloor_line`` and ``hdbscan_detect_seafloor`` ops: the output
+  port name (``seafloor_depth``) and shape (1-D, ping_time) match, so
+  ``create_seafloor_mask`` works unchanged. By default the line is the
+  leading edge, not an integration line; put the dead-zone offset in
+  ``create_seafloor_mask``'s ``seafloor_buffer_m``. ``line: integration``
+  returns the Ona-Mitson backstepped line with the slope correction
+  instead, which on the HB1603 canyon walls clears the up-slope echo that
+  a 10 m buffer above the leading edge left in the 18 kHz channel. Every
+  intermediate is available through ``diagnostics_path``.
+
+  The op is self-contained: with no window or prior given it first runs a
+  fast slab estimator (Mode 0b) over the whole recorded range, which
+  averages a few dozen slabs of pings, scores them and joins them with the
+  same line search, adding slabs where the seabed moves; its line and
+  uncertainty become the per-ping search window for the full detector.
+  ``r_min`` / ``r_max`` bound that search and ``z_prior`` replaces it.
+
+  Split-beam angles come from ``ds_Sv`` when ``ep_add_splitbeam_angle`` ran
+  upstream. Without them the detector runs amplitude-only with a warning:
+  seeds are picked on Sv and extent alone, so a dense aggregation can be
+  taken for the seabed. Pings where no candidate clears ``min_score`` are
+  bridged by the line search and interpolated up to ``max_gap_s``; longer
+  runs and the ends of the file stay NaN, which ``create_seafloor_mask``
+  masks entirely. Aliased-seabed detection is off by default: it is
+  single-channel only and on HB1603 the water-column angle noise alone
+  tripped it and the mask covered the true seabed.
+
+  Measured 2026-09-24 on one file each: HB1603 38 kHz at 1750 m (EK60, 8 s
+  pinging) followed the seabed through a 100 m step with a median 8 m
+  offset above the .bot line, which itself sits below the Sv rise; HB2407
+  18 kHz at 57 m (EK80) sat 2 m below the Echoview line with no gross
+  errors. Both take a few seconds per file after Sv is computed.
+category: detection
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: >
+      Calibrated Sv dataset with ``echo_range`` and the ``tau_effective``,
+      ``sound_speed`` and beamwidth variables that ``compute_sv`` attaches.
+      Pass the ``ep_add_depth`` (or better, ``ep_add_splitbeam_angle``)
+      dataset so the line is surface-referenced and the phase features are
+      available; without ``depth`` the line is referenced to the
+      transducer, matching ``echo_range``.
+  echodata:
+    type: EchoData
+    description: >
+      Accepted for interface parity with the other seafloor detection ops;
+      not read.
+    required: false
+  z_prior:
+    type: DataArray
+    description: >
+      Optional expected seabed depth per ping, for example another
+      detector's ``seafloor_depth`` or a survey line, on any ping grid. It
+      sets the per-ping search window to z_prior +/- 3 sigma_prior_m and
+      overrides r_min / r_max where they conflict.
+    required: false
+outputs:
+  seafloor_depth:
+    type: DataArray
+    description: >
+      Seabed leading edge in metres, shape (ping_time,), on ds_Sv's exact
+      ping_time coordinate. Attributes record the vertical reference, the
+      primary channel, the regime preset, ping coverage and the number of
+      flagged and interpolated pings.
+params:
+  channel:
+    type: str
+    description: >
+      Primary channel as its label, or its frequency in Hz or kHz given as
+      a string (e.g. "38"). Null picks the lowest frequency channel whose
+      seeds span at least a fifth of the pings, falling back to the lowest
+      frequency with a warning.
+    required: false
+    default: null
+  r_min:
+    type: float
+    units: m
+    description: >
+      Lower bound of the search window on the dataset's range reference.
+      Default 10 m past the first sample, which skips the transmit pulse.
+    required: false
+    default: null
+  r_max:
+    type: float
+    units: m
+    description: >
+      Upper bound of the search window. Default the end of the channel's
+      range. Set both bounds on deep surveys: the crop they define is what
+      keeps a 15000-sample ping affordable.
+    required: false
+    default: null
+  sigma_prior_m:
+    type: float
+    units: m
+    description: >
+      Uncertainty of z_prior; default 2 % of z_prior. Ignored without it.
+    required: false
+    default: null
+  regime:
+    type: str
+    description: >
+      Depth regime preset: "shelf" (< 200 m), "slope" (200 to 1000 m),
+      "deep" (> 1000 m) or "auto" from the search window midpoint. Sets
+      the SNR reference, the seed Sv floor and the Mode 2 shape window.
+    required: false
+    default: "auto"
+  mode:
+    type: int
+    description: >
+      Scoring mode. 1 scores the six point features; 2 adds the three
+      local shape features (Stage 3b), which cost a little more and help
+      where a school sits on the bottom. Both are deterministic.
+    required: false
+    default: 1
+  line:
+    type: str
+    description: >
+      "leading_edge" (default) or "integration": which line to return on
+      the seafloor_depth port. See the description.
+    required: false
+    default: "leading_edge"
+  prior:
+    type: str
+    description: >
+      "auto" (default) runs the Mode 0 slab estimator when no z_prior is
+      given and uses it as the search window; "none" searches only the
+      fixed r_min / r_max window.
+    required: false
+    default: "auto"
+  missing:
+    type: str
+    description: >
+      What a ping with no seabed found gets after gap filling. "nan" (default)
+      leaves it NaN and create_seafloor_mask masks the ping entirely, which an
+      analysis wants. "max_range" sets it to the last recorded range so the
+      ping is kept whole, which a survey picture wants where the seabed is
+      sometimes below the recording. ping_coverage still counts detections.
+    required: false
+    default: "nan"
+  prior_budget:
+    type: int
+    description: >
+      Slab budget for the Mode 0 estimator. Each slab reads a few pings
+      across the range; on a zarr store chunked along ping_time a slab
+      costs one chunk read.
+    required: false
+    default: 64
+  n_candidates:
+    type: int
+    description: Score maxima kept per ping for the line search.
+    required: false
+    default: 5
+  max_slope_deg:
+    type: float
+    units: deg
+    description: >
+      Maximum plausible seabed slope. With the distance travelled between
+      pings it sets the depth change the transition cost treats as
+      ordinary; larger jumps are tolerated at linear cost. Use 45 on rocky
+      or canyon terrain.
+    required: false
+    default: 30.0
+  alpha:
+    type: float
+    description: Transition strength multiplier in [0.5, 2].
+    required: false
+    default: 1.0
+  beta_fraction:
+    type: float
+    description: >
+      Shallow-first tie-break prior as a fraction of the candidate score
+      spread; 0 disables it. Targets ghost bottoms and the echo tail.
+    required: false
+    default: 0.1
+  min_score:
+    type: float
+    description: >
+      Candidates below this score are dropped; a ping with none is skipped
+      and bridged. Scores are sums of tanh terms, so 0 means neutral.
+    required: false
+    default: 0.0
+  walkback_db:
+    type: float
+    units: dB
+    description: Drop below the echo peak that marks the leading edge.
+    required: false
+    default: 10.0
+  effective_beamwidth_deg:
+    type: float
+    units: deg
+    description: >
+      Effective beamwidth for the backstepped integration line in the
+      diagnostics; default nominal times 12/7 (the ES38B ratio).
+    required: false
+    default: null
+  vessel_speed_m_s:
+    type: float
+    units: m/s
+    description: >
+      Speed used for along-track distance when ds_Sv carries no latitude
+      and longitude. Without either, the break-point falls to one pulse
+      length per ping, which suits a station but over-smooths a transect.
+    required: false
+    default: null
+  min_confidence:
+    type: float
+    description: Pings whose posterior confidence is below this are flagged.
+    required: false
+    default: 0.8
+  phase_weight:
+    type: float
+    description: >
+      Weight of the two phase features. Raise to 1.5 where fish
+      aggregations are the main confuser.
+    required: false
+    default: 1.0
+  max_gap_s:
+    type: float
+    units: s
+    description: >
+      Interior runs of skipped pings up to this long are interpolated;
+      longer runs stay NaN. Null interpolates nothing.
+    required: false
+    default: 30.0
+  transition:
+    type: str
+    description: '"huber" or "truncated" (quadratic capped at the break-point, for cliffs).'
+    required: false
+    default: "huber"
+  pulse_length_s:
+    type: float
+    units: s
+    description: Pulse duration when ds_Sv has no tau_effective.
+    required: false
+    default: null
+  beamwidth_deg:
+    type: float
+    units: deg
+    description: Nominal beamwidth when ds_Sv has none.
+    required: false
+    default: null
+  detect_aliases:
+    type: bool
+    description: >
+      Run the single-channel Blackwell aliased-seabed detector and exclude
+      its mask. See the description before enabling it.
+    required: false
+    default: false
+  phase_threshold_deg2:
+    type: float
+    units: deg2
+    description: >
+      Seed phase-stability threshold on the summed angle variance within
+      one pulse length; default (beamwidth / 2)^2.
+    required: false
+    default: null
+  confidence_tolerance_pulses:
+    type: float
+    description: >
+      Alternatives within this many pulse lengths of the pick (plus the
+      beam-geometry spread, or inside the same loud run) count as the same
+      pick when computing confidence and margin.
+    required: false
+    default: 2.0
+  diagnostics_path:
+    type: str
+    description: >
+      Optional zarr path for the full diagnostics: masks, features, score,
+      candidates, raw pick, leading edge, backstepped integration line,
+      confidence, margin and flags on the cropped grid. Local runs only;
+      the path is written as given.
+    required: false
+    default: null
+implementations:
+  - key: default
+    callable_path: aa_si_utils.seabed.detect_seafloor_phase
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      seafloor_depth: __return__

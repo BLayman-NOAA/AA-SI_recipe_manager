@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "cal_files": [
+    [
+      "HBB_018kHz_18July2016.cal",
+      34326
+    ],
+    [
+      "HBB_038kHz_18July2016.cal",
+      35811
+    ],
+    [
+      "HBB_070kHz_18July2016.cal",
+      34468
+    ],
+    [
+      "HBB_120kHz_18July2016.cal",
+      33617
+    ],
+    [
+      "HBB_200kHz_18July2016.cal",
+      32765
+    ]
+  ],
+  "short_filenames": true
+}

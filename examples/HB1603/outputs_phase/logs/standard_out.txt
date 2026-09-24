@@ -1,0 +1,620 @@
+executor: inline (max 1 concurrent task(s))
+
+=== step query_ncei (1/32) ===
+Querying NCEI WCSD archive...
+  Filename-time filter: 183 -> 9 results (2016-07-25 20:58:00 to 2016-07-25 23:45:00)
+Query returned 9 result(s). Label: HB1603_2016-07-25_2058-2345
+  D20160725-T203535.tar
+  D20160725-T205832.tar
+  D20160725-T212129.tar
+  D20160725-T214425.tar
+  D20160725-T220721.tar
+  D20160725-T223017.tar
+  D20160725-T225314.tar
+  D20160725-T231505.tar
+  D20160725-T233217.tar
+--- query_ncei: done (11.716s) ---
+
+=== step download_raw (2/32) ===
+  [1/9] Already exists, skipping: D20160725-T203535.raw
+  [2/9] Already exists, skipping: D20160725-T205832.raw
+  [3/9] Already exists, skipping: D20160725-T212129.raw
+  [4/9] Already exists, skipping: D20160725-T214425.raw
+  [5/9] Already exists, skipping: D20160725-T220721.raw
+  [6/9] Already exists, skipping: D20160725-T223017.raw
+  [7/9] Already exists, skipping: D20160725-T225314.raw
+  [8/9] Already exists, skipping: D20160725-T231505.raw
+  [9/9] Already exists, skipping: D20160725-T233217.raw
+Download complete. 27 file(s) ready in raw_file_inputs\HB1603_2016-07-25_2058-2345
+--- download_raw: done (3.308s) ---
+
+=== step initial_setup (3/32) ===
+Found 9 raw file(s) to process:
+  - D20160725-T203535.raw
+  - D20160725-T205832.raw
+  - D20160725-T212129.raw
+  - D20160725-T214425.raw
+  - D20160725-T220721.raw
+  - D20160725-T223017.raw
+  - D20160725-T225314.raw
+  - D20160725-T231505.raw
+  - D20160725-T233217.raw
+Created missing output folder: outputs_phase\calibration\logs
+--- initial_setup: done (0.002s) ---
+
+=== step gen_cal_mapping (4/32) ===
+Found 9 raw files in raw_file_inputs\HB1603_2016-07-25_2058-2345
+  - D20160725-T203535.raw
+  - D20160725-T205832.raw
+  - D20160725-T212129.raw
+  - D20160725-T214425.raw
+  - D20160725-T220721.raw
+  - D20160725-T223017.raw
+  - D20160725-T225314.raw
+  - D20160725-T231505.raw
+  - D20160725-T233217.raw
+================================================================================
+File: D20160725-T203535.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3862
+  Valid GPS fixes: 2065
+  First GPS: 41.681640, -65.509643
+================================================================================
+File: D20160725-T205832.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3896
+  Valid GPS fixes: 2064
+  First GPS: 41.745935, -65.507845
+================================================================================
+File: D20160725-T212129.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3921
+  Valid GPS fixes: 2064
+  First GPS: 41.813062, -65.503617
+================================================================================
+File: D20160725-T214425.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3808
+  Valid GPS fixes: 2066
+  First GPS: 41.881765, -65.499538
+================================================================================
+File: D20160725-T220721.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3550
+  Valid GPS fixes: 2064
+  First GPS: 41.940702, -65.496437
+================================================================================
+File: D20160725-T223017.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3372
+  Valid GPS fixes: 2065
+  First GPS: 41.949525, -65.452583
+================================================================================
+File: D20160725-T225314.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 3128
+  Valid GPS fixes: 1965
+  First GPS: 41.951107, -65.421998
+================================================================================
+File: D20160725-T231505.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 2457
+  Valid GPS fixes: 1550
+  First GPS: 41.952543, -65.402087
+================================================================================
+File: D20160725-T233217.raw
+Instrument (detected): EK60
+File format (from reader): EK60
+
+--- GPS Summary ---
+  NMEA datagrams found: 2502
+  Valid GPS fixes: 1549
+  First GPS: 41.947965, -65.392105
+
+================================================================================
+SUMMARY: Processed 9 files (sorted by metadata_start_time)
+Unique frequencies found: [18000.0, 38000.0, 70000.0, 120000.0, 200000.0] Hz
+================================================================================
+
+Saved raw file configurations to: outputs_phase\calibration\raw_file_configs\raw_file_configs.yaml
+Detected calibration file type: EK60
+Found 5 calibration files in calibration_files\HB201607_cal
+
+Parsing: HBB_018kHz_18July2016.cal
+   Extracted parameters for 18kHz
+
+Parsing: HBB_038kHz_18July2016.cal
+   Extracted parameters for 38kHz
+
+Parsing: HBB_070kHz_18July2016.cal
+   Extracted parameters for 70kHz
+
+Parsing: HBB_120kHz_18July2016.cal
+   Extracted parameters for 120kHz
+
+Parsing: HBB_200kHz_18July2016.cal
+   Extracted parameters for 200kHz
+
+Successfully parsed calibration data for 5 frequencies:
+   • 18kHz
+      source_filenames: HBB_018kHz_18July2016.cal
+      Date: 7/18/2016
+      Comments: HB Bigelow 18 kHz calibration, 38.1-mm WC sphere, Newport naval anchorage south of bridge, 18 July 2016
+      Transducer: ES18-11
+      frequency: 18000 Hz
+      Two Way Beam Angle: -17.00 dB
+      Athw. Angle Sens.: 13.90 deg
+      Along. Angle Sens.: 13.90 deg
+      Transceiver: GPT  18 kHz 009072056b0e 2-1 ES18-11
+      Pulse Duration: 1
+      Sample Interval: 0.195 m
+      Power: 1000 W
+      Receiver Bandwidth: 1.57 kHz
+      Sounder Type Version: 2.4.3
+      Absorption Coeff.: 1.8 dB/km
+      Sound Velocity: 1522.6 m/s
+      SaCorrection: -0.76 dB
+      Transducer Gain: 23.08 dB
+      Athw. Beam Angle: 11.06 deg
+      Along. Beam Angle: 10.56 deg
+      Athw. Offset Angle: 0.01 deg
+      Along. Offset Angle: -0.07 deg
+   • 38kHz
+      source_filenames: HBB_038kHz_18July2016.cal
+      Date: 7/18/2016
+      Comments: HB Bigelow EK60 calibration, 38.1-mm WC sphere, Newport Naval Anchorage south of bridge, 18 July 2016
+      Transducer: ES38B
+      frequency: 38000 Hz
+      Two Way Beam Angle: -20.60 dB
+      Athw. Angle Sens.: 21.90 deg
+      Along. Angle Sens.: 21.90 deg
+      Transceiver: GPT  38 kHz 0090720346bc 1-1 ES38B
+      Pulse Duration: 1
+      Sample Interval: 0.195 m
+      Power: 1000 W
+      Receiver Bandwidth: 2.43 kHz
+      Sounder Type Version: 2.4.3
+      Absorption Coeff.: 7.2 dB/km
+      Sound Velocity: 1522.6 m/s
+      SaCorrection: -0.68 dB
+      Transducer Gain: 24.06 dB
+      Athw. Beam Angle: 6.97 deg
+      Along. Beam Angle: 6.87 deg
+      Athw. Offset Angle: -0.02 deg
+      Along. Offset Angle: 0.07 deg
+   • 70kHz
+      source_filenames: HBB_070kHz_18July2016.cal
+      Date: 7/18/2016
+      Comments: HB Bigelow 70 kHz calibration, 38.1-mm WC sphere, Newport naval anchorage south of bridge, 18 July 2016
+      Transducer: ES70-7C
+      frequency: 70000 Hz
+      Two Way Beam Angle: -21.00 dB
+      Athw. Angle Sens.: 23.00 deg
+      Along. Angle Sens.: 23.00 deg
+      Transceiver: GPT  70 kHz 00907206042f 5-1 ES70-7C
+      Pulse Duration: 1
+      Sample Interval: 0.195 m
+      Power: 750 W
+      Receiver Bandwidth: 2.86 kHz
+      Sounder Type Version: 2.4.3
+      Absorption Coeff.: 20.8 dB/km
+      Sound Velocity: 1522.6 m/s
+      SaCorrection: -0.32 dB
+      Transducer Gain: 25.41 dB
+      Athw. Beam Angle: 6.16 deg
+      Along. Beam Angle: 6.22 deg
+      Athw. Offset Angle: -0.12 deg
+      Along. Offset Angle: -0.09 deg
+   • 120kHz
+      source_filenames: HBB_120kHz_18July2016.cal
+      Date: 7/18/2016
+      Comments: HB Bigelow 120 kHz calibration, 38.1-mm WC sphere, Newport naval anchorage south of bridge, 18 July 2016
+      Transducer: ES120-7
+      frequency: 120000 Hz
+      Two Way Beam Angle: -20.80 dB
+      Athw. Angle Sens.: 21.00 deg
+      Along. Angle Sens.: 21.00 deg
+      Transceiver: GPT 120 kHz 0090720580f1 3-1 ES120-7
+      Pulse Duration: 1
+      Sample Interval: 0.195 m
+      Power: 500 W
+      Receiver Bandwidth: 3.03 kHz
+      Sounder Type Version: 2.4.3
+      Absorption Coeff.: 44.5 dB/km
+      Sound Velocity: 1522.6 m/s
+      SaCorrection: -0.34 dB
+      Transducer Gain: 26.95 dB
+      Athw. Beam Angle: 7.07 deg
+      Along. Beam Angle: 7.09 deg
+      Athw. Offset Angle: 0.05 deg
+      Along. Offset Angle: -0.05 deg
+   • 200kHz
+      source_filenames: HBB_200kHz_18July2016.cal
+      Date: 7/18/2016
+      Comments: HB Bigelow 200 kHz calibration, 38.1-mm WC sphere, Newport naval anchorage south of bridge, 18 July 2016
+      Transducer: ES200-7
+      frequency: 200000 Hz
+      Two Way Beam Angle: -20.70 dB
+      Athw. Angle Sens.: 23.00 deg
+      Along. Angle Sens.: 23.00 deg
+      Transceiver: GPT 200 kHz 009072034261 4-1 ES200-7
+      Pulse Duration: 1
+      Sample Interval: 0.195 m
+      Power: 300 W
+      Receiver Bandwidth: 3.09 kHz
+      Sounder Type Version: 2.4.3
+      Absorption Coeff.: 73.6 dB/km
+      Sound Velocity: 1522.6 m/s
+      SaCorrection: -0.51 dB
+      Transducer Gain: 27.32 dB
+      Athw. Beam Angle: 6.37 deg
+      Along. Beam Angle: 6.37 deg
+      Athw. Offset Angle: 0.02 deg
+      Along. Offset Angle: -0.02 deg
+
+All expected EK60 report parameters found successfully
+
+Parsed EK60 calibration parameters:
+Channels: ['GPT  18 kHz 009072056b0e 2-1 ES18-11', 'GPT  38 kHz 0090720346bc 1-1 ES38B', 'GPT  70 kHz 00907206042f 5-1 ES70-7C', 'GPT 120 kHz 0090720580f1 3-1 ES120-7', 'GPT 200 kHz 009072034261 4-1 ES200-7']
+Frequencies: [18000.0, 38000.0, 70000.0, 120000.0, 200000.0]
+Gain corrections: [23.08, 24.06, 25.41, 26.95, 27.32]
+Sa corrections: [-0.76, -0.68, -0.32, -0.34, -0.51]
+Equivalent beam angles: [-17.0, -20.6, -21.0, -20.8, -20.7]
+data validated by json schema
+data validated by json schema
+data validated by json schema
+data validated by json schema
+data validated by json schema
+
+Saved 5 single-channel calibration file(s) to: outputs_phase\calibration\single_channel_calibration_files
+
+Single-channel calibration files:
+  2016-07-18__120000__config-1.yaml (1.7 KB)
+  2016-07-18__18000__config-1.yaml (1.7 KB)
+  2016-07-18__200000__config-1.yaml (1.7 KB)
+  2016-07-18__38000__config-1.yaml (1.7 KB)
+  2016-07-18__70000__config-1.yaml (1.7 KB)
+
+Loaded 9 raw file configurations
+Raw files: ['D20160725-T203535.raw', 'D20160725-T205832.raw', 'D20160725-T212129.raw', 'D20160725-T214425.raw', 'D20160725-T220721.raw', 'D20160725-T223017.raw', 'D20160725-T225314.raw', 'D20160725-T231505.raw', 'D20160725-T233217.raw']
+Loaded 5 calibration channel(s) from outputs_phase\calibration\single_channel_calibration_files
+  WARNING: D20160725-T203535.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T203535.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T203535.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T203535.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T203535.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T205832.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T205832.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T205832.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T205832.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T205832.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T212129.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T212129.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T212129.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T212129.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T212129.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T214425.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T214425.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T214425.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T214425.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T214425.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T220721.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T220721.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T220721.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T220721.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T220721.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T223017.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T223017.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T223017.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T223017.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T223017.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T225314.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T225314.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T225314.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T225314.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T225314.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T231505.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T231505.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T231505.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T231505.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T231505.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T233217.raw -> GPT  38 kHz 0090720346bc 1-1 ES38B: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T233217.raw -> GPT  18 kHz 009072056b0e 2-1 ES18-11: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T233217.raw -> GPT 120 kHz 0090720580f1 3-1 ES120-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T233217.raw -> GPT 200 kHz 009072034261 4-1 ES200-7: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+  WARNING: D20160725-T233217.raw -> GPT  70 kHz 00907206042f 5-1 ES70-7C: transducer_serial_number is missing in raw file and calibration file. Matching proceeded without comparing transducer serial numbers.
+
+Matching summary:
+  Raw file channels:
+    Total processed: 45
+    Unique: 5
+    Matched: 45
+    Matched unique: 5
+    Unmatched: 0
+    Multiplexing warnings: 0
+  Calibration files:
+    Loaded: 5
+    Used: 5
+    Conflicts: 0
+Mapping dictionary:
+
+D20160725-T203535.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T205832.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T212129.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T214425.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T220721.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T223017.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T225314.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T231505.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+D20160725-T233217.raw:
+  GPT  38 kHz 0090720346bc 1-1 ES38B
+    -> 2016-07-18__38000__config-1
+  GPT  18 kHz 009072056b0e 2-1 ES18-11
+    -> 2016-07-18__18000__config-1
+  GPT 120 kHz 0090720580f1 3-1 ES120-7
+    -> 2016-07-18__120000__config-1
+  GPT 200 kHz 009072034261 4-1 ES200-7
+    -> 2016-07-18__200000__config-1
+  GPT  70 kHz 00907206042f 5-1 ES70-7C
+    -> 2016-07-18__70000__config-1
+
+Calibration dictionary keys:
+  2016-07-18__38000__config-1
+  2016-07-18__18000__config-1
+  2016-07-18__120000__config-1
+  2016-07-18__200000__config-1
+  2016-07-18__70000__config-1
+
+Saved mapping dictionary to: outputs_phase\calibration\mapping_files\channel_mapping.yaml
+Saved calibration dictionary to: outputs_phase\calibration\mapping_files\calibration_configurations.yaml
+
+Note: Single-channel calibration files already exist in: outputs_phase\calibration\single_channel_calibration_files
+
+Short key -> calibration parameters:
+================================================================================
+
+  18000 Hz:
+    2016-07-18__18000__config-1:
+      Model: ES18-11, Serial: None, Pulse form: 0
+      Power: 1000.0 W, Duration: 0.001024 s
+
+  38000 Hz:
+    2016-07-18__38000__config-1:
+      Model: ES38B, Serial: None, Pulse form: 0
+      Power: 1000.0 W, Duration: 0.001024 s
+
+  70000 Hz:
+    2016-07-18__70000__config-1:
+      Model: ES70-7C, Serial: None, Pulse form: 0
+      Power: 750.0 W, Duration: 0.001024 s
+
+  120000 Hz:
+    2016-07-18__120000__config-1:
+      Model: ES120-7, Serial: None, Pulse form: 0
+      Power: 500.0 W, Duration: 0.001024 s
+
+  200000 Hz:
+    2016-07-18__200000__config-1:
+      Model: ES200-7, Serial: None, Pulse form: 0
+      Power: 300.0 W, Duration: 0.001024 s
+Checking required calibration parameters...
+  All required calibration parameters are present.
+Checking calibration file usage...
+  All calibration files are used in the mapping.
+--- gen_cal_mapping: done (4.887s) ---
+
+=== step read_raw (5/32) ===
+--- read_raw: done (58.102s) ---
+
+=== step combine_raw (6/32) ===
+--- combine_raw: done (16.700s, 12.397s writing checkpoint) ---
+
+=== step extract_cal_params (7/32) ===
+--- extract_cal_params: done (0.001s) ---
+
+=== step compute_sv (8/32) ===
+--- compute_sv: done (8.712s, 8.612s writing checkpoint) ---
+
+=== step ep_add_depth (9/32) ===
+--- ep_add_depth: done (0.059s) ---
+
+=== step create_surface_mask (13/32) ===
+--- create_surface_mask: done (0.002s) ---
+
+=== step create_frequency_mask (14/32) ===
+--- create_frequency_mask: done (0.023s) ---
+
+=== step ep_add_splitbeam_angle (10/32) ===
+--- ep_add_splitbeam_angle: done (0.048s) ---
+
+=== step detect_seafloor (11/32) ===
+phase_detect_seafloor: channel GPT  38 kHz 0090720346bc 1-1 ES38B, mode 1, regime deep, phase, 1548 pings, coverage 100.0%, 0 interpolated, 276 flagged, 61 seed components
+--- detect_seafloor: done (15.151s, 0.100s writing checkpoint) ---
+
+=== step create_seafloor_mask (12/32) ===
+--- create_seafloor_mask: done (0.005s) ---
+
+=== step combine_masks (15/32) ===
+--- combine_masks: done (0.005s) ---
+
+=== step apply_mask (16/32) ===
+--- apply_mask: done (8.917s) ---
+
+=== step crop_range (17/32) ===
+--- crop_range: done (31.859s, 26.047s writing checkpoint) ---
+
+=== step rechunk_before_noise (18/32) ===
+--- rechunk_before_noise: done (0.019s) ---
+
+=== step remove_noise (19/32) ===
+--- remove_noise: done (54.944s, 13.963s writing checkpoint) ---
+
+=== step plot_sv_clean (20/32) ===
+Target depth: 0 m
+Closest range_sample index: 0
+Actual depth at that index: 0.00 m
+Target depth: 1800 m
+Closest range_sample index: 9236
+Actual depth at that index: 1800.03 m
+--- plot_sv_clean: done (31.697s) ---
+
+=== step mask_sparse (21/32) ===
+--- mask_sparse: done (2.652s) ---
+
+=== step compute_cell_stats (23/32) ===
+--- compute_cell_stats: done (0.749s) ---
+
+=== step compute_mvbs (22/32) ===
+--- compute_mvbs: done (5.933s, 3.098s writing checkpoint) ---
+
+=== step add_line_overlay (24/32) ===
+Reading dive profile: SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv
+  Dive points: 681
+  MVBS pings: 583
+  Overlap: 2016-07-25 21:20:12.153000 to 2016-07-25 21:39:48.263000
+Added dive profile variables (length=583)
+  Valid dive points: 61 (10.5%)
+  NaN outside dive: 522
+--- add_line_overlay: done (0.029s) ---
+
+=== step plot_mvbs (25/32) ===
+--- plot_mvbs: done (7.844s) ---
+
+=== step reshape_ml (26/32) ===
+Created grid_index_ml_dataset coordinate with 57,134 unique indices
+Grid dimensions: ping_time (583), echo_range (98)
+--- reshape_ml: done (0.071s) ---
+
+=== step add_aux_features (27/32) ===
+--- add_aux_features: done (3.834s) ---
+
+=== step normalize_ml (28/32) ===
+--- normalize_ml: done (0.674s, 0.523s writing checkpoint) ---
+
+=== step plot_normalized_ml (29/32) ===
+--- plot_normalized_ml: done (17.855s) ---
+
+=== step run_hdbscan (30/32) ===
+  Number of clusters: 5
+  Noise points: 19118 (59.1%)
+  Silhouette Score: 0.013
+  Cluster sizes: {'Noise': np.int64(19118), 'Cluster 0': np.int64(1728), 'Cluster 1': np.int64(853), 'Cluster 2': np.int64(3610), 'Cluster 3': np.int64(3504), 'Cluster 4': np.int64(3530)}
+--- run_hdbscan: done (4.530s) ---
+
+=== step embed_results (31/32) ===
+--- embed_results: done (0.762s, 0.754s writing checkpoint) ---
+
+=== step plot_clustering_report (32/32) ===
+--- plot_clustering_report: done (5.325s) ---

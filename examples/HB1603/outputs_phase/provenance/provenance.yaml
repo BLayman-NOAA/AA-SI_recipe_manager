@@ -1,0 +1,53 @@
+recipe_hash: a923c5ab33d89e219a583c5bd4d4ff369f902f82cb636b1bed155d41ad117d18
+recipe_name: processing_levels_pipeline_phase
+recipe_version: '1.0'
+timestamp: '2026-09-24T18:17:09.103243Z'
+python_version: 3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 
+  19:42:21) [MSC v.1916 64 bit (AMD64)]
+python_version_number: 3.12.3
+os_info: Windows-11-10.0.26200-SP0
+resolved_dependencies:
+  aa-si-utils:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+  aa-si-calibration:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_calibration.git
+  echopype:
+    installed_version: 0.11.1
+    source: pypi
+  aa-si-ml:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+  aa-si-visualization:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Visualization.git
+raw_inputs:
+  files:
+  - name: D20160725-T203535.raw
+    size: 52650612
+  - name: D20160725-T205832.raw
+    size: 52652344
+  - name: D20160725-T212129.raw
+    size: 52653644
+  - name: D20160725-T214425.raw
+    size: 52647816
+  - name: D20160725-T220721.raw
+    size: 52634352
+  - name: D20160725-T223017.raw
+    size: 52625128
+  - name: D20160725-T225314.raw
+    size: 52609704
+  - name: D20160725-T231505.raw
+    size: 52563460
+  - name: D20160725-T233217.raw
+    size: 52565784
+  count: 9
+  digest: 7f79e8470cb4e6a625028762a27b6782b801d502798039e75c7f7787cf60f83e
+  source: resolved
+  producing_step: initial_setup.raw_file_paths
+  origin_run_id: 181210-6a5df5

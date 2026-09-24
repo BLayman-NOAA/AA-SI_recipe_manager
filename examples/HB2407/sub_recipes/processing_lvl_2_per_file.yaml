@@ -228,6 +228,22 @@ steps:
   #     encode_mode: "power"
   #     to_disk: false
 
+  # Alternative: the phase-aware DP picker. It runs amplitude-only here
+  # until the calibration mapping carries angle_sensitivity and
+  # ep_add_splitbeam_angle can be enabled; on D20241012-T064618 it sat 2 m
+  # below the Echoview line with no gross errors. Window in metres below the
+  # surface; the HB2407 seabed is 55 to 71 m.
+  # - id: detect_seafloor
+  #   op: phase_detect_seafloor
+  #   map_over: ${initial_setup.raw_file_paths}
+  #   checkpoint: save
+  #   inputs:
+  #     ds_Sv: ${ep_add_depth.ds_Sv}
+  #   params:
+  #     r_min: 30.0
+  #     r_max: 100.0
+  #     regime: "shelf"
+
   - id: detect_seafloor
     op: read_seafloor_line
     map_over: ${initial_setup.raw_file_paths}

@@ -985,7 +985,66 @@ EXPERIMENTAL_SEAFLOOR_BRANCH_RECIPE = """\
     """
 
 
+PHASE_SEAFLOOR_RECIPE = """    recipe:
+      name: phase_seafloor_slice
+      version: "1.0"
+      schema_version: "1"
+    inputs:
+      ds_sv:
+        type: Dataset
+      echodata:
+        type: EchoData
+    steps:
+      - id: add_angles
+        op: ep_add_splitbeam_angle
+        inputs:
+          ds_Sv: ${inputs.ds_sv}
+          echodata: ${inputs.echodata}
+        params:
+          waveform_mode: "CW"
+          encode_mode: "power"
+          to_disk: false
+      - id: detect_seafloor
+        op: phase_detect_seafloor
+        inputs:
+          ds_Sv: ${add_angles.ds_Sv}
+        params:
+          channel: "38"
+          r_min: 800.0
+          r_max: 2500.0
+          regime: "deep"
+      - id: create_seafloor_mask
+        op: create_seafloor_mask
+        inputs:
+          ds_Sv: ${add_angles.ds_Sv}
+          seafloor_depth: ${detect_seafloor.seafloor_depth}
+        params:
+          seafloor_buffer_m: 10
+    """
+
+
 class TestBuiltinIntegration:
+  def test_phase_seafloor_slice_feeds_the_seafloor_mask(self, tmp_path):
+    """The phase picker swaps in after ep_add_splitbeam_angle and feeds the mask."""
+    recipe_path = _write_recipe(tmp_path, PHASE_SEAFLOOR_RECIPE)
+
+    recipe = load_recipe(recipe_path)
+    reg = load_builtin_registry()
+    dag = build_dag(recipe, reg)
+
+    assert dag.topological_order == ["add_angles", "detect_seafloor", "create_seafloor_mask"]
+    assert dag.nodes["detect_seafloor"].implementation.callable_path == (
+      "aa_si_utils.seabed.detect_seafloor_phase"
+    )
+
+    seafloor_edges = [
+      edge for edge in dag.edges if edge.target_input == "seafloor_depth"
+    ]
+    assert len(seafloor_edges) == 1
+    assert seafloor_edges[0].source_step_id == "detect_seafloor"
+    assert seafloor_edges[0].target_step_id == "create_seafloor_mask"
+    assert dag.nodes["detect_seafloor"].spec.outputs["seafloor_depth"].type == "DataArray"
+
   def test_experimental_seafloor_branch_builds_and_pins_echopype(self, tmp_path, monkeypatch):
     """The coarsen-then-detect branch wires up and resolves to the pinned build.
 

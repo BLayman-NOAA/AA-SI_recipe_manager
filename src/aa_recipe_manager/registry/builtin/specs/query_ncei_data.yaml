@@ -44,6 +44,18 @@ params:
     description: Key-value filters applied to NCEI metadata (e.g. CRUISE_NAME)
     required: false
     default: {}
+  file_names:
+    type: list
+    description: >
+      Keep only these files, matched on the D{date}-T{time} stamp in the name,
+      so a bare D20160725-T205832.raw finds the archive's HB1603_L1- form and
+      the reverse. Applied after the time window, client side, in catalogue
+      order. A name the query did not return raises rather than silently
+      shrinking the result. Wire it from a planning step, for example
+      ${plan_dives.raw_files}, to map a per-file chain over an analysis's
+      files alone. Empty keeps everything.
+    required: false
+    default: []
 implementations:
   - key: default
     callable_path: aa_si_utils.data_retrieval.query_ncei_data

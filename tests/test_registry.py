@@ -179,6 +179,7 @@ EXPECTED_BUILTIN_OPS = {
     "ep_detect_seafloor",
     "detect_seafloor",
     "read_seafloor_line",
+    "phase_detect_seafloor",
     "create_seafloor_mask",
     "create_surface_mask",
     "create_frequency_mask",
@@ -415,16 +416,29 @@ class TestBuiltinLoader:
         assert impl.output_map == {"seafloor_depth": "__return__"}
         assert impl.dependency.name == "seabed-detection"
 
+    def test_phase_detect_seafloor_implementation_resolves(self):
+        reg = load_builtin_registry()
+
+        impl = reg.get_implementation("phase_detect_seafloor")
+        assert impl.callable_path == "aa_si_utils.seabed.detect_seafloor_phase"
+        assert impl.output_map == {"seafloor_depth": "__return__"}
+        assert impl.dependency.name == "aa-si-utils"
+        spec = reg.get_spec("phase_detect_seafloor")
+        assert spec.inputs["echodata"].required is False
+        assert spec.inputs["z_prior"].type == "DataArray"
+        assert spec.params["detect_aliases"].default is False
+
     def test_seafloor_detection_ops_share_one_output_contract(self):
         reg = load_builtin_registry()
 
-        # The four detection techniques are swapped by editing op/params alone,
+        # The five detection techniques are swapped by editing op/params alone,
         # which only holds while they all emit the same output port.
         for op in (
             "detect_seafloor",
             "ep_detect_seafloor",
             "read_seafloor_line",
             "hdbscan_detect_seafloor",
+            "phase_detect_seafloor",
         ):
             spec = reg.get_spec(op)
             assert set(spec.outputs) == {"seafloor_depth"}

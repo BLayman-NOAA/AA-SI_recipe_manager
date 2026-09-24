@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "run_id": "181210-6a5df5",
+  "recipe": {
+    "name": "processing_levels_pipeline_phase",
+    "version": "1.0"
+  },
+  "cache_epoch": null,
+  "started_at": "2026-09-24T18:12:10.164200+00:00",
+  "finished_at": "2026-09-24T18:17:09.058025+00:00",
+  "elapsed_seconds": 298.947,
+  "status": "completed",
+  "write_tier": "user",
+  "tiers": {
+    "user": "./recipe_cache"
+  },
+  "steps": {
+    "query_ncei": {
+      "disposition": "computed",
+      "step_hash": "f627ac09a99f1da90c356e6fd01812d7a87ce06853c4ef6a588a057ee1b92563",
+      "tier": null,
+      "elapsed_seconds": 11.716,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "download_raw": {
+      "disposition": "computed",
+      "step_hash": "95fa80b442844f5f81b3f70e3f1fd737c14b7590e86aff7256b8d353b695a04a",
+      "tier": null,
+      "elapsed_seconds": 3.308,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "initial_setup": {
+      "disposition": "computed",
+      "step_hash": "71d8f7ebaa00457c285be8adaed3b7d38aa0e976690456a5c2448c5f25e9626d",
+      "tier": null,
+      "elapsed_seconds": 0.002,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "gen_cal_mapping": {
+      "disposition": "computed",
+      "step_hash": "bc849a2081744febeb24902f636063d6479c348de018abec6c692f75bd3a31f0",
+      "tier": null,
+      "elapsed_seconds": 4.887,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "read_raw": {
+      "disposition": "computed",
+      "step_hash": "0ce9b16a02f54b9c60d8b9c72c76cfd21ff2b6288f8fb8398f2f87b2bebde335",
+      "tier": null,
+      "elapsed_seconds": 58.102,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "combine_raw": {
+      "disposition": "computed",
+      "step_hash": "bf84ec637997581f07878de7ed4f5f69f7fa4de957703158b8b935f5e31fabe5",
+      "tier": "user",
+      "elapsed_seconds": 16.7,
+      "save_seconds": 12.397,
+      "artifacts": {
+        "echodata": "recipe_cache\\combine_raw\\bf84ec63\\181210-6a5df5\\zarr\\echodata.zarr"
+      }
+    },
+    "extract_cal_params": {
+      "disposition": "computed",
+      "step_hash": "7d0a893c804fc311d0ec17216ebcaef2eb96fc6a47b6ed99ae883fea31a6c163",
+      "tier": null,
+      "elapsed_seconds": 0.001,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "compute_sv": {
+      "disposition": "computed",
+      "step_hash": "1ac8f5889c7e1f0bb2770646c950f43011ea11681c6859f74f4e89daaafd0947",
+      "tier": "user",
+      "elapsed_seconds": 8.712,
+      "save_seconds": 8.612,
+      "artifacts": {
+        "ds_Sv": "recipe_cache\\compute_sv\\1ac8f588\\181210-6a5df5\\zarr\\ds_Sv.zarr"
+      }
+    },
+    "ep_add_depth": {
+      "disposition": "computed",
+      "step_hash": "ecb30a5ec797a344322f1992283b8c56efb91817d8688ee7951c63d0d900024b",
+      "tier": null,
+      "elapsed_seconds": 0.059,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "create_surface_mask": {
+      "disposition": "computed",
+      "step_hash": "162d9eb4d3086d9ede769bc2d13c74beb416918f6f7168fbce48375c38066f13",
+      "tier": null,
+      "elapsed_seconds": 0.002,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "create_frequency_mask": {
+      "disposition": "computed",
+      "step_hash": "025a02e9e1a6f4635fabf942ee84022aa333640006d49471c3be5f81a874268b",
+      "tier": null,
+      "elapsed_seconds": 0.023,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "ep_add_splitbeam_angle": {
+      "disposition": "computed",
+      "step_hash": "d3a0f2b96c2fc77f717e5cd46e7b9404d758033a9fa87228477d48bc54998eb2",
+      "tier": null,
+      "elapsed_seconds": 0.048,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "detect_seafloor": {
+      "disposition": "computed",
+      "step_hash": "cedb0308f6c8778981063b874db7b319de0cc38b6042f1f8b503d18f5f7253fa",
+      "tier": "user",
+      "elapsed_seconds": 15.151,
+      "save_seconds": 0.1,
+      "artifacts": {
+        "seafloor_depth": "recipe_cache\\detect_seafloor\\cedb0308\\181210-6a5df5\\zarr\\seafloor_depth.zarr"
+      }
+    },
+    "create_seafloor_mask": {
+      "disposition": "computed",
+      "step_hash": "1a9cd83f3684add7f1d29bb94985010dbe8241fbfb095e29efdafedcedc89fe4",
+      "tier": null,
+      "elapsed_seconds": 0.005,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "combine_masks": {
+      "disposition": "computed",
+      "step_hash": "9619d8cf6edaa4af2630a6ab906ecae64a66b6f198a7d3c9afede73dbfeb5676",
+      "tier": null,
+      "elapsed_seconds": 0.005,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "apply_mask": {
+      "disposition": "computed",
+      "step_hash": "aa289319f2435f401d551014aea9b960a9d81639f6dd8f031c7d9225dad9d270",
+      "tier": null,
+      "elapsed_seconds": 8.917,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "crop_range": {
+      "disposition": "computed",
+      "step_hash": "60e3429fda7c490cffac6d3ae2938169e4f9b362d7a2e2cb5f64264e12a4ec89",
+      "tier": "user",
+      "elapsed_seconds": 31.859,
+      "save_seconds": 26.047,
+      "artifacts": {
+        "ds_Sv": "recipe_cache\\crop_range\\60e3429f\\181210-6a5df5\\zarr\\ds_Sv.zarr"
+      }
+    },
+    "rechunk_before_noise": {
+      "disposition": "computed",
+      "step_hash": "668c1c6f2df21f35cd25bb227e67f284ad844a9cc68907d60b9945a346cf8c9f",
+      "tier": null,
+      "elapsed_seconds": 0.019,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "remove_noise": {
+      "disposition": "computed",
+      "step_hash": "93974772d43f35157a4b9e24090a5d82f727f16ffa0a64b6cdd68e0f02658d21",
+      "tier": "user",
+      "elapsed_seconds": 54.944,
+      "save_seconds": 13.963,
+      "artifacts": {
+        "ds_Sv": "recipe_cache\\remove_noise\\93974772\\181210-6a5df5\\zarr\\ds_Sv.zarr"
+      }
+    },
+    "plot_sv_clean": {
+      "disposition": "computed",
+      "step_hash": "5e10a67984b30796786c9959eaba4570a3698460ed34201ba439f30aaf8706fa",
+      "tier": null,
+      "elapsed_seconds": 31.697,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "mask_sparse": {
+      "disposition": "computed",
+      "step_hash": "110ea01f099e9f933610364566b1d2f11788566065dcb598d6d80c4931e918c7",
+      "tier": null,
+      "elapsed_seconds": 2.652,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "compute_cell_stats": {
+      "disposition": "computed",
+      "step_hash": "954ada4d799682b1b490e41f3f23de95b0d06022ce930e9011f0f1b674410ba6",
+      "tier": null,
+      "elapsed_seconds": 0.749,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "compute_mvbs": {
+      "disposition": "computed",
+      "step_hash": "b7dc8c272f7f8e3cbff71e8005786e081bd37890f0c25555eadd52d136f57626",
+      "tier": "user",
+      "elapsed_seconds": 5.933,
+      "save_seconds": 3.098,
+      "artifacts": {
+        "ds_MVBS": "recipe_cache\\compute_mvbs\\b7dc8c27\\181210-6a5df5\\zarr\\ds_MVBS.zarr"
+      }
+    },
+    "add_line_overlay": {
+      "disposition": "computed",
+      "step_hash": "c19a3f50766a3ecf85f55f3ceb0727aad06d25e6decf9737cb81d358c8cecb63",
+      "tier": null,
+      "elapsed_seconds": 0.029,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "plot_mvbs": {
+      "disposition": "computed",
+      "step_hash": "091f1e3de763151aa9e60472103690d23a370dc6c3d0fdd1cfebc8455c6f0d8b",
+      "tier": null,
+      "elapsed_seconds": 7.844,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "reshape_ml": {
+      "disposition": "computed",
+      "step_hash": "0b9e0eb7fbdc466bf587caf63b736afba5fb70154120695ec2fdc707f616aaaf",
+      "tier": null,
+      "elapsed_seconds": 0.071,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "add_aux_features": {
+      "disposition": "computed",
+      "step_hash": "0016dbbdc0572e527bfa895db1fe63225cd1d352040a3da4897589a0ba826771",
+      "tier": null,
+      "elapsed_seconds": 3.834,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "normalize_ml": {
+      "disposition": "computed",
+      "step_hash": "a48a7ecd50c03bb7993e0bfb8eeb45e68cff517bbbafed9c897b45f28f3978d7",
+      "tier": "user",
+      "elapsed_seconds": 0.674,
+      "save_seconds": 0.523,
+      "artifacts": {
+        "ds_normalized": "recipe_cache\\normalize_ml\\a48a7ecd\\181210-6a5df5\\zarr\\ds_normalized.zarr"
+      }
+    },
+    "plot_normalized_ml": {
+      "disposition": "computed",
+      "step_hash": "d38174dc2b795eded1613d66775660728ab5208cfa6a500b615233141544f1c0",
+      "tier": null,
+      "elapsed_seconds": 17.855,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "run_hdbscan": {
+      "disposition": "computed",
+      "step_hash": "0fdfbb0a439b2c5e0ee6362772a9f9850e83825689e6af08e74d7735de55d33c",
+      "tier": null,
+      "elapsed_seconds": 4.53,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    },
+    "embed_results": {
+      "disposition": "computed",
+      "step_hash": "cb26ad7b2184c6d3eb76b838fd3e0ec3bbe4803cf989053d38afe889538f69d5",
+      "tier": "user",
+      "elapsed_seconds": 0.762,
+      "save_seconds": 0.754,
+      "artifacts": {
+        "ds_normalized": "recipe_cache\\embed_results\\cb26ad7b\\181210-6a5df5\\zarr\\ds_normalized.zarr",
+        "gridded_results": "recipe_cache\\embed_results\\cb26ad7b\\181210-6a5df5\\zarr\\gridded_results.zarr"
+      }
+    },
+    "plot_clustering_report": {
+      "disposition": "computed",
+      "step_hash": "a39118fcdfc62ff1603cc913debae4ade2264c73d3eb13ec510524d613c1616a",
+      "tier": null,
+      "elapsed_seconds": 5.325,
+      "save_seconds": 0.0,
+      "artifacts": {}
+    }
+  },
+  "environment_mismatches": []
+}
