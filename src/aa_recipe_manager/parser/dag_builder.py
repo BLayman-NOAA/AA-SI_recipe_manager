@@ -168,6 +168,7 @@ def build_dag(
         topological_order=topo_order,
     )
     _validate_mapped_chain_refs(dag, edges, errors)
+    _validate_disposal_survives_fan_in(dag, errors)
     if errors:
         raise RecipeValidationError(errors)
 
@@ -540,6 +541,89 @@ def _validate_mapped_chain_refs(
             f"the steps that map over {source.map_source} consecutively, or "
             f"fan '{src}' in with a collect step and read that."
         )
+
+
+# Output types whose value is a small, self-contained object. Anything else
+# (Dataset, DataArray, EchoData, object) may be a lazy graph that still reads
+# from the files an earlier chain member disposes.
+_LIGHT_OUTPUT_TYPES = {"int", "float", "str", "bool", "path", "list", "dict"}
+
+
+def _disposing_ports(node: DAGNode) -> list[str]:
+    """Output ports of ``node`` that disposal deletes after each instance."""
+    ports = [
+        name
+        for name, port in node.spec.outputs.items()
+        if getattr(port, "disposable", False)
+    ]
+    ports += [name for name in node.step.dispose_outputs or [] if name not in ports]
+    return ports
+
+
+def _validate_disposal_survives_fan_in(
+    dag: PipelineDAG,
+    errors: list[str],
+) -> None:
+    """Reject a mapped chain whose disposed scratch could reach a reader outside it.
+
+    Once a chain member disposes its outputs, each later member's dataset may
+    be a lazy graph rooted in the deleted files. Inside the chain that is safe:
+    the next member reads the value before the instance finishes. Outside the
+    chain it is not: a collect step or any other reader receives the graph
+    after disposal, and zarr answers a missing chunk with its fill value, so
+    the fan-in quietly becomes all NaN. The one path that survives is a
+    checkpoint, which the fan-in reloads from the store instead. So every
+    member from the disposing step onward whose non-trivial output is read
+    outside the chain must set ``checkpoint: always``. ``save`` is not enough,
+    because it yields to a run's ``--checkpoint-mode none``.
+
+    Small outputs (a path, a count, a params dict) are values, not graphs, and
+    are exempt. Whether a disposed file behind a path is still wanted is what
+    the ``disposable`` flag on that port already declares.
+    """
+    outside_readers: dict[tuple[str, str], set[str]] = {}
+    for edge in dag.edges:
+        key = (edge.source_step_id, edge.source_output)
+        outside_readers.setdefault(key, set()).add(edge.target_step_id)
+    for output in (dag.recipe.outputs or {}).values():
+        key = (output.step_id, output.output_name)
+        outside_readers.setdefault(key, set()).add("the recipe outputs block")
+
+    for chain in group_mapped_chains(dag):
+        inside = set(chain.member_ids)
+        disposer: str | None = None
+        for member_id in chain.member_ids:
+            node = dag.nodes[member_id]
+            if disposer is None:
+                if _disposing_ports(node):
+                    disposer = member_id
+                else:
+                    continue
+            exposed: dict[str, set[str]] = {}
+            for name, port in node.spec.outputs.items():
+                if port.type in _LIGHT_OUTPUT_TYPES:
+                    continue
+                readers = outside_readers.get((member_id, name), set()) - inside
+                if readers:
+                    exposed[name] = readers
+            if not exposed or node.step.checkpoint == "always":
+                continue
+            ports = ", ".join(sorted(exposed))
+            readers = ", ".join(sorted(set().union(*exposed.values())))
+            if member_id == disposer:
+                fix = (
+                    f"read a later member that is checkpointed instead, or drop "
+                    f"the disposal on '{disposer}'"
+                )
+            else:
+                fix = f"set 'checkpoint: always' on '{member_id}'"
+            errors.append(
+                f"Step '{member_id}' (output(s) {ports}) is read outside its "
+                f"mapped chain by {readers}, but '{disposer}' earlier in the "
+                f"chain disposes its outputs, so the value would arrive as a "
+                f"lazy graph over files that no longer exist and read back as "
+                f"fill values (NaN) with no error. Fix: {fix}."
+            )
 
 
 def _validate_disposable_outputs(
