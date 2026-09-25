@@ -1,5 +1,9 @@
 op: phase_detect_seafloor
 cache_key: phase_detect_seafloor  # pinned cache identity - keep stable across op renames
+# 2: absolute seabed Sv floor (min_seabed_sv_db) and empty-window pings
+# skipped instead of raising; lines cached under 1 picked scattering layers
+# on files with no seabed in range.
+version: "2"
 description: >
   Detect the seafloor with a phase-aware dynamic-programming line picker and
   return a 1-D (ping_time,) DataArray of the seabed echo's leading edge in
@@ -156,6 +160,19 @@ params:
       sometimes below the recording. ping_coverage still counts detections.
     required: false
     default: "nan"
+  min_seabed_sv_db:
+    type: float
+    units: dB
+    description: >
+      A pick whose mean Sv over the pulse length below it is under this is
+      rejected as not seabed, both in the prior's slabs and in the
+      final line. The scores are relative to each ping, so without a floor a
+      file whose seabed lies beyond the recorded range picks its loudest
+      scattering layer instead (on HB1603, a -57 dB layer just past the near
+      field). Seabed echoes on HB1603 and HB2407 run -13 to -40 dB. Null
+      disables the check.
+    required: false
+    default: -50.0
   prior_budget:
     type: int
     description: >

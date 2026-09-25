@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and interpolated up to `max_gap_s`; longer gaps stay NaN and are masked
   entirely, as with `read_seafloor_line`. Backed by
   `aa_si_utils.seabed.detect_seafloor_phase`.
+  Spec `version` 2 adds `min_seabed_sv_db` and skips pings with an empty
+  search window instead of failing; the bump invalidates lines cached by
+  version 1, which could sit on a scattering layer where the seabed was out
+  of range.
   `mode: 2` adds the local shape features for surveys where a school sits
   on the bottom. With no `r_min` / `r_max` / `z_prior` the op runs the Mode
   0 slab estimator first and uses it as the search window, so a recipe needs
