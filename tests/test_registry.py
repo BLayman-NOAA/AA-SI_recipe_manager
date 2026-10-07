@@ -356,6 +356,7 @@ class TestBuiltinLoader:
                     "conflicts": "['conflicts']",
                     "provenance": "['provenance']",
                     "provenance_path": "['provenance_path']",
+                    "single_channel_data": "['single_channel_data']",
                 },
             ),
         }

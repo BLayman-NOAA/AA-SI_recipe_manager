@@ -970,3 +970,66 @@ def explain_cache(
         survey_cache_dir=survey_cache_dir,
         storage_options=storage_options,
     )
+
+
+@dataclass
+class StepHash:
+    """A step's cache identity under a recipe's current parameters.
+
+    ``step_hash`` addresses the step's cache entry. A fanned out step (mapped
+    or swept) has no entry of its own: each instance is stored under a hash
+    derived from this one, and its sidecar records this step's ``payload`` as
+    ``fingerprint_payload``, which is how its instances are found.
+    """
+
+    step_id: str
+    step_hash: str
+    fanned_out: bool
+    payload: dict[str, Any]
+
+
+def step_hashes(
+    recipe: str | Path | Recipe,
+    *,
+    inputs: dict[str, Any] | None = None,
+    storage_options: dict[str, Any] | None = None,
+) -> dict[str, StepHash]:
+    """Compute every step's cache identity without running anything.
+
+    The same fingerprints a run computes, so a step's ``step_hash`` names the
+    checkpoint a run with these parameters writes or reuses. Inputs that are
+    files are fingerprinted, which reads them (or their remote metadata).
+
+    Returns a mapping of step id to :class:`StepHash`, in topological order.
+    """
+    from aa_recipe_manager.executor.checkpoint import compute_step_fingerprints
+
+    dag = _load_dag(recipe, input_values=inputs, check_versions=False)
+    fingerprints = compute_step_fingerprints(
+        dag, inputs or {}, storage_options=storage_options
+    )
+    found: dict[str, StepHash] = {}
+    for step_id in dag.topological_order:
+        node = dag.nodes[step_id]
+        found[step_id] = StepHash(
+            step_id=step_id,
+            step_hash=fingerprints.hashes[step_id],
+            fanned_out=node.is_mapped or node.is_swept,
+            payload=fingerprints.payloads[step_id],
+        )
+    return found
+
+
+def fingerprint_differences(
+    stored: dict[str, Any], current: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Name the fields in which two fingerprint payloads differ.
+
+    The comparison ``explain-cache`` makes for a miss: ``stored`` is a cache
+    entry's ``fingerprint_payload`` and ``current`` a recomputed one. Each
+    difference is ``{"path", "stored", "current"}`` with a dotted path such as
+    ``fingerprint.params.factor``.
+    """
+    from aa_recipe_manager.explain import _diff_payload
+
+    return [diff.to_dict() for diff in _diff_payload(stored, current)]

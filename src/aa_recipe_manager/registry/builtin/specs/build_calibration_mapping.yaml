@@ -94,6 +94,15 @@ outputs:
       "report"; empty when the mapping completed. A non-empty value means no
       mapping file was written, so feed the choices back as
       calibration_choices and run the step again.
+  single_channel_data:
+    type: dict
+    required: false
+    description: >
+      {"channels": [...]}, the standardized channels the mapping was built
+      from plus any record averaged from several of them, each carrying its
+      _calibration_file_key. Every key in mapping_dict names one of them, so
+      this, not the standardization step's payload, is what to hand to
+      save_calibration_archive once an average has been chosen. JSON-safe.
 params:
   output_base:
     type: path
@@ -142,11 +151,17 @@ params:
     required: false
     description: >
       Conflict decisions supplied up front, mapping a conflict id from a
-      previous run's conflicts output to the calibration key to keep. Applied
-      in every conflict_resolution mode before that mode's handler runs, so a
+      previous run's conflicts output to the calibration key to keep. A list
+      of candidate keys in place of one key averages them: the average is
+      written as a new single-channel file with is_averaged set, the
+      conflict's channels are mapped to it, and the candidates it was made
+      from are set aside. Only calibrations of the same transducer, at the
+      same settings and with the same sphere, can be averaged. Applied in
+      every conflict_resolution mode before that mode's handler runs, so a
       partial map resolves what it covers and leaves the rest to be reported,
-      prompted for, or raised on. An unknown conflict id, or a key that is not
-      one of that conflict's candidates, is an error.
+      prompted for, or raised on. An unknown conflict id, a key that is not
+      one of that conflict's candidates, or candidates that cannot be
+      averaged, is an error, and nothing is changed.
   tolerances:
     type: dict
     required: false
@@ -178,6 +193,13 @@ params:
     type: str
     required: false
     description: Recorded in the provenance report when given.
+  record_author:
+    type: str
+    required: false
+    description: >
+      Recorded as the author of any record averaged while resolving
+      conflicts. When omitted, the averaged calibrations' author is kept if
+      they share one.
   keep_unused:
     type: bool
     required: false
@@ -191,8 +213,10 @@ params:
     required: false
     default: true
     description: >
-      Remap the returned dictionaries to compact calibration keys. Should
-      match the setting the single-channel files were written with.
+      Remap the returned dictionaries to compact calibration keys when they
+      are not already the single-channel file names, and give averaged
+      records compact keys. Should match the setting the single-channel files
+      were written with.
   verbose:
     type: bool
     required: false
@@ -217,3 +241,4 @@ implementations:
       conflicts: "['conflicts']"
       provenance: "['provenance']"
       provenance_path: "['provenance_path']"
+      single_channel_data: "['single_channel_data']"

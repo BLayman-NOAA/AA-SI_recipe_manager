@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: api.step_hashes and api.fingerprint_differences
+
+- `api.step_hashes(recipe, inputs=..., storage_options=...)`: every step's
+  cache identity under the recipe's current parameters, computed without
+  running anything. Each `StepHash` carries the `step_hash` that addresses
+  the step's entry, whether the step is `fanned_out` (mapped or swept, so
+  its instances are stored under derived hashes), and the fingerprint
+  `payload` those instances record as `fingerprint_payload`. Lets a tool
+  outside the package, such as the EchogramGL viewer, find the checkpoint a
+  recipe names.
+- `api.fingerprint_differences(stored, current)`: the field by field
+  payload comparison `explain-cache` reports for a miss.
+
 ### Added: phase_detect_seafloor op
 
 - `phase_detect_seafloor`: seafloor detection with the phase-aware
