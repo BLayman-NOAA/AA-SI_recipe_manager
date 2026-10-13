@@ -1,0 +1,275 @@
+{
+  "schema": 1,
+  "slug": "hb1603-level-1",
+  "title": "HB1603 level 1, raw ingest",
+  "recipe": {
+    "name": "hb1603_processing_lvl_1_per_file",
+    "description": "Per-file raw ingest, streamed from NCEI.",
+    "version": "1.0",
+    "source": "recipes/HB1603/sub_recipes/processing_lvl_1_per_file.yaml",
+    "parent": "hb1603-dive-analysis",
+    "level": 1,
+    "cruise": "HB1603"
+  },
+  "nodes": [
+    {
+      "id": "in:per_file_source",
+      "kind": "input",
+      "label": "inputs.per_file_source",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "The ${step.output} list the per-file steps map over, one instance per entry. Must be overridden by the including recipe, with the same value for every level that shares the chain. Normally ${query_ncei.raw_urls}: the whole catalogue, or the dive files alone when that query carries file_names. Substituted textually, so the fingerprinted map_over is the value passed."
+    },
+    {
+      "id": "in:sonar_model",
+      "kind": "input",
+      "label": "inputs.sonar_model",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "EK60",
+      "description": "Sonar model string for echopype.",
+      "group": "group:0"
+    },
+    {
+      "id": "read_raw",
+      "kind": "step",
+      "op": "read_raw_files",
+      "op_url": "ops/read_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "never",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "required": true,
+          "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
+          "value": [
+            "${_item}"
+          ]
+        }
+      ],
+      "params": [
+        {
+          "name": "sonar_model",
+          "type": "str",
+          "units": null,
+          "description": "Sonar model string recognized by echopype (e.g. 'EK60', 'EK80')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.sonar_model}"
+        },
+        {
+          "name": "include_bot",
+          "type": "bool",
+          "units": null,
+          "description": "Include bottom-detection (.bot) data if available",
+          "default": true,
+          "set": true,
+          "value": false
+        },
+        {
+          "name": "intermediate_format",
+          "type": "str",
+          "units": null,
+          "description": "Intermediate store format written to exe_temp/data between the read_raw and combine_raw steps. Supported values: \"netcdf\" (default), \"zarr\", \"none\".\n\"netcdf\" (default, recommended): each raw file is written as a temporary .nc file, reopened, and combined. After combining, all EchoData groups are rechunked to a single uniform chunk so the downstream zarr v2 checkpoint write (combine_raw with checkpoint: always) always succeeds.\n\"none\": all EchoData objects are kept in memory with no temp files. Use when the full dataset fits comfortably in RAM.\n\"zarr\": each raw file is written as a temporary zarr store (zarr_format=2, matching the checkpoint writer) and reopened lazily for combining. Unlike netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket) by passing a gs:// --temp-dir, which is the intended path for surveys too large to stage on local disk. Combined with gs:// raw_file_paths, local disk usage stays at roughly one raw file for the whole run.",
+          "default": "netcdf",
+          "set": true,
+          "value": "zarr"
+        },
+        {
+          "name": "use_swap",
+          "type": "str",
+          "units": null,
+          "description": "Passed to echopype open_raw as use_swap. \"auto\" (default) triggers per-file swap when the expanded data would exceed ~40% of total RAM.",
+          "default": "auto",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
+          "disposed": true
+        }
+      ]
+    },
+    {
+      "id": "combine_raw",
+      "kind": "step",
+      "op": "combine_raw_files",
+      "op_url": "ops/combine_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "required": true,
+          "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
+          "value": "${read_raw.raw_stores}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk length along ping_time for the combined EchoData, which directly sets the chunking of the downstream zarr checkpoint. Larger values mean fewer, bigger objects: faster remote (gs://) checkpoint writes and fewer read requests, at the cost of more RAM per computed chunk and coarser lazy-read granularity for windowed access. 1000 is a balanced default; try 2000-4000 for bucket-backed caches if the combined checkpoint write is slow and memory allows.",
+          "default": 1000,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "description": "Combined echopype EchoData object",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:combine_raw.echodata",
+      "kind": "output",
+      "label": "combine_raw.echodata",
+      "type": "EchoData",
+      "declared": false,
+      "from": {
+        "step": "combine_raw",
+        "output": "echodata"
+      },
+      "group": "group:0"
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:per_file_source",
+      "target": "read_raw",
+      "kind": "map_over",
+      "source_output": "per_file_source",
+      "target_input": "raw_file_paths",
+      "label": "per_file_source -> _item -> raw_file_paths",
+      "type": "str",
+      "group": "group:0",
+      "item_inputs": [
+        "raw_file_paths"
+      ]
+    },
+    {
+      "source": "in:sonar_model",
+      "target": "read_raw",
+      "kind": "param",
+      "source_output": "sonar_model",
+      "target_input": "sonar_model",
+      "label": "sonar_model",
+      "type": "str"
+    },
+    {
+      "source": "read_raw",
+      "target": "combine_raw",
+      "kind": "data",
+      "source_output": "raw_stores",
+      "target_input": "raw_stores",
+      "label": "raw_stores",
+      "type": "list"
+    },
+    {
+      "source": "combine_raw",
+      "target": "out:combine_raw.echodata",
+      "kind": "exit",
+      "source_output": "echodata",
+      "target_input": null,
+      "label": "echodata",
+      "type": "EchoData"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${inputs.per_file_source}",
+      "label": "Runs once per item of inputs.per_file_source",
+      "source": "in:per_file_source",
+      "members": [
+        "read_raw",
+        "combine_raw"
+      ]
+    }
+  ],
+  "context": {
+    "upstream": [
+      {
+        "target": "in:per_file_source",
+        "output": "raw_urls",
+        "step": "query_ncei",
+        "op": "query_ncei_data",
+        "recipe": "hb1603-level-0",
+        "title": "HB1603 level 0, NCEI catalogue and calibration mapping",
+        "page": "levels/level-0/"
+      }
+    ],
+    "downstream": [
+      {
+        "source": "out:combine_raw.echodata",
+        "input": "echodata",
+        "step": "extract_cal_params",
+        "op": "extract_standardized_cal_params",
+        "recipe": "hb1603-level-2",
+        "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:combine_raw.echodata",
+        "input": "echodata",
+        "step": "compute_sv",
+        "op": "compute_sv",
+        "recipe": "hb1603-level-2",
+        "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:combine_raw.echodata",
+        "input": "echodata",
+        "step": "compute_transducer_depth",
+        "op": "compute_transducer_depth",
+        "recipe": "hb1603-level-2",
+        "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:combine_raw.echodata",
+        "input": "echodata",
+        "step": "ep_add_depth",
+        "op": "ep_add_depth",
+        "recipe": "hb1603-level-2",
+        "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      }
+    ],
+    "values": {}
+  }
+}

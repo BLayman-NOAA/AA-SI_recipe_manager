@@ -1,0 +1,601 @@
+{
+  "schema": 1,
+  "slug": "hb2407-level-3",
+  "title": "HB2407 level 3, gridding and per-cell statistics",
+  "recipe": {
+    "name": "processing_lvl_3",
+    "description": "Sparse masking, MVBS generation, and per-cell statistics.",
+    "version": "1.0",
+    "source": "recipes/HB2407/sub_recipes/processing_lvl_3.yaml",
+    "parent": "hb2407-herring-per-file",
+    "level": 3,
+    "cruise": "HB2407"
+  },
+  "nodes": [
+    {
+      "id": "in:sv_clean_unmasked",
+      "kind": "input",
+      "label": "inputs.sv_clean_unmasked",
+      "type": "dataset",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Clean Sv dataset after noise removal and before sparse-bin masking."
+    },
+    {
+      "id": "in:range_bin",
+      "kind": "input",
+      "label": "inputs.range_bin",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "20m",
+      "description": "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    },
+    {
+      "id": "in:ping_time_bin",
+      "kind": "input",
+      "label": "inputs.ping_time_bin",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "20s",
+      "description": "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    },
+    {
+      "id": "in:nan_threshold",
+      "kind": "input",
+      "label": "inputs.nan_threshold",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0.6,
+      "description": "Fraction of NaN samples in a bin above which the sparse-bin mask excludes it."
+    },
+    {
+      "id": "in:mvbs_chunk_ping_time",
+      "kind": "input",
+      "label": "inputs.mvbs_chunk_ping_time",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 1000,
+      "description": "Ping-time chunk size applied before compute_mvbs, so it runs in dask-parallel chunks instead of as one in-memory block. mask_sparse_bins materializes Sv eagerly, so chunking has to be re-established after it by a standalone rechunk step."
+    },
+    {
+      "id": "mask_sparse",
+      "kind": "step",
+      "op": "mask_sparse_bins",
+      "op_url": "ops/mask_sparse_bins/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Remove spatiotemporal bins with fewer valid samples than a threshold, reducing noise in MVBS computation.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to screen, normally the noise-removed Sv from remove_background_noise. Masking has already emptied parts of the grid, which is what leaves some bins with too few samples to average.",
+          "value": "${inputs.sv_clean_unmasked}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": null,
+          "description": "Range bin size (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.range_bin}"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": null,
+          "description": "Ping-time bin size (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.ping_time_bin}"
+        },
+        {
+          "name": "nan_threshold",
+          "type": "float",
+          "units": null,
+          "description": "Fraction of NaN values above which a bin is masked (0.0 to 1.0)",
+          "default": 0.5,
+          "set": true,
+          "value": "${inputs.nan_threshold}"
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Meter-valued variable to bin along, which must match the value given to compute_mvbs and compute_per_cell_statistics or the sparse mask lands on a different grid than the one it is meant to clean. 'echo_range' measures from the transducer face, 'depth' from the surface and needs the dataset to carry a depth variable. The bin edges are read from the first ping of the first channel, so a range variable that varies from ping to ping, as depth does under platform vertical offsets, is approximated by its first ping.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset with samples in under-populated bins set to NaN. Feed this to compute_mvbs using the same bin sizes.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "rechunk_before_mvbs",
+      "kind": "step",
+      "op": "rechunk_dataset",
+      "op_url": "ops/rechunk_dataset/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
+          "value": "${mask_sparse.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk size along ping_time.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.mvbs_chunk_ping_time}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_mvbs",
+      "kind": "step",
+      "op": "compute_mvbs",
+      "op_url": "ops/compute_mvbs/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute Mean Volume Backscattering Strength by averaging Sv over range and time bins. Returns a gridded MVBS Dataset.\nThis step is echopype.commongrid.compute_MVBS called directly, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins, so bins that failed the sparsity check are already NaN and do not pull the bin means toward the noise floor.",
+          "value": "${rechunk_before_mvbs.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": "m",
+          "description": "Depth bin size for averaging (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.range_bin}"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": "s",
+          "description": "Ping-time bin size for averaging (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.ping_time_bin}"
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable to bin along: 'echo_range' for range from the transducer face, or 'depth' for depth below the surface. 'depth' requires the dataset to carry a depth variable, which ep_add_depth adds; binning by it is what puts channels mounted at different depths on one vertical reference.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var_max",
+          "type": "str",
+          "units": "m",
+          "description": "Deepest value the bins cover, as a unit string (e.g. '2100m'). When unset, echopype reads the maximum from the data, which forces a compute on a lazy dataset. Supplying it keeps the step lazy.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "closed",
+          "type": "str",
+          "units": null,
+          "description": "Which side of each bin interval is closed: 'left' or 'right'",
+          "default": "left",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "skipna",
+          "type": "bool",
+          "units": null,
+          "description": "Skip NaN values when averaging. When false, any NaN in a bin makes the whole bin NaN, so masked data collapses.",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "fill_value",
+          "type": "float",
+          "units": null,
+          "description": "Value for bins holding no data to aggregate. echopype defaults to NaN, which YAML cannot express here, so leaving this unset keeps that default.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "method",
+          "type": "str",
+          "units": null,
+          "description": "Flox reduction strategy for dask arrays, normally 'map-reduce'. Any other value requires reindex to be set to null in the same params block, since echopype rejects a non-null reindex outside map-reduce and its own default for reindex is false rather than null.",
+          "default": "map-reduce",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "reindex",
+          "type": "bool",
+          "units": null,
+          "description": "Reindex at the blockwise stage rather than after it. False uses less memory and more time. Only meaningful when method is 'map-reduce'.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_MVBS",
+          "type": "Dataset",
+          "description": "Gridded MVBS Dataset",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_cell_stats",
+      "kind": "step",
+      "op": "compute_per_cell_statistics",
+      "op_url": "ops/compute_per_cell_statistics/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute per-MVBS-cell statistics (e.g. coefficient of variation) from fine-resolution Sv data before masking or MVBS averaging. Results are stored as new DataArrays in the returned dataset at MVBS-bin resolution. Must be called with the same range_bin, ping_time_bin and range_var values used by mask_sparse_bins and compute_mvbs so that bin grids align exactly. Pass the returned dataset to add_auxiliary_features via the ds_sv input to absorb the statistics into the ML feature matrix.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv from remove_background_noise. Take it from before mask_sparse_bins: the within-cell spread is the signal here, and dropping sparse bins first would hide the cells whose variability is most informative.",
+          "value": "${inputs.sv_clean_unmasked}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": null,
+          "description": "Range bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.range_bin}"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": null,
+          "description": "Ping-time bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.ping_time_bin}"
+        },
+        {
+          "name": "statistics",
+          "type": "list",
+          "units": null,
+          "description": "List of statistics to compute. Supported: ['cv']",
+          "default": [
+            "cv"
+          ],
+          "set": true,
+          "value": [
+            "cv"
+          ]
+        },
+        {
+          "name": "data_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of the Sv variable in the input Dataset",
+          "default": "Sv",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Meter-valued variable to bin along, which must match the value given to mask_sparse_bins and compute_mvbs or the cell statistics describe cells offset from the MVBS cells they are joined to. 'echo_range' measures from the transducer face, 'depth' from the surface and needs the dataset to carry a depth variable. The cell dimension names stay cell_ping_time and cell_echo_range either way, since add_auxiliary_features selects on them by name.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var_max",
+          "type": "str",
+          "units": "m",
+          "description": "Deepest value the cells cover, as a unit string (e.g. '1810m'), matching the value given to compute_mvbs.\nWhen unset the extent is read from the data. That forces a compute on a lazy dataset, and it lets each dataset choose its own cell grid length, which is only safe when this step runs once on one merged dataset. Mapped over a survey's per-file Sv it is the bug: each file bins to its own extent and the fan-in outer-joins cell_echo_range and NaN-pads the short ones, the same trap the survey tier guards against on range_sample.\nPin it whenever the results will be merged.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cells_only",
+          "type": "bool",
+          "units": null,
+          "description": "Return only the statistic arrays instead of a copy of ds_Sv carrying them.\nThe default keeps the source variables, which is what a single call on a merged dataset wants. Set it true whenever this step is checkpointed or its results are merged: otherwise the fine-resolution Sv is written a second time, and a merge on cell_ping_time drags ping_time and range_sample into the join, which across files with differing range_sample lengths outer-joins and NaN-pads them. That is the same trap the survey tier exists to avoid, reintroduced one dimension over.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Input Dataset with per-cell statistic variables appended (e.g. cell_cv with dims channel x cell_ping_time x cell_echo_range)",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:compute_mvbs.ds_MVBS",
+      "kind": "output",
+      "label": "compute_mvbs.ds_MVBS",
+      "type": "Dataset",
+      "declared": false,
+      "from": {
+        "step": "compute_mvbs",
+        "output": "ds_MVBS"
+      }
+    },
+    {
+      "id": "out:compute_cell_stats.ds_Sv",
+      "kind": "output",
+      "label": "compute_cell_stats.ds_Sv",
+      "type": "Dataset",
+      "declared": false,
+      "from": {
+        "step": "compute_cell_stats",
+        "output": "ds_Sv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:sv_clean_unmasked",
+      "target": "mask_sparse",
+      "kind": "data",
+      "source_output": "sv_clean_unmasked",
+      "target_input": "ds_Sv",
+      "label": "sv_clean_unmasked -> ds_Sv",
+      "type": "dataset"
+    },
+    {
+      "source": "in:range_bin",
+      "target": "mask_sparse",
+      "kind": "param",
+      "source_output": "range_bin",
+      "target_input": "range_bin",
+      "label": "range_bin",
+      "type": "str"
+    },
+    {
+      "source": "in:ping_time_bin",
+      "target": "mask_sparse",
+      "kind": "param",
+      "source_output": "ping_time_bin",
+      "target_input": "ping_time_bin",
+      "label": "ping_time_bin",
+      "type": "str"
+    },
+    {
+      "source": "in:nan_threshold",
+      "target": "mask_sparse",
+      "kind": "param",
+      "source_output": "nan_threshold",
+      "target_input": "nan_threshold",
+      "label": "nan_threshold",
+      "type": "float"
+    },
+    {
+      "source": "mask_sparse",
+      "target": "rechunk_before_mvbs",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:mvbs_chunk_ping_time",
+      "target": "rechunk_before_mvbs",
+      "kind": "param",
+      "source_output": "mvbs_chunk_ping_time",
+      "target_input": "ping_time_chunk",
+      "label": "mvbs_chunk_ping_time -> ping_time_chunk",
+      "type": "int"
+    },
+    {
+      "source": "rechunk_before_mvbs",
+      "target": "compute_mvbs",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:range_bin",
+      "target": "compute_mvbs",
+      "kind": "param",
+      "source_output": "range_bin",
+      "target_input": "range_bin",
+      "label": "range_bin",
+      "type": "str"
+    },
+    {
+      "source": "in:ping_time_bin",
+      "target": "compute_mvbs",
+      "kind": "param",
+      "source_output": "ping_time_bin",
+      "target_input": "ping_time_bin",
+      "label": "ping_time_bin",
+      "type": "str"
+    },
+    {
+      "source": "in:sv_clean_unmasked",
+      "target": "compute_cell_stats",
+      "kind": "data",
+      "source_output": "sv_clean_unmasked",
+      "target_input": "ds_Sv",
+      "label": "sv_clean_unmasked -> ds_Sv",
+      "type": "dataset"
+    },
+    {
+      "source": "in:range_bin",
+      "target": "compute_cell_stats",
+      "kind": "param",
+      "source_output": "range_bin",
+      "target_input": "range_bin",
+      "label": "range_bin",
+      "type": "str"
+    },
+    {
+      "source": "in:ping_time_bin",
+      "target": "compute_cell_stats",
+      "kind": "param",
+      "source_output": "ping_time_bin",
+      "target_input": "ping_time_bin",
+      "label": "ping_time_bin",
+      "type": "str"
+    },
+    {
+      "source": "compute_mvbs",
+      "target": "out:compute_mvbs.ds_MVBS",
+      "kind": "exit",
+      "source_output": "ds_MVBS",
+      "target_input": null,
+      "label": "ds_MVBS",
+      "type": "Dataset"
+    },
+    {
+      "source": "compute_cell_stats",
+      "target": "out:compute_cell_stats.ds_Sv",
+      "kind": "exit",
+      "source_output": "ds_Sv",
+      "target_input": null,
+      "label": "ds_Sv",
+      "type": "Dataset"
+    }
+  ],
+  "groups": [],
+  "context": {
+    "upstream": [
+      {
+        "target": "in:sv_clean_unmasked",
+        "output": "ds_Sv",
+        "step": "remove_noise",
+        "op": "remove_background_noise",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      }
+    ],
+    "downstream": [
+      {
+        "source": "out:compute_mvbs.ds_MVBS",
+        "input": "ds_Sv",
+        "step": "plot_mvbs",
+        "op": "plot_sv_echogram",
+        "recipe": "hb2407-herring-per-file",
+        "title": "HB2407 herring, per file",
+        "page": "levels/hb2407-herring-per-file/"
+      },
+      {
+        "source": "out:compute_mvbs.ds_MVBS",
+        "input": "ds_MVBS",
+        "step": "reshape_ml",
+        "op": "reshape_for_ml",
+        "recipe": "hb2407-level-4",
+        "title": "HB2407 level 4, clustering",
+        "page": "levels/level-4/"
+      },
+      {
+        "source": "out:compute_cell_stats.ds_Sv",
+        "input": "ds_sv",
+        "step": "add_aux_features",
+        "op": "add_auxiliary_features",
+        "recipe": "hb2407-level-4",
+        "title": "HB2407 level 4, clustering",
+        "page": "levels/level-4/"
+      }
+    ],
+    "values": {
+      "in:range_bin": "= 4m",
+      "in:ping_time_bin": "= 4s",
+      "in:nan_threshold": "= 0.95"
+    }
+  }
+}

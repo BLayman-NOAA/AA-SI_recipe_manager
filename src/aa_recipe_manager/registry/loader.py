@@ -72,7 +72,7 @@ def _load_spec_file(path: Path, registry: Registry) -> None:
     except ValidationError as exc:
         raise ValueError(f"Invalid spec in '{path}':\n{exc}") from exc
 
-    registry.register_spec(spec)
+    registry.register_spec(spec, path=path)
 
     for impl_data in implementations_data:
         impl_data = dict(impl_data)

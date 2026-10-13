@@ -1,0 +1,625 @@
+{
+  "schema": 1,
+  "slug": "quickstart",
+  "title": "Quickstart",
+  "recipe": {
+    "name": "quickstart",
+    "description": "Fetch HB1603 raw files from NCEI, compute Sv and plot an echogram.",
+    "version": "1.0",
+    "source": "recipes/quickstart/quickstart.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": null
+  },
+  "nodes": [
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2016-07-25T20:58:00",
+      "description": "Start of the window, UTC. Every file overlapping the window is fetched."
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2016-07-25T21:45:00",
+      "description": "End of the window, UTC. A wider window fetches more files."
+    },
+    {
+      "id": "in:cruise_name",
+      "kind": "input",
+      "label": "inputs.cruise_name",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "HB1603",
+      "description": "NCEI CRUISE_NAME to search."
+    },
+    {
+      "id": "in:sonar_model",
+      "kind": "input",
+      "label": "inputs.sonar_model",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "EK60",
+      "description": "Echosounder model, as echopype names it."
+    },
+    {
+      "id": "in:max_depth",
+      "kind": "input",
+      "label": "inputs.max_depth",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 1000.0,
+      "description": "Deepest depth drawn on the echogram, in metres."
+    },
+    {
+      "id": "query_ncei",
+      "kind": "step",
+      "op": "query_ncei_data",
+      "op_url": "ops/query_ncei_data/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "ISO 8601 start of window, e.g. '2016-07-25T20:58'",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "ISO 8601 end of window",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        },
+        {
+          "name": "filters",
+          "type": "dict",
+          "units": null,
+          "description": "Key-value filters applied to NCEI metadata (e.g. CRUISE_NAME)",
+          "default": {},
+          "set": true,
+          "value": {
+            "CRUISE_NAME": "${inputs.cruise_name}"
+          }
+        },
+        {
+          "name": "file_names",
+          "type": "list",
+          "units": null,
+          "description": "Keep only these files, matched on the D{date}-T{time} stamp in the name, so a bare D20160725-T205832.raw finds the archive's HB1603_L1- form and the reverse. Applied after the time window, client side, in catalogue order. A name the query did not return raises rather than silently shrinking the result. Wire it from a planning step, for example ${plan_dives.raw_files}, to map a per-file chain over an analysis's files alone. Empty keeps everything.",
+          "default": [],
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ncei_results",
+          "type": "list",
+          "description": "List of NCEI file metadata records (dicts) matching the query",
+          "disposed": false
+        },
+        {
+          "name": "query_label",
+          "type": "str",
+          "description": "Readable, folder-safe slug derived from the query parameters. Intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir.",
+          "disposed": false
+        },
+        {
+          "name": "raw_urls",
+          "type": "list",
+          "description": "Public HTTPS URL of each record's .raw object, in record order. For steps that read a file in place rather than downloading it, such as read_raw_file_config with max_scan_bytes: map over this and each instance range-reads the leading bytes of one file, with nothing transferred whole and nothing left on disk.\nPlain strings, so a mapped instance is content-addressed by its URL and dedupes across runs the same way a raw file path does. Built rather than probed, so a record whose object is not stored as <key>.raw fails on read instead of costing a HEAD request per file.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "read_raw",
+      "kind": "step",
+      "op": "read_raw_files",
+      "op_url": "ops/read_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "required": true,
+          "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
+          "value": "${query_ncei.raw_urls}"
+        }
+      ],
+      "params": [
+        {
+          "name": "sonar_model",
+          "type": "str",
+          "units": null,
+          "description": "Sonar model string recognized by echopype (e.g. 'EK60', 'EK80')",
+          "default": null,
+          "set": true,
+          "value": "${inputs.sonar_model}"
+        },
+        {
+          "name": "include_bot",
+          "type": "bool",
+          "units": null,
+          "description": "Include bottom-detection (.bot) data if available",
+          "default": true,
+          "set": true,
+          "value": false
+        },
+        {
+          "name": "intermediate_format",
+          "type": "str",
+          "units": null,
+          "description": "Intermediate store format written to exe_temp/data between the read_raw and combine_raw steps. Supported values: \"netcdf\" (default), \"zarr\", \"none\".\n\"netcdf\" (default, recommended): each raw file is written as a temporary .nc file, reopened, and combined. After combining, all EchoData groups are rechunked to a single uniform chunk so the downstream zarr v2 checkpoint write (combine_raw with checkpoint: always) always succeeds.\n\"none\": all EchoData objects are kept in memory with no temp files. Use when the full dataset fits comfortably in RAM.\n\"zarr\": each raw file is written as a temporary zarr store (zarr_format=2, matching the checkpoint writer) and reopened lazily for combining. Unlike netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket) by passing a gs:// --temp-dir, which is the intended path for surveys too large to stage on local disk. Combined with gs:// raw_file_paths, local disk usage stays at roughly one raw file for the whole run.",
+          "default": "netcdf",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_swap",
+          "type": "str",
+          "units": null,
+          "description": "Passed to echopype open_raw as use_swap. \"auto\" (default) triggers per-file swap when the expanded data would exceed ~40% of total RAM.",
+          "default": "auto",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "combine_raw",
+      "kind": "step",
+      "op": "combine_raw_files",
+      "op_url": "ops/combine_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "required": true,
+          "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
+          "value": "${read_raw.raw_stores}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk length along ping_time for the combined EchoData, which directly sets the chunking of the downstream zarr checkpoint. Larger values mean fewer, bigger objects: faster remote (gs://) checkpoint writes and fewer read requests, at the cost of more RAM per computed chunk and coarser lazy-read granularity for windowed access. 1000 is a balanced default; try 2000-4000 for bucket-backed caches if the combined checkpoint write is slow and memory allows.",
+          "default": 1000,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "description": "Combined echopype EchoData object",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_sv",
+      "kind": "step",
+      "op": "compute_sv",
+      "op_url": "ops/compute_sv/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
+          "value": "${combine_raw.echodata}"
+        },
+        {
+          "name": "cal_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
+          "value": null
+        },
+        {
+          "name": "env_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
+          "value": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "plot_sv",
+      "kind": "step",
+      "op": "plot_sv_echogram",
+      "op_url": "ops/plot_sv_echogram/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
+      "sink": true,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Primary Sv dataset to plot",
+          "value": "${compute_sv.ds_Sv}"
+        },
+        {
+          "name": "ds_Sv_source",
+          "type": "Dataset",
+          "required": false,
+          "description": "Reference Sv dataset whose coordinates set the axes",
+          "value": null
+        }
+      ],
+      "params": [
+        {
+          "name": "min_depth",
+          "type": "float",
+          "units": null,
+          "description": "Minimum depth (y-axis) in meters",
+          "default": 0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "max_depth",
+          "type": "float",
+          "units": null,
+          "description": "Maximum depth (y-axis) in meters. Omit to use the deepest depth present in the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.max_depth}"
+        },
+        {
+          "name": "ping_min",
+          "type": "int",
+          "units": null,
+          "description": "First ping index to display",
+          "default": 0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "ping_max",
+          "type": "int",
+          "units": null,
+          "description": "Last ping index to display. Omit to display through the last ping.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "units": null,
+          "description": "Start of the displayed window as a UTC timestamp, for example \"2024-10-15T12:30\". Resolved to the closest ping and used instead of ping_min. Omit to window by ping index.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "units": null,
+          "description": "End of the displayed window as a UTC timestamp. Resolved to the closest ping and used instead of ping_max. Omit to window by ping index.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the x-axis: 'datetime' (default, absolute UTC clock times), 'seconds' from the first ping shown, 'pings', 'meters' (distance travelled, derived from the GPS track), or 'bins' (MVBS input only).",
+          "default": "datetime",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the y-axis: 'meters' (default), 'range_sample', or 'bins' (MVBS input only).",
+          "default": "meters",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "panel_width_to_height",
+          "type": "float",
+          "units": null,
+          "description": "Force each frequency panel to be this many times wider than tall (for example 8 for a long strip). Omit for automatic sizing.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_lines",
+          "type": "list",
+          "units": null,
+          "description": "Optional list of line overlays. Each entry is a dict with 'var' (variable name in ds_Sv) and 'style' (dict of matplotlib kwargs).",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_image",
+          "type": "bool",
+          "units": null,
+          "description": "Save the rendered figure to an image file; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_formats",
+          "type": "list",
+          "units": null,
+          "description": "Image formats to save, chosen from png, svg, jpeg, jpg, and pdf",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_dir",
+          "type": "str",
+          "units": null,
+          "description": "Optional directory override for saved image artifacts",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "show",
+          "type": "bool",
+          "units": null,
+          "description": "Whether to display the figure interactively or inline; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "dpi",
+          "type": "int",
+          "units": null,
+          "description": "Optional DPI override for raster image outputs",
+          "default": 100,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "id": "out:sv",
+      "kind": "output",
+      "label": "sv",
+      "type": "Dataset",
+      "declared": true,
+      "from": {
+        "step": "compute_sv",
+        "output": "ds_Sv"
+      }
+    },
+    {
+      "id": "out:query_ncei.ncei_results",
+      "kind": "output",
+      "label": "query_ncei.ncei_results",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "query_ncei",
+        "output": "ncei_results"
+      }
+    },
+    {
+      "id": "out:query_ncei.query_label",
+      "kind": "output",
+      "label": "query_ncei.query_label",
+      "type": "str",
+      "declared": false,
+      "from": {
+        "step": "query_ncei",
+        "output": "query_label"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:file_time_start",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:cruise_name",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "cruise_name",
+      "target_input": "filters",
+      "label": "cruise_name -> filters",
+      "type": "str"
+    },
+    {
+      "source": "query_ncei",
+      "target": "read_raw",
+      "kind": "data",
+      "source_output": "raw_urls",
+      "target_input": "raw_file_paths",
+      "label": "raw_urls -> raw_file_paths",
+      "type": "list"
+    },
+    {
+      "source": "in:sonar_model",
+      "target": "read_raw",
+      "kind": "param",
+      "source_output": "sonar_model",
+      "target_input": "sonar_model",
+      "label": "sonar_model",
+      "type": "str"
+    },
+    {
+      "source": "read_raw",
+      "target": "combine_raw",
+      "kind": "data",
+      "source_output": "raw_stores",
+      "target_input": "raw_stores",
+      "label": "raw_stores",
+      "type": "list"
+    },
+    {
+      "source": "combine_raw",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "EchoData"
+    },
+    {
+      "source": "compute_sv",
+      "target": "plot_sv",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:max_depth",
+      "target": "plot_sv",
+      "kind": "param",
+      "source_output": "max_depth",
+      "target_input": "max_depth",
+      "label": "max_depth",
+      "type": "float"
+    },
+    {
+      "source": "compute_sv",
+      "target": "out:sv",
+      "kind": "exit",
+      "source_output": "ds_Sv",
+      "target_input": null,
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "query_ncei",
+      "target": "out:query_ncei.ncei_results",
+      "kind": "exit",
+      "source_output": "ncei_results",
+      "target_input": null,
+      "label": "ncei_results",
+      "type": "list"
+    },
+    {
+      "source": "query_ncei",
+      "target": "out:query_ncei.query_label",
+      "kind": "exit",
+      "source_output": "query_label",
+      "target_input": null,
+      "label": "query_label",
+      "type": "str"
+    }
+  ],
+  "groups": []
+}

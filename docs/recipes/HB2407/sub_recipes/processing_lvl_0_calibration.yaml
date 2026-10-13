@@ -1,0 +1,85 @@
+# Documentation copy of the first two steps of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/
+# sub_recipes/processing_lvl_1_per_file.yaml, split out so HB2407 follows the same levels as HB1603.
+
+# Processing level 0: select the raw files and build the calibration mapping.
+#
+#   initial_setup -> gen_cal_mapping
+#
+# initial_setup lists the raw files in raw_input_folder inside the time window,
+# and that list is what every per-file step in levels 1 and 2 maps over.
+# gen_cal_mapping runs the whole calibration pipeline in one step, once for the
+# survey: it scans the raw files' channel settings, standardizes the
+# manufacturer calibration files (.xml for EK80), and matches every raw channel
+# to a calibration. mapping_dict is keyed per raw filename, and each
+# extract_cal_params instance in level 2 picks its own file's entry out of it.
+
+recipe:
+  name: "processing_lvl_0_calibration"
+  description: "Raw file selection and the survey's calibration mapping (gs:// inputs)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+  cal_input_folder:
+    type: path
+    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder".
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime restricting processing to raw files whose
+      filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound.
+      Applied to both the processed file set and the calibration scan; leave
+      unset to process every file. This bound also sets the fan-out width: one
+      mapped instance per selected file.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # Runs once for the whole survey, so the calibration files are parsed once.
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}

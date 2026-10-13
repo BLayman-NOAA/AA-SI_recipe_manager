@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import warnings
+from pathlib import Path
 
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
@@ -25,13 +26,27 @@ class Registry:
 
     def __init__(self) -> None:
         self._specs: dict[str, Spec] = {}
+        self._spec_files: dict[str, Path] = {}
         self._implementations: dict[str, dict[str, Implementation]] = {}
 
-    def register_spec(self, spec: Spec) -> None:
-        """Add a spec to the registry, overwriting any existing entry for the same op."""
+    def register_spec(self, spec: Spec, path: Path | None = None) -> None:
+        """Add a spec to the registry, overwriting any existing entry for the same op.
+
+        Args:
+            spec: The spec to register.
+            path: The YAML file the spec was read from, if any.
+        """
         self._specs[spec.op] = spec
+        if path is None:
+            self._spec_files.pop(spec.op, None)
+        else:
+            self._spec_files[spec.op] = path
         if spec.op not in self._implementations:
             self._implementations[spec.op] = {}
+
+    def spec_file(self, op: str) -> Path | None:
+        """Return the YAML file an op's spec was loaded from, or None."""
+        return self._spec_files.get(op)
 
     def register_implementation(self, impl: Implementation) -> None:
         """Add an implementation to the registry.

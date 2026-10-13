@@ -1,0 +1,429 @@
+{
+  "schema": 1,
+  "slug": "hb1603-level-5",
+  "title": "HB1603 level 5, dive SVCodes",
+  "recipe": {
+    "name": "hb1603_processing_lvl_5_sv_codes",
+    "description": "Per-dive SVCode CSVs and the depth-interval duration tables.",
+    "version": "1.0",
+    "source": "recipes/HB1603/sub_recipes/processing_lvl_5_sv_codes.yaml",
+    "parent": "hb1603-dive-analysis",
+    "level": 5,
+    "cruise": "HB1603"
+  },
+  "nodes": [
+    {
+      "id": "in:clustered",
+      "kind": "input",
+      "label": "inputs.clustered",
+      "type": "Dataset",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Dataset with the embedded cluster labels. Wire it to embed_results.ds_normalized."
+    },
+    {
+      "id": "in:dive_windows",
+      "kind": "input",
+      "label": "inputs.dive_windows",
+      "type": "list",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Window dicts, one per dive, each with start and end. Wire it to plan_dives.windows. Any list of windows works, which is what lets this level serve an analysis other than the dives."
+    },
+    {
+      "id": "in:code_output_dir",
+      "kind": "input",
+      "label": "inputs.code_output_dir",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "./outputs/sv_codes",
+      "description": "Where the per-dive CSVs and the duration tables are written."
+    },
+    {
+      "id": "in:ping_time_bin",
+      "kind": "input",
+      "label": "inputs.ping_time_bin",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "10s",
+      "description": "The grid's ping-time bin, as level 3 takes it. Each ping contributes one bin of this length to its code's duration, so it must be the value level 3 gridded on. Wire both from one parent input."
+    },
+    {
+      "id": "in:depth_interval_m",
+      "kind": "input",
+      "label": "inputs.depth_interval_m",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 200.0,
+      "description": "Depth bin of the duration table. 200 m matches the report."
+    },
+    {
+      "id": "generate_sv_codes",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "aa_si_utils.dive_profiles.generate_sv_codes",
+      "description": "Write per-dive SVCode CSVs from the embedded clustering.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds",
+          "type": "Dataset",
+          "required": true,
+          "description": null,
+          "value": "${inputs.clustered}"
+        }
+      ],
+      "params": [
+        {
+          "name": "windows",
+          "type": "list",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.dive_windows}"
+        },
+        {
+          "name": "output_dir",
+          "type": "path",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.code_output_dir}"
+        },
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "ml_result_name",
+          "type": "str",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "hdbscan_results"
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "depth"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.ping_time_bin}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "code_csv_paths",
+          "type": "list",
+          "description": null,
+          "disposed": false
+        },
+        {
+          "name": "summary_csv_path",
+          "type": "path",
+          "description": null,
+          "disposed": false
+        },
+        {
+          "name": "dive_labels",
+          "type": "list",
+          "description": null,
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "sv_code_depth_table",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "aa_si_utils.dive_profiles.sv_code_depth_table",
+      "description": "Percent of dive duration per depth interval per code.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "summary_csv_path",
+          "type": "path",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${generate_sv_codes.summary_csv_path}"
+        },
+        {
+          "name": "output_dir",
+          "type": "path",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.code_output_dir}"
+        },
+        {
+          "name": "depth_interval_m",
+          "type": "float",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.depth_interval_m}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "per_dive_csv_path",
+          "type": "path",
+          "description": null,
+          "disposed": false
+        },
+        {
+          "name": "combined_csv_path",
+          "type": "path",
+          "description": null,
+          "disposed": false
+        },
+        {
+          "name": "totals_csv_path",
+          "type": "path",
+          "description": null,
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:generate_sv_codes.code_csv_paths",
+      "kind": "output",
+      "label": "generate_sv_codes.code_csv_paths",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "generate_sv_codes",
+        "output": "code_csv_paths"
+      }
+    },
+    {
+      "id": "out:generate_sv_codes.dive_labels",
+      "kind": "output",
+      "label": "generate_sv_codes.dive_labels",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "generate_sv_codes",
+        "output": "dive_labels"
+      }
+    },
+    {
+      "id": "out:sv_code_depth_table.per_dive_csv_path",
+      "kind": "output",
+      "label": "sv_code_depth_table.per_dive_csv_path",
+      "type": "path",
+      "declared": false,
+      "from": {
+        "step": "sv_code_depth_table",
+        "output": "per_dive_csv_path"
+      }
+    },
+    {
+      "id": "out:sv_code_depth_table.combined_csv_path",
+      "kind": "output",
+      "label": "sv_code_depth_table.combined_csv_path",
+      "type": "path",
+      "declared": false,
+      "from": {
+        "step": "sv_code_depth_table",
+        "output": "combined_csv_path"
+      }
+    },
+    {
+      "id": "out:sv_code_depth_table.totals_csv_path",
+      "kind": "output",
+      "label": "sv_code_depth_table.totals_csv_path",
+      "type": "path",
+      "declared": false,
+      "from": {
+        "step": "sv_code_depth_table",
+        "output": "totals_csv_path"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:clustered",
+      "target": "generate_sv_codes",
+      "kind": "data",
+      "source_output": "clustered",
+      "target_input": "ds",
+      "label": "clustered -> ds",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:dive_windows",
+      "target": "generate_sv_codes",
+      "kind": "param",
+      "source_output": "dive_windows",
+      "target_input": "windows",
+      "label": "dive_windows -> windows",
+      "type": "list"
+    },
+    {
+      "source": "in:code_output_dir",
+      "target": "generate_sv_codes",
+      "kind": "param",
+      "source_output": "code_output_dir",
+      "target_input": "output_dir",
+      "label": "code_output_dir -> output_dir",
+      "type": "path"
+    },
+    {
+      "source": "in:ping_time_bin",
+      "target": "generate_sv_codes",
+      "kind": "param",
+      "source_output": "ping_time_bin",
+      "target_input": "ping_time_bin",
+      "label": "ping_time_bin",
+      "type": "str"
+    },
+    {
+      "source": "generate_sv_codes",
+      "target": "sv_code_depth_table",
+      "kind": "param",
+      "source_output": "summary_csv_path",
+      "target_input": "summary_csv_path",
+      "label": "summary_csv_path",
+      "type": "path"
+    },
+    {
+      "source": "in:code_output_dir",
+      "target": "sv_code_depth_table",
+      "kind": "param",
+      "source_output": "code_output_dir",
+      "target_input": "output_dir",
+      "label": "code_output_dir -> output_dir",
+      "type": "path"
+    },
+    {
+      "source": "in:depth_interval_m",
+      "target": "sv_code_depth_table",
+      "kind": "param",
+      "source_output": "depth_interval_m",
+      "target_input": "depth_interval_m",
+      "label": "depth_interval_m",
+      "type": "float"
+    },
+    {
+      "source": "generate_sv_codes",
+      "target": "out:generate_sv_codes.code_csv_paths",
+      "kind": "exit",
+      "source_output": "code_csv_paths",
+      "target_input": null,
+      "label": "code_csv_paths",
+      "type": "list"
+    },
+    {
+      "source": "generate_sv_codes",
+      "target": "out:generate_sv_codes.dive_labels",
+      "kind": "exit",
+      "source_output": "dive_labels",
+      "target_input": null,
+      "label": "dive_labels",
+      "type": "list"
+    },
+    {
+      "source": "sv_code_depth_table",
+      "target": "out:sv_code_depth_table.per_dive_csv_path",
+      "kind": "exit",
+      "source_output": "per_dive_csv_path",
+      "target_input": null,
+      "label": "per_dive_csv_path",
+      "type": "path"
+    },
+    {
+      "source": "sv_code_depth_table",
+      "target": "out:sv_code_depth_table.combined_csv_path",
+      "kind": "exit",
+      "source_output": "combined_csv_path",
+      "target_input": null,
+      "label": "combined_csv_path",
+      "type": "path"
+    },
+    {
+      "source": "sv_code_depth_table",
+      "target": "out:sv_code_depth_table.totals_csv_path",
+      "kind": "exit",
+      "source_output": "totals_csv_path",
+      "target_input": null,
+      "label": "totals_csv_path",
+      "type": "path"
+    }
+  ],
+  "groups": [],
+  "context": {
+    "upstream": [
+      {
+        "target": "in:clustered",
+        "output": "ds_normalized",
+        "step": "embed_results",
+        "op": "embed_clustering_results",
+        "recipe": "hb1603-level-4",
+        "title": "HB1603 level 4, clustering",
+        "page": "levels/level-4/"
+      },
+      {
+        "target": "in:dive_windows",
+        "output": "windows",
+        "step": "plan_dives",
+        "op": "custom",
+        "recipe": "hb1603-dive-plan",
+        "title": "HB1603 dive plan",
+        "page": "levels/hb1603-dive-analysis/"
+      }
+    ],
+    "downstream": [],
+    "values": {
+      "in:code_output_dir": "= ./outputs/sv_codes",
+      "in:ping_time_bin": "(from parent input ping_time_bin)",
+      "in:depth_interval_m": "= 200.0"
+    }
+  }
+}

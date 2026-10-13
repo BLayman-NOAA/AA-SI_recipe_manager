@@ -1,0 +1,524 @@
+{
+  "schema": 1,
+  "slug": "calibration-mapping",
+  "title": "Calibration phase 2, mapping",
+  "recipe": {
+    "name": "rl2307_calibration_mapping",
+    "description": "Match RL2307 raw channels to their calibration data and write the mapping files.",
+    "version": "1.0",
+    "source": "recipes/calibration/calibration_mapping.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": "RL2307"
+  },
+  "nodes": [
+    {
+      "id": "ext:record_raw_configs.raw_file_configs",
+      "kind": "external",
+      "label": "record_raw_configs.raw_file_configs",
+      "type": "list"
+    },
+    {
+      "id": "ext:initial_setup.calibration_output_dir",
+      "kind": "external",
+      "label": "initial_setup.calibration_output_dir",
+      "type": "path"
+    },
+    {
+      "id": "ext:standardize_cal.single_channel_dir",
+      "kind": "external",
+      "label": "standardize_cal.single_channel_dir",
+      "type": "path"
+    },
+    {
+      "id": "ext:record_raw_configs.raw_configs_path",
+      "kind": "external",
+      "label": "record_raw_configs.raw_configs_path",
+      "type": "path"
+    },
+    {
+      "id": "in:conflict_resolution",
+      "kind": "input",
+      "label": "inputs.conflict_resolution",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "interactive",
+      "description": "What to do when one raw channel matches several calibration files. \"report\" (the default here, for a caller with no terminal) returns the conflicts and writes no mapping file. \"error\" lists them and stops, which is the local workflow: delete the unwanted single-channel file and re-run. \"interactive\" prompts on the terminal and fails, before moving any file, if the run has no interactive input."
+    },
+    {
+      "id": "in:calibration_choices",
+      "kind": "input",
+      "label": "inputs.calibration_choices",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Conflict decisions from a previous \"report\" run, mapping a conflict id to the calibration key to keep, or to a list of candidate keys to average into a new single-channel file. Applied before the chosen mode runs, so a partial map resolves what it covers and the rest is reported again."
+    },
+    {
+      "id": "in:record_author",
+      "kind": "input",
+      "label": "inputs.record_author",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "<Your Name>",
+      "description": "Recorded as the author of every generated single-channel file."
+    },
+    {
+      "id": "build_cal_mapping",
+      "kind": "step",
+      "op": "build_calibration_mapping",
+      "op_url": "ops/build_calibration_mapping/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Match each raw channel to its calibration data and save the mapping files.\nLoads the raw file configurations and the standardized single-channel files, runs the matching algorithm, moves aside any calibration file no raw channel matched, resolves conflicts, writes mapping_files/channel_mapping.yaml, calibration_configurations.yaml and calibration_provenance.yaml, and verifies the result.\nReads the single-channel files from disk rather than taking them as data. The mapping keys are those files' names, which only the on-disk loader attaches, and this step rewrites that folder.\nMark it regenerate: always in a recipe. Its real product is the files on disk, and a hand-deleted single-channel file cannot change a cache key computed before the run, so a cache hit would return the dictionaries without re-reading the folder. The step is cheap: a few small local YAML reads and the matcher.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": "always",
+      "inputs": [
+        {
+          "name": "raw_file_configs",
+          "type": "list",
+          "required": false,
+          "description": "The raw file configurations to map, normally from record_raw_file_configs. Read from the saved raw_file_configs.yaml under output_base when omitted.",
+          "value": "${record_raw_configs.raw_file_configs}"
+        }
+      ],
+      "params": [
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
+          "default": null,
+          "set": true,
+          "value": "${initial_setup.calibration_output_dir}"
+        },
+        {
+          "name": "single_channel_dir",
+          "type": "path",
+          "units": null,
+          "description": "Folder of standardized single-channel files. Defaults to single_channel_calibration_files/ under output_base. Wire it to the standardization step's single_channel_dir output for the ordering dependency. Not fingerprinted, because a step-output reference is still an unresolved placeholder when cache keys are computed; use regenerate: always instead.",
+          "default": null,
+          "set": true,
+          "value": "${standardize_cal.single_channel_dir}"
+        },
+        {
+          "name": "raw_configs_path",
+          "type": "path",
+          "units": null,
+          "description": "Path of the saved raw_file_configs.yaml. Defaults to raw_file_configs/raw_file_configs.yaml under output_base, and is only consulted when raw_file_configs is not supplied.",
+          "default": null,
+          "set": true,
+          "value": "${record_raw_configs.raw_configs_path}"
+        },
+        {
+          "name": "conflict_resolution",
+          "type": "str",
+          "units": null,
+          "description": "What to do when one raw channel matches several calibration files. \"error\" (the default) lists the conflicts and stops, so you delete the unwanted single-channel file and re-run. \"interactive\" prompts on the terminal, and raises before any file is moved when the run has no interactive input. \"report\" neither raises nor prompts: it returns the conflicts on the conflicts output and writes no mapping file, which is the mode for a caller with no terminal that will present the choices and run the step again with calibration_choices.",
+          "default": "error",
+          "set": true,
+          "value": "${inputs.conflict_resolution}"
+        },
+        {
+          "name": "calibration_choices",
+          "type": "dict",
+          "units": null,
+          "description": "Conflict decisions supplied up front, mapping a conflict id from a previous run's conflicts output to the calibration key to keep. A list of candidate keys in place of one key averages them: the average is written as a new single-channel file with is_averaged set, the conflict's channels are mapped to it, and the candidates it was made from are set aside. Only calibrations of the same transducer, at the same settings and with the same sphere, can be averaged. Applied in every conflict_resolution mode before that mode's handler runs, so a partial map resolves what it covers and leaves the rest to be reported, prompted for, or raised on. An unknown conflict id, a key that is not one of that conflict's candidates, or candidates that cannot be averaged, is an error, and nothing is changed.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.calibration_choices}"
+        },
+        {
+          "name": "tolerances",
+          "type": "dict",
+          "units": null,
+          "description": "Per-field match tolerances, merged over the matcher's defaults so a dict naming only one field widens only that field. The defaults are exact for frequency, frequency_start, frequency_end and transmit_power (1 Hz / 1 W) and 1e-6 s for transmit_duration_nominal, because a calibration is formally valid only for the configuration it was measured at.\nWidening one is a scientific decision, not a convenience: a channel that matches only under a widened tolerance was calibrated at a different setting than it is being applied to, and the resulting gain and sa_correction carry a bias of that difference. Every override is reported on the terminal. Reach for it when a survey changed a setting mid-cruise and no calibration exists for the other side of the change, and record why in the recipe.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "unmapped_channels",
+          "type": "str",
+          "units": null,
+          "description": "The policy the extract_standardized_cal_params step that consumes this mapping runs with, \"warn\" or \"error\". Informational only: it changes nothing about the matching, and only lets the provenance report state what actually happened to an unmatched channel instead of listing both possibilities. Set it to the same value that step uses, or leave it out and the report says the outcome is decided downstream.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "units": null,
+          "description": "Recorded in the provenance report when given.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "units": null,
+          "description": "Recorded as the author of any record averaged while resolving conflicts. When omitted, the averaged calibrations' author is kept if they share one.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.record_author}"
+        },
+        {
+          "name": "keep_unused",
+          "type": "bool",
+          "units": null,
+          "description": "Move calibration files no raw channel matched into unused_calibration_files/ instead of deleting them. They are the evidence when a channel comes out unmapped.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "short_filenames",
+          "type": "bool",
+          "units": null,
+          "description": "Remap the returned dictionaries to compact calibration keys when they are not already the single-channel file names, and give averaged records compact keys. Should match the setting the single-channel files were written with.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print the mapping summary, preview, and verification results.",
+          "default": true,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "description": "Maps each raw file's channels to their calibration key, keyed by filename then channel_id. Feed to extract_standardized_cal_params.",
+          "disposed": false
+        },
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "description": "Parsed standardized calibration data keyed by calibration key. Holds the values themselves. Feed to extract_standardized_cal_params.",
+          "disposed": false
+        },
+        {
+          "name": "missing_params",
+          "type": "dict",
+          "description": "Calibration keys mapped to the required parameters they are missing. An empty dict means every required parameter is present.",
+          "disposed": false
+        },
+        {
+          "name": "unused_files",
+          "type": "list",
+          "description": "Names of single-channel calibration files the mapping does not reference, including the ones this run moved aside. An empty list means every calibration file matched a raw channel, so a non-empty one is the signal that a channel went unmapped. Under \"report\" no mapping exists to check against, so this carries only the files the run moved aside.",
+          "disposed": false
+        },
+        {
+          "name": "provenance",
+          "type": "dict",
+          "description": "Per-channel account of what calibration was applied over which stretch of the cruise, and why. Each channel carries segments, one per run of raw files that behaved the same way, with a time range, the raw and calibration settings behind it, and an outcome: the calibration was applied, it was applied only because a tolerance was widened, or nothing matched and the channel fell back or stopped the run. A cruise of thousands of files reports as a handful of segments per channel.\nJSON-safe, so a server can hand it to a client without reading the file off disk. The same content is written to mapping_files/calibration_provenance.yaml.\nComplete whatever happens downstream: the mapping stage sees every file in the catalogue, so this covers the whole cruise even when the per-file tier that consumes the mapping is still running or stopped early.",
+          "disposed": false
+        },
+        {
+          "name": "provenance_path",
+          "type": "str",
+          "description": "Where the provenance report was written as YAML, under mapping_files/ in output_base.",
+          "disposed": false
+        },
+        {
+          "name": "conflicts",
+          "type": "dict",
+          "description": "Unresolved multiple-match conflicts, keyed by a stable conflict id. Each carries the candidate calibration keys, a summary of every candidate, the raw files and channel ids it affects, and distinguishing_fields naming what actually differs between the candidates. That list excludes the fields two calibration records differ in by construction, such as the source filename and the created timestamp, so it names only what a reviewer has to weigh. It is empty when the candidates match everywhere it matters. Only populated under conflict_resolution \"report\"; empty when the mapping completed. A non-empty value means no mapping file was written, so feed the choices back as calibration_choices and run the step again.",
+          "disposed": false
+        },
+        {
+          "name": "single_channel_data",
+          "type": "dict",
+          "description": "{\"channels\": [...]}, the standardized channels the mapping was built from plus any record averaged from several of them, each carrying its _calibration_file_key. Every key in mapping_dict names one of them, so this, not the standardization step's payload, is what to hand to save_calibration_archive once an average has been chosen. JSON-safe.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:conflicts",
+      "kind": "output",
+      "label": "conflicts",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "conflicts"
+      }
+    },
+    {
+      "id": "out:mapping_dict",
+      "kind": "output",
+      "label": "mapping_dict",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "mapping_dict"
+      }
+    },
+    {
+      "id": "out:calibration_dict",
+      "kind": "output",
+      "label": "calibration_dict",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "calibration_dict"
+      }
+    },
+    {
+      "id": "out:single_channel_data",
+      "kind": "output",
+      "label": "single_channel_data",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "single_channel_data"
+      }
+    },
+    {
+      "id": "out:provenance",
+      "kind": "output",
+      "label": "provenance",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "provenance"
+      }
+    },
+    {
+      "id": "out:provenance_path",
+      "kind": "output",
+      "label": "provenance_path",
+      "type": "str",
+      "declared": true,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "provenance_path"
+      }
+    },
+    {
+      "id": "out:build_cal_mapping.missing_params",
+      "kind": "output",
+      "label": "build_cal_mapping.missing_params",
+      "type": "dict",
+      "declared": false,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "missing_params"
+      }
+    },
+    {
+      "id": "out:build_cal_mapping.unused_files",
+      "kind": "output",
+      "label": "build_cal_mapping.unused_files",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "build_cal_mapping",
+        "output": "unused_files"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ext:record_raw_configs.raw_file_configs",
+      "target": "build_cal_mapping",
+      "kind": "data",
+      "source_output": "raw_file_configs",
+      "target_input": "raw_file_configs",
+      "label": "raw_file_configs",
+      "type": "list"
+    },
+    {
+      "source": "ext:initial_setup.calibration_output_dir",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "calibration_output_dir",
+      "target_input": "output_base",
+      "label": "calibration_output_dir -> output_base",
+      "type": "path"
+    },
+    {
+      "source": "ext:standardize_cal.single_channel_dir",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "single_channel_dir",
+      "target_input": "single_channel_dir",
+      "label": "single_channel_dir",
+      "type": "path"
+    },
+    {
+      "source": "ext:record_raw_configs.raw_configs_path",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "raw_configs_path",
+      "target_input": "raw_configs_path",
+      "label": "raw_configs_path",
+      "type": "path"
+    },
+    {
+      "source": "in:conflict_resolution",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "conflict_resolution",
+      "target_input": "conflict_resolution",
+      "label": "conflict_resolution",
+      "type": "str"
+    },
+    {
+      "source": "in:calibration_choices",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "calibration_choices",
+      "target_input": "calibration_choices",
+      "label": "calibration_choices",
+      "type": "dict"
+    },
+    {
+      "source": "in:record_author",
+      "target": "build_cal_mapping",
+      "kind": "param",
+      "source_output": "record_author",
+      "target_input": "record_author",
+      "label": "record_author",
+      "type": "str"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:conflicts",
+      "kind": "exit",
+      "source_output": "conflicts",
+      "target_input": null,
+      "label": "conflicts",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:mapping_dict",
+      "kind": "exit",
+      "source_output": "mapping_dict",
+      "target_input": null,
+      "label": "mapping_dict",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:calibration_dict",
+      "kind": "exit",
+      "source_output": "calibration_dict",
+      "target_input": null,
+      "label": "calibration_dict",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:single_channel_data",
+      "kind": "exit",
+      "source_output": "single_channel_data",
+      "target_input": null,
+      "label": "single_channel_data",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:provenance",
+      "kind": "exit",
+      "source_output": "provenance",
+      "target_input": null,
+      "label": "provenance",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:provenance_path",
+      "kind": "exit",
+      "source_output": "provenance_path",
+      "target_input": null,
+      "label": "provenance_path",
+      "type": "str"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:build_cal_mapping.missing_params",
+      "kind": "exit",
+      "source_output": "missing_params",
+      "target_input": null,
+      "label": "missing_params",
+      "type": "dict"
+    },
+    {
+      "source": "build_cal_mapping",
+      "target": "out:build_cal_mapping.unused_files",
+      "kind": "exit",
+      "source_output": "unused_files",
+      "target_input": null,
+      "label": "unused_files",
+      "type": "list"
+    }
+  ],
+  "groups": [],
+  "context": {
+    "upstream": [
+      {
+        "target": "ext:record_raw_configs.raw_file_configs",
+        "output": "raw_file_configs",
+        "step": "record_raw_configs",
+        "op": "record_raw_file_configs",
+        "recipe": "calibration-standardize",
+        "title": "Calibration phase 1, standardize",
+        "page": "calibration/phases/"
+      },
+      {
+        "target": "ext:initial_setup.calibration_output_dir",
+        "output": "calibration_output_dir",
+        "step": "initial_setup",
+        "op": "initial_setup",
+        "recipe": "calibration-standardize",
+        "title": "Calibration phase 1, standardize",
+        "page": "calibration/phases/"
+      },
+      {
+        "target": "ext:standardize_cal.single_channel_dir",
+        "output": "single_channel_dir",
+        "step": "standardize_cal",
+        "op": "standardize_calibration_files",
+        "recipe": "calibration-standardize",
+        "title": "Calibration phase 1, standardize",
+        "page": "calibration/phases/"
+      },
+      {
+        "target": "ext:record_raw_configs.raw_configs_path",
+        "output": "raw_configs_path",
+        "step": "record_raw_configs",
+        "op": "record_raw_file_configs",
+        "recipe": "calibration-standardize",
+        "title": "Calibration phase 1, standardize",
+        "page": "calibration/phases/"
+      }
+    ],
+    "downstream": [],
+    "values": {}
+  }
+}

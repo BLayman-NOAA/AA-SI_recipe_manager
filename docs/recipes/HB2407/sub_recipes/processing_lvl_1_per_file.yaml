@@ -1,0 +1,67 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/sub_recipes/
+# processing_lvl_1_per_file.yaml. Its first two steps moved to processing_lvl_0_calibration.yaml
+# and extract_cal_params moved to the top of processing_lvl_2_per_file.yaml, so HB2407 follows the
+# same levels as HB1603.
+
+# Processing level 1 (per-file): raw ingest.
+#
+#   read_raw -> combine_raw
+#
+# Each raw file is opened and materialized as its own instance, and the survey
+# stays split until the fan-in in processing_lvl_2_per_file.yaml, which must be
+# included immediately after this level.
+#
+# Per-file fan-out starts here. Every step from here through apply_mask in
+# processing_lvl_2_per_file.yaml shares this map_over source, so each raw file
+# runs the whole chain as its own instance under its own content-addressed
+# hash. Adding a file to the survey later runs the chain for that file only.
+
+recipe:
+  name: "processing_lvl_1_per_file"
+  description: "Per-file raw ingest (gs:// inputs)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  sonar_model:
+    type: str
+    default: "EK80"
+  ping_time_chunk:
+    type: int
+    default: 10000
+    description: >
+      Chunk length along ping_time for each file's EchoData (and therefore its
+      zarr checkpoint). A single raw file holds far fewer pings than this, so
+      the default writes each file's checkpoint as one chunk, which is the
+      cheapest shape for a gs://-backed cache. Lower it if a per-file chunk
+      does not fit in memory.
+
+steps:
+
+  # checkpoint: never, because the output is an exe_temp store path that is
+  # deleted at the end of the run and would dangle if cached.
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      raw_file_paths:
+        - ${_item}          # a single-element list: just this file
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: false
+      intermediate_format: "zarr"
+
+  # Materializes this file's store as an EchoData object. Not a fan-in:
+  # combine_raw_files takes a single-file list and simply opens it.
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+    params:
+      ping_time_chunk: ${inputs.ping_time_chunk}

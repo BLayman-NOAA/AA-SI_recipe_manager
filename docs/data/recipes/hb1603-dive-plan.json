@@ -1,0 +1,257 @@
+{
+  "schema": 1,
+  "slug": "hb1603-dive-plan",
+  "title": "HB1603 dive plan",
+  "recipe": {
+    "name": "hb1603_dive_plan",
+    "description": "Read the NEFSC dive configs and emit one window per dive.",
+    "version": "1.0",
+    "source": "recipes/HB1603/sub_recipes/dive_plan.yaml",
+    "parent": "hb1603-dive-analysis",
+    "level": null,
+    "cruise": "HB1603"
+  },
+  "nodes": [
+    {
+      "id": "in:json_dir",
+      "kind": "input",
+      "label": "inputs.json_dir",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "./Auxiliary/JSON_Files",
+      "description": "Folder of SWD_*.json dive configs."
+    },
+    {
+      "id": "in:evl_root",
+      "kind": "input",
+      "label": "inputs.evl_root",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "./Auxiliary",
+      "description": "Searched recursively for the .evl files the configs name."
+    },
+    {
+      "id": "in:pad_minutes",
+      "kind": "input",
+      "label": "inputs.pad_minutes",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0.0,
+      "description": "Minutes added either side of each dive's line span."
+    },
+    {
+      "id": "in:dive_labels",
+      "kind": "input",
+      "label": "inputs.dive_labels",
+      "type": "list",
+      "declared": true,
+      "required": false,
+      "default": [
+        "SWD_20160707-OE20",
+        "SWD_20160707-OE29",
+        "SWD_20160707-OE32",
+        "SWD_20160719-OE07",
+        "SWD_20160725-OE50",
+        "SWD_20160725-OE54",
+        "SWD_20160725-OE61",
+        "SWD_20160725-OE62",
+        "SWD_20160725-OE64",
+        "SWD_20160802-OE16",
+        "SWD_20160814-OE03",
+        "SWD_20160814-OE09",
+        "SWD_20160814-OE44"
+      ],
+      "description": "The 13 dives in the analysis: every localized dive HB1603 recorded except SWD_20160703-OE20, whose dive data is incorrect.\nSpelled as the set that is included rather than the one excluded, which is what plan_dive_datasets accepts and is also the more useful record. It states the analysis population outright, and plan_dive_datasets raises if a label names a dive no config provides, so a renamed or missing config stops the run instead of quietly shrinking the study.\nSWD_20160707-OE20-OE29-OE32 is absent because it is not a fourteenth dive. It is a combined view of three July 7 dives that each have their own config, and it carries no 99% confidence lines, so it cannot drive the coding step. plan_dive_datasets skips it by default."
+    },
+    {
+      "id": "plan_dives",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "aa_si_utils.dive_profiles.plan_dive_datasets",
+      "description": "Turn the NEFSC dive configs into recipe windows.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "json_dir",
+          "type": "path",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.json_dir}"
+        },
+        {
+          "name": "evl_root",
+          "type": "path",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.evl_root}"
+        },
+        {
+          "name": "pad_minutes",
+          "type": "float",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.pad_minutes}"
+        },
+        {
+          "name": "include_labels",
+          "type": "list",
+          "units": null,
+          "description": null,
+          "default": null,
+          "set": true,
+          "value": "${inputs.dive_labels}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "windows",
+          "type": "list",
+          "description": null,
+          "disposed": false
+        },
+        {
+          "name": "raw_files",
+          "type": "list",
+          "description": null,
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:plan_dives.windows",
+      "kind": "output",
+      "label": "plan_dives.windows",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "plan_dives",
+        "output": "windows"
+      }
+    },
+    {
+      "id": "out:plan_dives.raw_files",
+      "kind": "output",
+      "label": "plan_dives.raw_files",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "plan_dives",
+        "output": "raw_files"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:json_dir",
+      "target": "plan_dives",
+      "kind": "param",
+      "source_output": "json_dir",
+      "target_input": "json_dir",
+      "label": "json_dir",
+      "type": "path"
+    },
+    {
+      "source": "in:evl_root",
+      "target": "plan_dives",
+      "kind": "param",
+      "source_output": "evl_root",
+      "target_input": "evl_root",
+      "label": "evl_root",
+      "type": "path"
+    },
+    {
+      "source": "in:pad_minutes",
+      "target": "plan_dives",
+      "kind": "param",
+      "source_output": "pad_minutes",
+      "target_input": "pad_minutes",
+      "label": "pad_minutes",
+      "type": "float"
+    },
+    {
+      "source": "in:dive_labels",
+      "target": "plan_dives",
+      "kind": "param",
+      "source_output": "dive_labels",
+      "target_input": "include_labels",
+      "label": "dive_labels -> include_labels",
+      "type": "list"
+    },
+    {
+      "source": "plan_dives",
+      "target": "out:plan_dives.windows",
+      "kind": "exit",
+      "source_output": "windows",
+      "target_input": null,
+      "label": "windows",
+      "type": "list"
+    },
+    {
+      "source": "plan_dives",
+      "target": "out:plan_dives.raw_files",
+      "kind": "exit",
+      "source_output": "raw_files",
+      "target_input": null,
+      "label": "raw_files",
+      "type": "list"
+    }
+  ],
+  "groups": [],
+  "context": {
+    "upstream": [],
+    "downstream": [
+      {
+        "source": "out:plan_dives.windows",
+        "input": "windows",
+        "step": "dive_sv",
+        "op": "select_ping_time_range",
+        "recipe": "hb1603-level-2",
+        "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:plan_dives.windows",
+        "input": "overlay_windows",
+        "step": "plot_clustering_report",
+        "op": "plot_clustering_report",
+        "recipe": "hb1603-level-4",
+        "title": "HB1603 level 4, clustering",
+        "page": "levels/level-4/"
+      },
+      {
+        "source": "out:plan_dives.windows",
+        "input": "windows",
+        "step": "generate_sv_codes",
+        "op": "custom",
+        "recipe": "hb1603-level-5",
+        "title": "HB1603 level 5, dive SVCodes",
+        "page": "levels/level-5/"
+      }
+    ],
+    "values": {
+      "in:json_dir": "= ./Auxiliary/JSON_Files",
+      "in:evl_root": "= ./Auxiliary",
+      "in:pad_minutes": "= 0.0",
+      "in:dive_labels": "= [\"SWD_20160707-OE20\", \"SWD_20160707-OE29\", \"SWD_20160707-OE32\", \"SWD_20160719-OE07\", \"SWD_20160725-OE50\", \"SWD_20160725-OE54\", \"SWD_20160725-OE61\", \"SWD_20160725-OE62\", \"SWD_20160725-OE64\", \"SWD_20160802-OE16\", \"SWD_20160814-OE03\", \"SWD_20160814-OE09\", \"SWD_20160814-OE44\"]"
+    }
+  }
+}

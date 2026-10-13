@@ -1,0 +1,173 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/calibration_standardize.yaml
+
+# RL2307 Calibration, phase 1: standardize
+#
+# Scans the raw channel configurations and turns the manufacturer calibration
+# files into one standardized file per channel. It stops there, before the
+# mapping, so a user can review the standardized channels and correct or
+# discard them before anything is matched against them.
+#
+# Pair it with calibration_mapping.yaml, which is phase 2, and optionally
+# save_calibration.yaml, which is phase 3 and archives the finished result.
+#
+# THE FOUR STEPS BELOW ARE COPIED VERBATIM INTO calibration_mapping.yaml, and
+# they must stay that way. Cache entries are addressed by step hash, so the
+# moment the two copies drift, phase 2 stops reusing the raw scan and reads
+# every file again. Nothing in the recipe format enforces it and the symptom is
+# a slow run rather than an error, so
+# tests/test_calibration_phase_recipes.py asserts the hashes match. Run it
+# after editing either file.
+#
+# Artifacts land under <outputs_dir>/<calibration_outputs>/:
+#
+#   raw_file_configs/                  raw_file_configs.yaml
+#   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
+#   logs/                              calibration_flags.json
+#   standardization.fingerprint.json   which manufacturer files produced the
+#                                      single-channel files above
+#
+# The standardized channels also come back as data on standardize_cal's
+# single_channel_data output, which is what a caller with no access to the
+# folder reviews. Editing a value or dropping a channel there and passing the
+# result back as override_channels in phase 2 rewrites the folder to match, so
+# the archived files are always the ones the mapping was built from.
+#
+# Both phases must resolve to the SAME user_cache_dir and outputs_dir or the
+# sharing silently does not happen: the run config is discovered per recipe as
+# <recipe_stem>.config.yaml, so either keep the two config files identical or
+# pass --config explicitly.
+#
+# The same three recipes are what the calibration service exposes as its
+# three HTTP calls. See calibration_service_api.md
+# in AA-SI_calibration/recipes/documentation/.
+#
+# Usage:
+#   aa-recipe run calibration_standardize.yaml
+
+recipe:
+  name: "RL2307_calibration_standardize"
+  description: "Standardize the RL2307 manufacturer calibration files and return them for review."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw"
+    fingerprint_mode: auto
+    description: "Folder of .raw files, read for channel configuration only."
+  cal_input_folder:
+    type: path
+    default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+  cruise_id:
+    type: str
+    default: "RL2307"
+    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+  record_author:
+    type: str
+    default: "<Your Name>"
+    description: "Recorded as the author of every generated single-channel file."
+  file_time_start:
+    type: str
+    required: false
+    default: "2023-07-17T16:30:46"
+    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+  file_time_end:
+    type: str
+    required: false
+    default: "2023-07-18T19:50:19"
+    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+  override_channels:
+    type: dict
+    required: false
+    description: >
+      Standardized channels to write instead of parsing the manufacturer files,
+      as returned on standardize_cal's single_channel_data output. This is how a
+      reviewed and edited set comes back from a caller that never sees the
+      folder. Declared here, and left unset, in both phase recipes: an unset
+      value hashes identically, so standardize_cal still shares its cache entry,
+      and only a caller actually supplying edits diverges.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # One instance per raw file, content-addressed by that file's path, so an
+  # interrupted scan resumes from what it already read.
+  # verbose is off because one banner per file buries the rest of the log.
+  - id: scan_raw_config
+    op: read_raw_file_config
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    params:
+      raw_file_path: ${_item}
+      verbose: false
+      # Read a growing prefix rather than all ~1 GiB: the scan starts at 8 MiB
+      # and doubles to this cap, stopping once every channel's Parameter
+      # datagram is in hand. CW files settle on the first rung; RL2307's ~1 GiB
+      # FM files sit behind much larger RAW3 payloads and climb. A file that
+      # never settles within the cap is read whole.
+      max_scan_bytes: 134217728  # 128 MiB
+
+  - id: record_raw_configs
+    op: record_raw_file_configs
+    collect: ${scan_raw_config.file_config}
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      file_configs: ${scan_raw_config.file_config}
+    params:
+      output_base: ${initial_setup.calibration_output_dir}
+
+  # regenerate: if-missing is safe here only because this step records its
+  # output directory: wiping the folder rebuilds it, deleting one file inside
+  # it does not. The conflict workflow depends on that distinction.
+  #
+  # It is also what makes the two-phase split work across containers. A second
+  # run starting with an empty outputs directory finds the recorded folder
+  # missing and rebuilds it, from override_channels when a caller supplied
+  # edits and from the manufacturer files otherwise, so the mapping step always
+  # reads a folder that matches what it is about to map.
+  - id: standardize_cal
+    op: standardize_calibration_files
+    checkpoint: always
+    regenerate: if-missing
+    inputs:
+      frequencies: ${record_raw_configs.frequencies}
+    params:
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      override_channels: ${inputs.override_channels}
+
+outputs:
+  single_channel_data:
+    step_id: standardize_cal
+    output_name: single_channel_data
+    description: >
+      The standardized channels, for a caller to review and edit before the
+      mapping runs. Feed the edited version back to calibration_mapping.yaml as
+      override_channels.
+  single_channel_dir:
+    step_id: standardize_cal
+    output_name: single_channel_dir
+    description: "Folder the standardized single-channel files were written to."
+  raw_file_configs:
+    step_id: record_raw_configs
+    output_name: raw_file_configs
+    description: "The scanned channel configuration of every raw file in the window."

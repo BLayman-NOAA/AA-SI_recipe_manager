@@ -1,0 +1,1692 @@
+{
+  "schema": 1,
+  "slug": "hb2407-level-2",
+  "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+  "recipe": {
+    "name": "processing_lvl_2_per_file",
+    "description": "Per-file Sv and masking, fan-in to survey Sv, then noise removal.",
+    "version": "1.0",
+    "source": "recipes/HB2407/sub_recipes/processing_lvl_2_per_file.yaml",
+    "parent": "hb2407-herring-per-file",
+    "level": 2,
+    "cruise": "HB2407"
+  },
+  "nodes": [
+    {
+      "id": "ext:initial_setup.raw_file_paths",
+      "kind": "external",
+      "label": "initial_setup.raw_file_paths",
+      "type": null
+    },
+    {
+      "id": "in:calibration_dict",
+      "kind": "input",
+      "label": "inputs.calibration_dict",
+      "type": "dict",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Standardized calibration data, from gen_cal_mapping.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:mapping_dict",
+      "kind": "input",
+      "label": "inputs.mapping_dict",
+      "type": "dict",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Raw channel to calibration key mapping, from gen_cal_mapping.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:echodata",
+      "kind": "input",
+      "label": "inputs.echodata",
+      "type": "echodata",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Per-file EchoData object from the per-file raw ingest stage.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:datum_correction_m",
+      "kind": "input",
+      "label": "inputs.datum_correction_m",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0.0,
+      "description": "Metres added to the file's recorded drop keel offset to reach depth below the waterline. 0 takes the recorded offset as already waterline referenced.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:use_heave",
+      "kind": "input",
+      "label": "inputs.use_heave",
+      "type": "bool",
+      "declared": true,
+      "required": false,
+      "default": true,
+      "description": "Add the per-ping platform heave term to transducer depth.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:heave_sign",
+      "kind": "input",
+      "label": "inputs.heave_sign",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 1.0,
+      "description": "Sign applied to platform heave. Determined empirically for this survey by correlating raw heave against the hand-verified EVL seabed line (0.14 m residual for +1.0 vs 0.75 m for -1.0).",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_folder",
+      "kind": "input",
+      "label": "inputs.seabed_line_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Folder of Echoview .evl seabed line exports; the ones covering file_time_start to file_time_end are combined into the seafloor used for masking. A single .evl file also works, and is then read whole regardless of the window.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Optional inclusive ISO datetime selecting which seabed line files to read, by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same window that selected the raw files in processing level 1; leave unset to read every line file in the folder. The window is survey-wide, not per-file: every mapped instance selects the same line files and then interpolates them onto its own pings.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Optional inclusive ISO datetime upper bound; see file_time_start.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_max_gap_s",
+      "kind": "input",
+      "label": "inputs.seabed_line_max_gap_s",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 600,
+      "description": "Widest hole in the combined seabed line, in seconds, to interpolate across. Consecutive line files butt up against each other to within a second, so this only bites across a survey-leg gap, where interpolating would otherwise draw a straight seafloor over days of missing line.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_min_coverage",
+      "kind": "input",
+      "label": "inputs.seabed_line_min_coverage",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0.99,
+      "description": "Fraction of a file's pings that must land on the line before the step fails. Exposed here because the per-file split makes it stricter than it looks: a short uncovered stretch that is a rounding error against the whole survey can be a large fraction of the one file it falls in, so a threshold that passed survey-wide can fail a single file. Lower it (or widen the seabed_line window) rather than letting uncovered pings through -- create_seafloor_mask drops every sample of a ping whose seafloor is NaN.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seafloor_buffer_m",
+      "kind": "input",
+      "label": "inputs.seafloor_buffer_m",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 1.0,
+      "description": "Height of buffer above seabed line to mask.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:surface_mask_depth",
+      "kind": "input",
+      "label": "inputs.surface_mask_depth",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 10.0,
+      "description": "Depth in meters above which the surface mask excludes samples.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:crop_outlier_sigma",
+      "kind": "input",
+      "label": "inputs.crop_outlier_sigma",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Standard deviations above the mean per-ping deepest sample at which a ping is treated as anomalous. The crop then lands on the deepest RETAINED ping, so uncommon-but-real depths survive. Leave unset to fall back to the lossless trim below, which a single glitch ping defeats."
+    },
+    {
+      "id": "in:crop_outlier_margin",
+      "kind": "input",
+      "label": "inputs.crop_outlier_margin",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 1.5,
+      "description": "Multiplier on (mean + crop_outlier_sigma * sd) forming the reject threshold. Raise to flag fewer pings, lower to flag more."
+    },
+    {
+      "id": "in:crop_trailing_all_nan",
+      "kind": "input",
+      "label": "inputs.crop_trailing_all_nan",
+      "type": "bool",
+      "declared": true,
+      "required": false,
+      "default": true,
+      "description": "Drop trailing range samples that hold no finite Sv anywhere in the survey. Lossless. Ignored when crop_outlier_sigma is set. Set false with the other two unset to disable the crop step."
+    },
+    {
+      "id": "in:crop_max_range_m",
+      "kind": "input",
+      "label": "inputs.crop_max_range_m",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Hard depth ceiling for the crop, in metres. Composes with the criteria above rather than replacing them: the shallowest cut wins. Drops samples whether or not they hold data, so a ceiling shallower than the deepest echo of interest silently discards it. Check the crop step's reported \"deepest kept\" against the seabed line before relying on a hand-picked value."
+    },
+    {
+      "id": "in:noise_chunk_ping_time",
+      "kind": "input",
+      "label": "inputs.noise_chunk_ping_time",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 1000,
+      "description": "Ping-time chunk size applied to the MERGED survey Sv before remove_noise, so its coarsen()-based noise estimate runs in dask-parallel chunks instead of as one in-memory block. Should stay a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly."
+    },
+    {
+      "id": "in:noise_range_sample_num",
+      "kind": "input",
+      "label": "inputs.noise_range_sample_num",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 10,
+      "description": "Number of range samples per bin used for background noise estimation."
+    },
+    {
+      "id": "in:noise_ping_num",
+      "kind": "input",
+      "label": "inputs.noise_ping_num",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 5,
+      "description": "Number of pings per bin used for background noise estimation."
+    },
+    {
+      "id": "extract_cal_params",
+      "kind": "step",
+      "op": "extract_standardized_cal_params",
+      "op_url": "ops/extract_standardized_cal_params/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Extract calibration parameters (gain, sa-correction, EBA) and environmental parameters (sound speed, absorption) from standardized calibration files, cross-referenced against the EchoData object for channel alignment.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "required": true,
+          "description": "Parsed standardized calibration data keyed by calibration key, from generate_standardized_cal_mapping. Holds the values themselves.",
+          "value": "${inputs.calibration_dict}"
+        },
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "required": true,
+          "description": "Raw channel to calibration key mapping, from generate_standardized_cal_mapping. Says which entry of calibration_dict belongs to each channel of each file.",
+          "value": "${inputs.mapping_dict}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "EchoData whose channel labels the calibration values are aligned to, normally the combined object from combine_raw_files. The outputs are keyed by that object's channels, so they can be passed straight to compute_sv.",
+          "value": "${inputs.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "raw_file_path",
+          "type": "path",
+          "units": null,
+          "description": "Path to the specific raw file whose channel mapping should be selected from mapping_dict (matched by basename). Wire this to ${_item} in a per-file map_over chain so each instance picks its own file's calibration mapping instead of defaulting to the first file in the survey. Leave unset for whole-survey recipes.",
+          "default": null,
+          "set": true,
+          "value": "${_item}"
+        },
+        {
+          "name": "unmapped_channels",
+          "type": "str",
+          "units": null,
+          "description": "What to do about a channel the mapping does not cover, which happens when no calibration file matched it. \"warn\" (the default) reports the channel on the terminal and falls back to the values the raw file itself records, which is what echopype would calibrate that channel with given no calibration file at all. \"error\" stops the run instead. The fallback needs the echodata input; without it \"warn\" raises the way \"error\" would.",
+          "default": "warn",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "output_logs_folder",
+          "type": "path",
+          "units": null,
+          "description": "Where the fallback writes its calibration flags. A temporary folder is used when omitted, which is what a per-file chain wants: several files falling back at once would otherwise race on one flags file.",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cal_params",
+          "type": "dict",
+          "description": "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)",
+          "disposed": false
+        },
+        {
+          "name": "env_params",
+          "type": "dict",
+          "description": "Environmental parameters keyed by channel (sound_speed, sound_absorption)",
+          "disposed": false
+        },
+        {
+          "name": "other_params",
+          "type": "dict",
+          "description": "Additional extracted calibration metadata keyed by channel and source file details. Its unmapped_channels entry names the channels that fell back to the raw file's own recorded values, and is empty when the mapping covered every channel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_sv",
+      "kind": "step",
+      "op": "compute_sv",
+      "op_url": "ops/compute_sv/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
+          "value": "${inputs.echodata}"
+        },
+        {
+          "name": "cal_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
+          "value": "${extract_cal_params.cal_params}"
+        },
+        {
+          "name": "env_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
+          "value": "${extract_cal_params.env_params}"
+        },
+        {
+          "name": "waveform_mode",
+          "type": null,
+          "required": false,
+          "description": null,
+          "value": "CW"
+        },
+        {
+          "name": "encode_mode",
+          "type": null,
+          "required": false,
+          "description": null,
+          "value": "power"
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_transducer_depth",
+      "kind": "step",
+      "op": "compute_transducer_depth",
+      "op_url": "ops/compute_transducer_depth/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute per-ping transducer depth in metres below the water surface from the EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.\nReads the Platform group directly rather than going through ``ep_add_depth(use_platform_vertical_offsets=true)``, which gets the sign wrong on both EK families for different reasons.\nOn an EK80 drop keel vessel the transducers ride on a retractable keel and ``drop_keel_offset`` records how far it was lowered, while the ``transducer_offset_z`` and ``water_level`` fields echopype's formula reads are left at zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.\nAn EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60 per-ping transducer depth into ``water_level``, whose value its formula then subtracts (``transducer_offset_z - (water_level + vertical_offset)``, with ``transducer_offset_z`` zero because the ER60 does not populate it). The transducer comes out above the water surface and every depth is short by twice the draft. This step reads ``water_level`` directly instead.\n``drop_keel_offset`` is preferred when both are present; the field actually used is recorded in the output's ``static_offset_field`` attr.\nThe static position is per file and heave is per ping, so the result is ``static offset + datum_correction_m + heave_sign * vertical_offset``. Heave is interpolated onto ds_Sv's ping_time here, which also means ``ep_add_depth`` passes the array straight through instead of resampling it again with nearest neighbour.\nThe output is small (one value per ping) and is the record of what vertical reference a run actually used, so checkpointing it is cheap and makes the reference auditable without recomputing Sv.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate.",
+          "value": "${compute_sv.ds_Sv}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "Source EchoData supplying the Platform group.",
+          "value": "${inputs.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "datum_correction_m",
+          "type": "float",
+          "units": "m",
+          "description": "Metres added to the static offset to reach depth below the water surface, for when the recorded offset is measured from a hull datum rather than the waterline. Positive pushes the transducer deeper. The default 0.0 takes the recorded offset as already waterline referenced.",
+          "default": 0.0,
+          "set": true,
+          "value": "${inputs.datum_correction_m}"
+        },
+        {
+          "name": "use_heave",
+          "type": "bool",
+          "units": null,
+          "description": "Add the per-ping ``vertical_offset`` (heave) term. False holds the static keel depth on every ping. When the Platform group carries no usable heave the step reports that and falls back to the static depth.",
+          "default": true,
+          "set": true,
+          "value": "${inputs.use_heave}"
+        },
+        {
+          "name": "heave_sign",
+          "type": "float",
+          "units": null,
+          "description": "Sign applied to ``vertical_offset``. The default 1.0 was determined empirically on HB2407 (EK80, Henry B. Bigelow) by correlating raw heave against the hand-verified EVL seabed line: the correct sign left a 0.14 m residual against 0.75 m for the wrong one. The convention is not recorded in the file attributes and is not the same sign echopype's own platform-vertical-offsets formula uses (that formula is referenced from a hull datum, not drop_keel_offset) - re-verify the same way on a new vessel or instrument setup rather than assuming.",
+          "default": 1.0,
+          "set": true,
+          "value": "${inputs.heave_sign}"
+        },
+        {
+          "name": "interp_method",
+          "type": "str",
+          "units": null,
+          "description": "Interpolation used to put heave on ping_time. Heave is typically sampled several times coarser than the ping rate, so the default linear is preferred over nearest.",
+          "default": "linear",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "transducer_depth",
+          "type": "DataArray",
+          "description": "Transducer depth in metres below the surface, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s ``depth_offset``. Provenance (the static offset and which Platform field it came from, the correction applied, the heave sign and coverage) is recorded in its attrs.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "ep_add_depth",
+      "kind": "step",
+      "op": "ep_add_depth",
+      "op_url": "ops/ep_add_depth/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step is echopype.consolidate.add_depth called directly, so the depth computation and its parameters are echopype's. The result preserves all existing variables (including ``echo_range``) and adds ``depth`` on ``(channel, ping_time, range_sample)`` in metres below surface.\nWhatever depth-computation technique is selected (constant ``depth_offset``, Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``) is fully captured in the values of the resulting ``depth`` array, so downstream consumers can treat the dataset as the single source of truth for vertical reference frame without knowing which technique was used.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset (typically from compute_sv).",
+          "value": "${compute_sv.ds_Sv}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": false,
+          "description": "Source EchoData. Required when any of ``use_platform_vertical_offsets``, ``use_platform_angles``, or ``use_beam_angles`` is true.",
+          "value": "${inputs.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "depth_offset",
+          "type": null,
+          "units": "m",
+          "description": "Vertical offset for the transducer position, in metres. Either a constant, or a per-ping DataArray wired from a producer step such as ``compute_transducer_depth`` (echopype accepts both on this argument; a DataArray must have exactly one dimension and is aligned to ping_time). When set, takes precedence over Platform vertical offsets. Left untyped because the two accepted forms are a scalar and a DataArray.",
+          "default": null,
+          "set": true,
+          "value": "${compute_transducer_depth.transducer_depth}"
+        },
+        {
+          "name": "tilt",
+          "type": "float",
+          "units": "degree",
+          "description": "Constant transducer tilt; 0 corresponds to a vertically-pointing transducer. When set, takes precedence over Platform/Beam angles.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "downward",
+          "type": "bool",
+          "units": null,
+          "description": "True when transducers point downward (typical hull-mounted).",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_platform_vertical_offsets",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Platform group vertical offsets to compute transducer depth. EK60/EK80 only. Ignored when ``depth_offset`` is set.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_platform_angles",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Platform group angles to compute echo_range scaling. EK60/EK80 only. Cannot be combined with ``use_beam_angles``.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_beam_angles",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Beam group angles to compute echo_range scaling. EK60/EK80 only. Cannot be combined with ``use_platform_angles``.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Input Sv dataset with an added ``depth`` variable.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "detect_seafloor",
+      "kind": "step",
+      "op": "read_seafloor_line",
+      "op_url": "ops/read_seafloor_line/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Read a seafloor line from an Echoview ``.evl`` line file and align it to the Sv dataset's pings, returning a 1-D (ping_time,) DataArray in metres. Use it when a hand-verified Echoview bottom line is more trustworthy than running detection over the Sv data.\nEchoview exports a survey as a series of part-day line files, so ``evl_path`` may be a folder: the files whose names span ``file_time_start`` to ``file_time_end`` are selected and concatenated into one line before interpolation. Give it the same window that selected the raw files.\nDrop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe step's ``inputs`` drop the ``echodata`` line (no detection is run) and the ``params`` block takes ``evl_path`` plus the alignment settings below instead of ``channel`` / ``min_valid_depth_m`` or ``method`` / ``method_params``.\nPings the line does not cover come back as NaN, and ``create_seafloor_mask`` rejects **every sample** of a ping whose seafloor is NaN (the metres-vs-metres comparison is False against NaN). The step therefore prints its ping coverage on every run; set ``min_coverage`` to turn a shortfall into a hard error, or widen ``edge_extend_s`` / ``max_gap_s`` if the gaps are benign.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "save",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate. Also supplies the vertical reference: pass a dataset that has been through ``ep_add_depth`` so the line can be matched to ``depth`` (metres below the surface), which is what an Echoview seabed line normally records.",
+          "value": "${ep_add_depth.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "evl_path",
+          "type": "path",
+          "units": null,
+          "description": "A single Echoview ``.evl`` line file, or a folder of them to select from with file_time_start / file_time_end. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/seabed_lines); remote files are read in place (no download) since line files are small. The must_exist check is skipped at validation time for remote URLs and enforced by the step at run time instead.\nMutually exclusive with ``window``: exactly one of the two is required.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.seabed_line_folder}"
+        },
+        {
+          "name": "window",
+          "type": "dict",
+          "units": null,
+          "description": "Mapping carrying the line path under ``window_key``, used instead of ``evl_path``.\nThis is the form a mapped fan-out needs. ${_item} is an all-or-nothing token with no attribute access - there is no ${_item.seabed_evl} - so a step mapped over a list of window dicts cannot pull the path out of the item as its own param and has to take the dict. Wire it as ``window: ${_item}``.\nA window also supplies file_time_start / file_time_end when those are not given directly, so a folder of part-day seabed exports narrows to the window without repeating its bounds. Extra keys are ignored, and an optional ``label`` names the instance in errors.\nNote that a window's path is NOT content-fingerprinted the way evl_path is: it arrives as a runtime value rather than a declared param, so re-exporting that line does not by itself invalidate the step. The upstream step that produced the window is what carries its identity.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "window_key",
+          "type": "str",
+          "units": null,
+          "description": "Key the line path is read from when ``window`` is given. Defaults to \"seabed_evl\", which is what plan_dive_datasets emits.",
+          "default": "seabed_evl",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "vertical_reference",
+          "type": "str",
+          "units": null,
+          "description": "What the EVL depths are measured from. \"surface\" (the default, and Echoview's usual seabed-line reference) means metres below the water surface; \"transducer\" means metres along the beam from the transducer face. The line is converted to whichever reference ds_Sv carries - depth when ep_add_depth ran upstream, otherwise echo_range.",
+          "default": "surface",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "min_status",
+          "type": "int",
+          "units": null,
+          "description": "Drop line points whose Echoview status is below this value (0 = none, 1 = unverified, 2 = bad, 3 = good). When null (the default) every point is kept. Dropped points leave a gap in the line, subject to max_gap_s.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "max_gap_s",
+          "type": "float",
+          "units": "s",
+          "description": "Widest hole in the line, in seconds, to interpolate across; pings sitting inside a wider hole come back as NaN. A ping landing exactly on a line point always keeps that point's depth. When null (the default) holes of any width are interpolated across.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.seabed_line_max_gap_s}"
+        },
+        {
+          "name": "edge_extend_s",
+          "type": "float",
+          "units": "s",
+          "description": "How many seconds past the line's first and last point to hold that point's depth. The default 0.0 does no extrapolation at all, so pings outside the line's time span are NaN - this is what keeps a line covering only part of a survey from silently asserting a constant seafloor over the rest. Set null to hold the end depths indefinitely.",
+          "default": 0.0,
+          "set": true,
+          "value": 0.0
+        },
+        {
+          "name": "depth_offset_m",
+          "type": "float",
+          "units": "m",
+          "description": "Constant metres added to the line, for when the transducer draft configured in Echoview differs from the one baked into ds_Sv['depth']. Positive pushes the seafloor deeper.",
+          "default": 0.0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "min_coverage",
+          "type": "float",
+          "units": null,
+          "description": "Fraction of pings (0-1) that must end up with a finite seafloor depth; below it the step fails instead of silently masking the uncovered pings away. Default 0.0 never fails.",
+          "default": 0.0,
+          "set": true,
+          "value": "${inputs.seabed_line_min_coverage}"
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime (e.g. \"2024-10-12T00:15\") selecting which line files in an evl_path folder to read, by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same window that selected the raw files so the line and the pings stay in step.\nA file's span runs from its own name stamp to the *next* file's, not to the end stamp in its own name - Echoview's end stamp under-reports the line's real last point by about one raw file's duration, so trusting it would drop the export straddling the window start and leave the leading pings with no seafloor. Selection is name-based, so no line data is read (or downloaded) to filter. Ignored when evl_path names a single file.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for line file selection. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seafloor_depth",
+          "type": "DataArray",
+          "description": "Seafloor depth in metres, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Always 1-D (no channel dimension), matching the output of the ``detect_seafloor`` and ``ep_detect_seafloor`` ops so downstream masking steps are interchangeable. NaN wherever the line does not cover a ping.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "create_seafloor_mask",
+      "kind": "step",
+      "op": "create_seafloor_mask",
+      "op_url": "ops/create_seafloor_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Build a seafloor mask from baseline Sv and detected seafloor depth. The seafloor depth is passed as an explicit input, enabling swappable detection methods without modifying masking logic.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset the mask is shaped to. Supplies the meter-valued range variable that each sample's depth is compared against.",
+          "value": "${ep_add_depth.ds_Sv}"
+        },
+        {
+          "name": "seafloor_depth",
+          "type": "DataArray",
+          "required": true,
+          "description": "Seafloor depth per ping, shape (ping_time,), from detect_seafloor, ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN produce no valid samples, so an undetected stretch is masked out entirely rather than guessed at.",
+          "value": "${detect_seafloor.seafloor_depth}"
+        }
+      ],
+      "params": [
+        {
+          "name": "seafloor_buffer_m",
+          "type": "float",
+          "units": "m",
+          "description": "Height above the detected seafloor line to also mask out. Widens the exclusion zone to cover detection error and the near-bottom dead zone, at the cost of discarding real backscatter just above the bottom.",
+          "default": 0.0,
+          "set": true,
+          "value": "${inputs.seafloor_buffer_m}"
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of the meter-valued variable on ds_Sv to compare against the seafloor line. Must use the same vertical reference as the seafloor line. When null (the default), auto-selects \"depth\" if present on ds_Sv (i.e., add_depth was run upstream), otherwise falls back to \"echo_range\".",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Boolean DataArray shaped like ds_Sv['Sv']; True means valid data (above seafloor)",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "create_surface_mask",
+      "kind": "step",
+      "op": "create_surface_mask",
+      "op_url": "ops/create_surface_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Build a surface-interference mask from baseline Sv using a selectable method.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset the mask is shaped to. Supplies the range variable each sample's depth is read from.",
+          "value": "${compute_sv.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "surface_depth_m",
+          "type": "float",
+          "units": "m",
+          "description": "Depth above which samples are masked out, removing the transmit pulse ringdown and near-surface bubble layer. The default of 0.0 masks nothing.",
+          "default": 0.0,
+          "set": true,
+          "value": "${inputs.surface_mask_depth}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Boolean mask DataArray; True means valid data",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "combine_masks",
+      "kind": "step",
+      "op": "combine_masks",
+      "op_url": "ops/combine_masks/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Combine two or more mask datasets into one final mask. Accepts a list of mask inputs to support inserting additional custom mask-producing steps into the chain without changing core framework code.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "masks",
+          "type": "list",
+          "required": true,
+          "description": "List of boolean mask DataArrays to combine",
+          "value": [
+            "${create_seafloor_mask.mask}",
+            "${create_surface_mask.mask}"
+          ]
+        }
+      ],
+      "params": [
+        {
+          "name": "mode",
+          "type": "str",
+          "units": null,
+          "description": "Combination mode: 'and' (all must be valid) or 'or' (any must be valid)",
+          "default": "and",
+          "set": true,
+          "value": "and"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Combined boolean mask DataArray",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "apply_mask",
+      "kind": "step",
+      "op": "apply_sv_mask",
+      "op_url": "ops/apply_sv_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.\nThin wrapper over echopype.mask.apply_mask, calling it against the Sv variable with NaN as the fill value. It adds nothing of its own, so the broadcasting and alignment rules are echopype's.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to mask, normally straight from compute_sv.",
+          "value": "${ep_add_depth.ds_Sv}"
+        },
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "required": true,
+          "description": "Boolean mask broadcastable against ds_Sv[\"Sv\"], where True marks a sample to keep. Normally the single mask from combine_masks, so every exclusion rule the recipe built is applied in one pass.",
+          "value": "${combine_masks.mask}"
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Sv Dataset with masked samples set to NaN",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "merge_sv",
+      "kind": "step",
+      "op": "merge_datasets",
+      "op_url": "ops/merge_datasets/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Reconsolidate a collected list of xarray Datasets into a single Dataset by concatenating along a dimension. This is the recipe system's fan-in (collect) target for segment-parallel work: a mapped step that produces one Dataset per data segment (e.g. per-file MVBS) is gathered via ``collect`` and merged back into one Dataset along ``dim`` (default ``ping_time``). A single Dataset passes through unchanged (single-item transparency).",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": true,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "datasets",
+          "type": "Dataset | DataArray",
+          "required": true,
+          "description": "Collected list of Datasets (one per mapped/swept instance), supplied by a ``collect: ${mapped_step.output}`` directive on the recipe step.",
+          "value": "${apply_mask.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dim",
+          "type": "str",
+          "units": null,
+          "description": "Dimension to concatenate the collected Datasets along.",
+          "default": "ping_time",
+          "set": true,
+          "value": "ping_time"
+        },
+        {
+          "name": "on_duplicate",
+          "type": "str",
+          "units": null,
+          "description": "What to do when two collected segments carry the same label on ``dim``.\nUnset (the default) leaves both, which is right when segments cannot overlap - per-file Sv concatenated on raw ping_time, for instance.\n\"mean\" averages them into one entry. That is what a fan-in over per segment BINNED products needs: compute_mvbs and compute_per_cell_statistics anchor their time bins to a global origin, so a segment boundary falling inside a bin makes the segment on each side emit that bin, each holding part of its pings. Left alone the merged store carries a duplicate index, which every downstream reindex rejects - add_auxiliary_features raises InvalidIndexError on it.\n\"first\" keeps the first entry for a label and sorts the result. That is what a fan-in over overlapping SLICES OF ONE STORE needs: dive windows cut from the survey grid, where two dives sharing a minute are the same cells twice, so nothing should be averaged. A per-segment variable that differs on the overlap is kept from the first segment only, which is the sign it does not belong on the shared axis; attach it per segment after the fan-in.\nVariables carrying \"units: dB\" are averaged in the linear domain and converted back, since a mean of decibels is not the mean of what they measure. The average is unweighted: the partial bins do not record how many pings each held.",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "merged",
+          "type": "Dataset | DataArray",
+          "description": "Single concatenated result, matching the collected element type: a Dataset for collected Datasets, a DataArray for collected DataArrays (e.g. a per-file detect_seafloor line collected into a survey-wide one).",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "crop_range",
+      "kind": "step",
+      "op": "crop_range",
+      "op_url": "ops/crop_range/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Trim trailing range samples that carry no data. A raw file records to the sonar's configured range, so after seafloor masking the deep end of ``range_sample`` is entirely NaN. Those samples still cost memory and time in every downstream step, and they widen the binned cell grid that ``compute_mvbs`` and ``compute_per_cell_statistics`` build - the flox reduction behind the latter allocates dense bookkeeping sized by channels x ping bins x range bins, so an over-wide range axis is what pushes it into a MemoryError on a long survey.\nA standalone step rather than a parameter on ``apply_sv_mask``, for the same reason ``rechunk_dataset`` is standalone: masking is ping-local and runs correctly per file, but the crop point is a property of the whole survey. Cropping per file would leave the segments with different ``range_sample`` lengths, and the ping_time concatenation resolves that by padding the short ones back out with NaN - which undoes the crop and leaves NaN in ``echo_range``, where downstream range binning reads it. Place this after the fan-in instead.\nThree criteria are available and compose - whichever are active each produce a candidate cut and the shallowest wins:\n* ``outlier_sigma`` rejects anomalous pings and then crops to the deepest\n  **retained** ping. Prefer this survey-wide: a single glitch ping reaching\n  far past the seafloor otherwise holds the whole range axis open, which is\n  exactly what defeats the lossless mode. The threshold is deliberately\n  generous, so uncommon-but-real depths survive and only wild outliers go.\n* ``max_range_m`` is a hard ceiling, applied whether or not samples above it\n  hold data. Cheapest when the answer is already known (e.g. from the\n  deepest point in the survey's seabed lines).\n* ``drop_trailing_all_nan`` is the lossless fallback used when no outlier\n  test is requested.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to crop, normally after apply_sv_mask so the seafloor returns are already NaN. Place this after any per-file fan-in, since the crop point is a property of the whole survey.",
+          "value": "${merge_sv.merged}"
+        }
+      ],
+      "params": [
+        {
+          "name": "max_range_m",
+          "type": "float",
+          "units": "m",
+          "description": "Explicit cap. Range samples deeper than this are dropped whether or not they hold data, so a cap shallower than the deepest echo of interest discards it. Leave unset to derive the crop from the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.crop_max_range_m}"
+        },
+        {
+          "name": "outlier_sigma",
+          "type": "float",
+          "units": null,
+          "description": "Standard deviations above the mean, over the per-ping deepest finite sample, at which a ping becomes a candidate outlier. Combined with outlier_margin to form the reject threshold. Leave unset to disable outlier rejection and fall back to drop_trailing_all_nan.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.crop_outlier_sigma}"
+        },
+        {
+          "name": "outlier_margin",
+          "type": "float",
+          "units": null,
+          "description": "Multiplier applied to (mean + outlier_sigma * sd) to get the reject threshold. Raise it to flag fewer pings, lower it to flag more. The default 1.5 is deliberately loose: on HB2407's 2024-10-15 window it puts the threshold at 424 m against a deepest retained ping of 214 m, so it catches only genuine anomalies. Only used when outlier_sigma is set.",
+          "default": 1.5,
+          "set": true,
+          "value": "${inputs.crop_outlier_margin}"
+        },
+        {
+          "name": "drop_trailing_all_nan",
+          "type": "bool",
+          "units": null,
+          "description": "Crop to one past the deepest range sample holding a finite Sv value anywhere in the dataset. Lossless. Ignored when outlier_sigma is set. Set false with the other two criteria unset to disable the step without removing it from the recipe.",
+          "default": true,
+          "set": true,
+          "value": "${inputs.crop_trailing_all_nan}"
+        },
+        {
+          "name": "data_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable inspected for finite values.",
+          "default": "Sv",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable supplying each sample's range in metres.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset with the trailing empty range samples dropped, so every downstream step works on a narrower range axis.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "rechunk_before_noise",
+      "kind": "step",
+      "op": "rechunk_dataset",
+      "op_url": "ops/rechunk_dataset/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
+          "value": "${crop_range.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk size along ping_time.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.noise_chunk_ping_time}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "remove_noise",
+      "kind": "step",
+      "op": "remove_background_noise",
+      "op_url": "ops/remove_background_noise/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Estimate and remove background noise from Sv using the De Robertis and Higginbottom method. Returns a cleaned Sv Dataset.\nThin wrapper over echopype.clean.remove_background_noise. Every parameter below is forwarded to it unchanged, so its behavior is echopype's. The one thing the wrapper adds is that the corrected values are copied over the Sv variable, so downstream steps reading Sv get the cleaned data without having to know about Sv_corrected. Both variables are present on the result.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to denoise, normally the masked Sv from apply_sv_mask so the seafloor and surface returns are not folded into the noise estimate.",
+          "value": "${rechunk_before_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_num",
+          "type": "int",
+          "units": null,
+          "description": "Number of pings used to estimate the noise level",
+          "default": 5,
+          "set": true,
+          "value": "${inputs.noise_ping_num}"
+        },
+        {
+          "name": "range_sample_num",
+          "type": "int",
+          "units": null,
+          "description": "Number of range samples used to estimate the noise level",
+          "default": 10,
+          "set": true,
+          "value": "${inputs.noise_range_sample_num}"
+        },
+        {
+          "name": "background_noise_max",
+          "type": "str",
+          "units": null,
+          "description": "Upper limit on the estimated noise level (e.g. '-125dB'); omit to leave it unbounded",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "SNR_threshold",
+          "type": "str",
+          "units": null,
+          "description": "Signal-to-noise ratio below which corrected samples are masked out (e.g. '3.0dB')",
+          "default": "3.0dB",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Noise-corrected Sv Dataset",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:extract_cal_params.other_params",
+      "kind": "output",
+      "label": "extract_cal_params.other_params",
+      "type": "dict",
+      "declared": false,
+      "from": {
+        "step": "extract_cal_params",
+        "output": "other_params"
+      },
+      "group": "group:0"
+    },
+    {
+      "id": "out:remove_noise.ds_Sv",
+      "kind": "output",
+      "label": "remove_noise.ds_Sv",
+      "type": "Dataset",
+      "declared": false,
+      "from": {
+        "step": "remove_noise",
+        "output": "ds_Sv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ext:initial_setup.raw_file_paths",
+      "target": "extract_cal_params",
+      "kind": "map_over",
+      "source_output": "raw_file_paths",
+      "target_input": "raw_file_path",
+      "label": "raw_file_paths -> _item -> raw_file_path",
+      "type": null,
+      "group": "group:0",
+      "item_inputs": [
+        "raw_file_path"
+      ]
+    },
+    {
+      "source": "in:calibration_dict",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "calibration_dict",
+      "target_input": "calibration_dict",
+      "label": "calibration_dict",
+      "type": "dict"
+    },
+    {
+      "source": "in:mapping_dict",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "mapping_dict",
+      "target_input": "mapping_dict",
+      "label": "mapping_dict",
+      "type": "dict"
+    },
+    {
+      "source": "in:echodata",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "echodata"
+    },
+    {
+      "source": "in:echodata",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "echodata"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "cal_params",
+      "target_input": "cal_params",
+      "label": "cal_params",
+      "type": "dict"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "env_params",
+      "target_input": "env_params",
+      "label": "env_params",
+      "type": "dict"
+    },
+    {
+      "source": "compute_sv",
+      "target": "compute_transducer_depth",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:echodata",
+      "target": "compute_transducer_depth",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "echodata"
+    },
+    {
+      "source": "in:datum_correction_m",
+      "target": "compute_transducer_depth",
+      "kind": "param",
+      "source_output": "datum_correction_m",
+      "target_input": "datum_correction_m",
+      "label": "datum_correction_m",
+      "type": "float"
+    },
+    {
+      "source": "in:use_heave",
+      "target": "compute_transducer_depth",
+      "kind": "param",
+      "source_output": "use_heave",
+      "target_input": "use_heave",
+      "label": "use_heave",
+      "type": "bool"
+    },
+    {
+      "source": "in:heave_sign",
+      "target": "compute_transducer_depth",
+      "kind": "param",
+      "source_output": "heave_sign",
+      "target_input": "heave_sign",
+      "label": "heave_sign",
+      "type": "float"
+    },
+    {
+      "source": "compute_sv",
+      "target": "ep_add_depth",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:echodata",
+      "target": "ep_add_depth",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "echodata"
+    },
+    {
+      "source": "compute_transducer_depth",
+      "target": "ep_add_depth",
+      "kind": "param",
+      "source_output": "transducer_depth",
+      "target_input": "depth_offset",
+      "label": "transducer_depth -> depth_offset",
+      "type": "DataArray"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "detect_seafloor",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:seabed_line_folder",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_folder",
+      "target_input": "evl_path",
+      "label": "seabed_line_folder -> evl_path",
+      "type": "path"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:seabed_line_max_gap_s",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_max_gap_s",
+      "target_input": "max_gap_s",
+      "label": "seabed_line_max_gap_s -> max_gap_s",
+      "type": "float"
+    },
+    {
+      "source": "in:seabed_line_min_coverage",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_min_coverage",
+      "target_input": "min_coverage",
+      "label": "seabed_line_min_coverage -> min_coverage",
+      "type": "float"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "create_seafloor_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "detect_seafloor",
+      "target": "create_seafloor_mask",
+      "kind": "data",
+      "source_output": "seafloor_depth",
+      "target_input": "seafloor_depth",
+      "label": "seafloor_depth",
+      "type": "DataArray"
+    },
+    {
+      "source": "in:seafloor_buffer_m",
+      "target": "create_seafloor_mask",
+      "kind": "param",
+      "source_output": "seafloor_buffer_m",
+      "target_input": "seafloor_buffer_m",
+      "label": "seafloor_buffer_m",
+      "type": "float"
+    },
+    {
+      "source": "compute_sv",
+      "target": "create_surface_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:surface_mask_depth",
+      "target": "create_surface_mask",
+      "kind": "param",
+      "source_output": "surface_mask_depth",
+      "target_input": "surface_depth_m",
+      "label": "surface_mask_depth -> surface_depth_m",
+      "type": "float"
+    },
+    {
+      "source": "create_seafloor_mask",
+      "target": "combine_masks",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "masks",
+      "label": "mask -> masks",
+      "type": "DataArray"
+    },
+    {
+      "source": "create_surface_mask",
+      "target": "combine_masks",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "masks",
+      "label": "mask -> masks",
+      "type": "DataArray"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "apply_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "combine_masks",
+      "target": "apply_mask",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "mask",
+      "label": "mask",
+      "type": "DataArray"
+    },
+    {
+      "source": "apply_mask",
+      "target": "merge_sv",
+      "kind": "collect",
+      "source_output": "ds_Sv",
+      "target_input": "datasets",
+      "label": "ds_Sv -> datasets",
+      "type": "Dataset"
+    },
+    {
+      "source": "merge_sv",
+      "target": "crop_range",
+      "kind": "data",
+      "source_output": "merged",
+      "target_input": "ds_Sv",
+      "label": "merged -> ds_Sv",
+      "type": "Dataset | DataArray"
+    },
+    {
+      "source": "in:crop_outlier_sigma",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_outlier_sigma",
+      "target_input": "outlier_sigma",
+      "label": "crop_outlier_sigma -> outlier_sigma",
+      "type": "float"
+    },
+    {
+      "source": "in:crop_outlier_margin",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_outlier_margin",
+      "target_input": "outlier_margin",
+      "label": "crop_outlier_margin -> outlier_margin",
+      "type": "float"
+    },
+    {
+      "source": "in:crop_trailing_all_nan",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_trailing_all_nan",
+      "target_input": "drop_trailing_all_nan",
+      "label": "crop_trailing_all_nan -> drop_trailing_all_nan",
+      "type": "bool"
+    },
+    {
+      "source": "in:crop_max_range_m",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_max_range_m",
+      "target_input": "max_range_m",
+      "label": "crop_max_range_m -> max_range_m",
+      "type": "float"
+    },
+    {
+      "source": "crop_range",
+      "target": "rechunk_before_noise",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:noise_chunk_ping_time",
+      "target": "rechunk_before_noise",
+      "kind": "param",
+      "source_output": "noise_chunk_ping_time",
+      "target_input": "ping_time_chunk",
+      "label": "noise_chunk_ping_time -> ping_time_chunk",
+      "type": "int"
+    },
+    {
+      "source": "rechunk_before_noise",
+      "target": "remove_noise",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:noise_range_sample_num",
+      "target": "remove_noise",
+      "kind": "param",
+      "source_output": "noise_range_sample_num",
+      "target_input": "range_sample_num",
+      "label": "noise_range_sample_num -> range_sample_num",
+      "type": "int"
+    },
+    {
+      "source": "in:noise_ping_num",
+      "target": "remove_noise",
+      "kind": "param",
+      "source_output": "noise_ping_num",
+      "target_input": "ping_num",
+      "label": "noise_ping_num -> ping_num",
+      "type": "int"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "out:extract_cal_params.other_params",
+      "kind": "exit",
+      "source_output": "other_params",
+      "target_input": null,
+      "label": "other_params",
+      "type": "dict"
+    },
+    {
+      "source": "remove_noise",
+      "target": "out:remove_noise.ds_Sv",
+      "kind": "exit",
+      "source_output": "ds_Sv",
+      "target_input": null,
+      "label": "ds_Sv",
+      "type": "Dataset"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${initial_setup.raw_file_paths}",
+      "label": "Runs once per item of initial_setup.raw_file_paths",
+      "source": "ext:initial_setup.raw_file_paths",
+      "members": [
+        "extract_cal_params",
+        "compute_sv",
+        "compute_transducer_depth",
+        "ep_add_depth",
+        "detect_seafloor",
+        "create_seafloor_mask",
+        "create_surface_mask",
+        "combine_masks",
+        "apply_mask"
+      ]
+    }
+  ],
+  "context": {
+    "upstream": [
+      {
+        "target": "ext:initial_setup.raw_file_paths",
+        "output": "raw_file_paths",
+        "step": "initial_setup",
+        "op": "initial_setup",
+        "recipe": "hb2407-level-0",
+        "title": "HB2407 level 0, file selection and calibration mapping",
+        "page": "levels/level-0/"
+      },
+      {
+        "target": "in:calibration_dict",
+        "output": "calibration_dict",
+        "step": "gen_cal_mapping",
+        "op": "generate_standardized_cal_mapping",
+        "recipe": "hb2407-level-0",
+        "title": "HB2407 level 0, file selection and calibration mapping",
+        "page": "levels/level-0/"
+      },
+      {
+        "target": "in:mapping_dict",
+        "output": "mapping_dict",
+        "step": "gen_cal_mapping",
+        "op": "generate_standardized_cal_mapping",
+        "recipe": "hb2407-level-0",
+        "title": "HB2407 level 0, file selection and calibration mapping",
+        "page": "levels/level-0/"
+      },
+      {
+        "target": "in:echodata",
+        "output": "echodata",
+        "step": "combine_raw",
+        "op": "combine_raw_files",
+        "recipe": "hb2407-level-1",
+        "title": "HB2407 level 1, raw ingest",
+        "page": "levels/level-1/"
+      }
+    ],
+    "downstream": [
+      {
+        "source": "out:remove_noise.ds_Sv",
+        "input": "ds_Sv",
+        "step": "plot_sv_clean",
+        "op": "plot_sv_echogram",
+        "recipe": "hb2407-herring-per-file",
+        "title": "HB2407 herring, per file",
+        "page": "levels/hb2407-herring-per-file/"
+      },
+      {
+        "source": "out:remove_noise.ds_Sv",
+        "input": "ds_Sv",
+        "step": "mask_sparse",
+        "op": "mask_sparse_bins",
+        "recipe": "hb2407-level-3",
+        "title": "HB2407 level 3, gridding and per-cell statistics",
+        "page": "levels/level-3/"
+      },
+      {
+        "source": "out:remove_noise.ds_Sv",
+        "input": "ds_Sv",
+        "step": "compute_cell_stats",
+        "op": "compute_per_cell_statistics",
+        "recipe": "hb2407-level-3",
+        "title": "HB2407 level 3, gridding and per-cell statistics",
+        "page": "levels/level-3/"
+      },
+      {
+        "source": "out:remove_noise.ds_Sv",
+        "input": "ds_Sv",
+        "step": "plot_normalized_ml",
+        "op": "plot_ml_echogram",
+        "recipe": "hb2407-level-4",
+        "title": "HB2407 level 4, clustering",
+        "page": "levels/level-4/"
+      },
+      {
+        "source": "out:remove_noise.ds_Sv",
+        "input": "ds_Sv",
+        "step": "plot_clustering_report",
+        "op": "plot_clustering_report",
+        "recipe": "hb2407-level-4",
+        "title": "HB2407 level 4, clustering",
+        "page": "levels/level-4/"
+      }
+    ],
+    "values": {
+      "in:datum_correction_m": "= -1.0",
+      "in:use_heave": "= true",
+      "in:heave_sign": "= 1.0",
+      "in:seabed_line_folder": "(from parent input seabed_line_folder)",
+      "in:file_time_start": "(from parent input file_time_start)",
+      "in:file_time_end": "(from parent input file_time_end)",
+      "in:seafloor_buffer_m": "= 1",
+      "in:surface_mask_depth": "= 5.0",
+      "in:crop_outlier_sigma": "= 3.0",
+      "in:crop_outlier_margin": "= 1.5",
+      "in:noise_range_sample_num": "= 10",
+      "in:noise_ping_num": "= 5"
+    }
+  }
+}

@@ -1,0 +1,330 @@
+{
+  "schema": 1,
+  "slug": "hb2407-level-0-ncei-download",
+  "title": "HB2407 level 0, NCEI download",
+  "recipe": {
+    "name": "processing_lvl_0",
+    "description": "Query NCEI and download raw acoustic files.",
+    "version": "1.0",
+    "source": "recipes/HB2407/sub_recipes/processing_lvl_0_ncei_download.yaml",
+    "parent": null,
+    "level": 0,
+    "cruise": "HB2407"
+  },
+  "nodes": [
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Inclusive start time for the NCEI query."
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Inclusive end time for the NCEI query."
+    },
+    {
+      "id": "in:cruise_name",
+      "kind": "input",
+      "label": "inputs.cruise_name",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Cruise name filter passed to the NCEI query."
+    },
+    {
+      "id": "in:raw_input_folder",
+      "kind": "input",
+      "label": "inputs.raw_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Destination folder for downloaded raw files."
+    },
+    {
+      "id": "query_ncei",
+      "kind": "step",
+      "op": "query_ncei_data",
+      "op_url": "ops/query_ncei_data/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "ISO 8601 start of window, e.g. '2016-07-25T20:58'",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "ISO 8601 end of window",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        },
+        {
+          "name": "filters",
+          "type": "dict",
+          "units": null,
+          "description": "Key-value filters applied to NCEI metadata (e.g. CRUISE_NAME)",
+          "default": {},
+          "set": true,
+          "value": {
+            "CRUISE_NAME": "${inputs.cruise_name}"
+          }
+        },
+        {
+          "name": "file_names",
+          "type": "list",
+          "units": null,
+          "description": "Keep only these files, matched on the D{date}-T{time} stamp in the name, so a bare D20160725-T205832.raw finds the archive's HB1603_L1- form and the reverse. Applied after the time window, client side, in catalogue order. A name the query did not return raises rather than silently shrinking the result. Wire it from a planning step, for example ${plan_dives.raw_files}, to map a per-file chain over an analysis's files alone. Empty keeps everything.",
+          "default": [],
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ncei_results",
+          "type": "list",
+          "description": "List of NCEI file metadata records (dicts) matching the query",
+          "disposed": false
+        },
+        {
+          "name": "query_label",
+          "type": "str",
+          "description": "Readable, folder-safe slug derived from the query parameters. Intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir.",
+          "disposed": false
+        },
+        {
+          "name": "raw_urls",
+          "type": "list",
+          "description": "Public HTTPS URL of each record's .raw object, in record order. For steps that read a file in place rather than downloading it, such as read_raw_file_config with max_scan_bytes: map over this and each instance range-reads the leading bytes of one file, with nothing transferred whole and nothing left on disk.\nPlain strings, so a mapped instance is content-addressed by its URL and dedupes across runs the same way a raw file path does. Built rather than probed, so a record whose object is not stored as <key>.raw fails on read instead of costing a HEAD request per file.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "download_raw",
+      "kind": "step",
+      "op": "download_ncei_data",
+      "op_url": "ops/download_ncei_data/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Download raw acoustic files identified by an NCEI query result, along with any specified companion file extensions (.bot, .idx, etc.).",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "results",
+          "type": "list",
+          "required": true,
+          "description": "NCEI file metadata records from query_ncei_data (ncei_results)",
+          "value": "${query_ncei.ncei_results}"
+        },
+        {
+          "name": "query_label",
+          "type": "str",
+          "required": false,
+          "description": "Readable slug from query_ncei_data, used as the per-query subfolder name unless overridden by the query_id param.",
+          "value": "${query_ncei.query_label}"
+        }
+      ],
+      "params": [
+        {
+          "name": "output_dir",
+          "type": "path",
+          "units": null,
+          "description": "Local *base* directory. Each query writes into output_dir/<query_id or query_label>/.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "companion_extensions",
+          "type": "list",
+          "units": null,
+          "description": "Additional file extensions to download alongside each .raw file",
+          "default": [],
+          "set": true,
+          "value": [
+            ".bot",
+            ".idx"
+          ]
+        },
+        {
+          "name": "query_id",
+          "type": "str",
+          "units": null,
+          "description": "Optional explicit subfolder name. Overrides the query_label input. Useful when you want a stable, human-chosen folder name.",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "downloaded_paths",
+          "type": "list",
+          "description": "List of downloaded file paths, including extracted tar contents when applicable",
+          "disposed": false
+        },
+        {
+          "name": "download_dir",
+          "type": "path",
+          "description": "Per-query subfolder under output_dir where the files were written. Downstream steps should pass this as their raw_input_folder so each query's data stays isolated.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:query_ncei.raw_urls",
+      "kind": "output",
+      "label": "query_ncei.raw_urls",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "query_ncei",
+        "output": "raw_urls"
+      }
+    },
+    {
+      "id": "out:download_raw.downloaded_paths",
+      "kind": "output",
+      "label": "download_raw.downloaded_paths",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "download_raw",
+        "output": "downloaded_paths"
+      }
+    },
+    {
+      "id": "out:download_raw.download_dir",
+      "kind": "output",
+      "label": "download_raw.download_dir",
+      "type": "path",
+      "declared": false,
+      "from": {
+        "step": "download_raw",
+        "output": "download_dir"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:file_time_start",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:cruise_name",
+      "target": "query_ncei",
+      "kind": "param",
+      "source_output": "cruise_name",
+      "target_input": "filters",
+      "label": "cruise_name -> filters",
+      "type": "str"
+    },
+    {
+      "source": "query_ncei",
+      "target": "download_raw",
+      "kind": "data",
+      "source_output": "ncei_results",
+      "target_input": "results",
+      "label": "ncei_results -> results",
+      "type": "list"
+    },
+    {
+      "source": "query_ncei",
+      "target": "download_raw",
+      "kind": "data",
+      "source_output": "query_label",
+      "target_input": "query_label",
+      "label": "query_label",
+      "type": "str"
+    },
+    {
+      "source": "in:raw_input_folder",
+      "target": "download_raw",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "output_dir",
+      "label": "raw_input_folder -> output_dir",
+      "type": "path"
+    },
+    {
+      "source": "query_ncei",
+      "target": "out:query_ncei.raw_urls",
+      "kind": "exit",
+      "source_output": "raw_urls",
+      "target_input": null,
+      "label": "raw_urls",
+      "type": "list"
+    },
+    {
+      "source": "download_raw",
+      "target": "out:download_raw.downloaded_paths",
+      "kind": "exit",
+      "source_output": "downloaded_paths",
+      "target_input": null,
+      "label": "downloaded_paths",
+      "type": "list"
+    },
+    {
+      "source": "download_raw",
+      "target": "out:download_raw.download_dir",
+      "kind": "exit",
+      "source_output": "download_dir",
+      "target_input": null,
+      "label": "download_dir",
+      "type": "path"
+    }
+  ],
+  "groups": []
+}

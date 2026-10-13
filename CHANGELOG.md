@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: warn_if_set on recipe inputs
+
+- An input declaration may carry `warn_if_set: "<message>"`. Whenever the
+  input resolves to a value, from the recipe default, the run config or
+  `--input`, building the DAG warns with the input's name, its value and the
+  message. Meant for optional inputs that are normally left unset, such as
+  the debugging time window on the RL2307 calibration recipes. Not part of
+  any step hash.
+
 ### Added: api.step_hashes and api.fingerprint_differences
 
 - `api.step_hashes(recipe, inputs=..., storage_options=...)`: every step's

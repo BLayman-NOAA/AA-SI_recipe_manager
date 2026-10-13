@@ -1,0 +1,35 @@
+recipe_hash: 1b75d5326a0e8e837ef3a1a08868a85a2c7cd8179defea11b56440ff8fd96052
+recipe_name: quickstart
+recipe_version: '1.0'
+timestamp: '2026-10-08T22:06:53.945484Z'
+python_version: 3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 
+  19:42:21) [MSC v.1916 64 bit (AMD64)]
+python_version_number: 3.12.3
+os_info: Windows-11-10.0.26200-SP0
+resolved_dependencies:
+  aa-si-utils:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+  echopype:
+    installed_version: 0.11.1
+    source: pypi
+  aa-si-visualization:
+    installed_version: 0.1.0
+    source: git
+    url: https://github.com/BLayman-NOAA/AA-SI_Visualization.git
+raw_inputs:
+  files:
+  - name: D20160725-T203535.raw
+    size:
+  - name: D20160725-T205832.raw
+    size:
+  - name: D20160725-T212129.raw
+    size:
+  - name: D20160725-T214425.raw
+    size:
+  count: 4
+  digest: 5e69eea66fc541110f91d19fb278fe76261c0602dffd6520bb401ae804b15c01
+  source: resolved
+  producing_step: read_raw.raw_file_paths
+  origin_run_id: 215907-f1e3b9

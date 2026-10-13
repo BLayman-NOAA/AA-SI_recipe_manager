@@ -1,0 +1,156 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/dive_analysis.yaml,
+# with its two level 2 includes (2a survey, 2b user) merged into processing_lvl_2_combined.yaml.
+# Unlike the original, level 2b keeps the survey's surface-referenced depth rather than re-adding
+# depth as range from the transducer, so the level 3 depth axis is pinned 10 m deeper.
+
+# HB1603 dive analysis: 13 dives, one clustering, per-dive SVCodes.
+#
+#   aa-recipe run dive_analysis.yaml --executor dask --dask-workers 16
+#
+#   plan        read the dive configs, one window per dive
+#   level 0     the survey's NCEI catalogue and calibration mapping
+#   level 1     per file: raw ingest, streamed from NCEI
+#   level 2     per file: calibrated Sv and depth (2a), then inside the dive
+#               windows the surface, frequency and seabed masks and noise
+#               removal (2b)
+#   level 3     per file: sparse mask, grid, per-cell CV; fan in to the pooled
+#               dive grid
+#   level 4     pooled HDBSCAN clustering and the clustering report
+#   level 5     per-dive SVCodes and the depth-interval tables
+#
+# WHERE THE VALUES LIVE
+#
+#   Each level file documents its own steps and inputs. Every value is set in
+#   this file, on the include that uses it, so the whole analysis reads from
+#   one place. A value more than one include needs is a recipe input below;
+#   the rest are literals in input_overrides. A literal is not reachable with
+#   --input: edit it here.
+#
+# THE SURVEY TIER
+#
+#   Levels 0 to 2a are the survey's: computed once per cruise by a separate
+#   survey recipe and loaded from its shared cache here. A step's hash folds
+#   in how its inputs are wired, and those hashes address that cache, so their
+#   overrides must stay exactly as the survey recipe has them. Do not narrow
+#   the catalogue query to get a subset: it is a parent of every per-file
+#   step. The window belongs in level 2b.
+#
+# ORDER MATTERS BETWEEN LEVELS 1 AND 3
+#
+#   They are one per-file chain. Nothing non-mapped may be declared between
+#   those includes, which is why the dive plan comes first.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run dive_analysis.yaml --visualize
+
+recipe:
+  name: "hb1603_dive_analysis"
+  description: "Pooled HDBSCAN clustering of 13 HB1603 sperm whale dives with per-dive SVCodes, seabed masked on Sv."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # --- Survey level -----------------------------------------------------------
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Range ceiling applied per file. Every consumer shares it: change it and
+      the whole survey Sv is recomputed.
+
+  # --- Shared by levels 2b, 3 and 5 -------------------------------------------
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: >
+      Ping-time bin of the per-dive grid. Level 2b widens each dive window to
+      whole bins of this width, level 3 grids on it, and level 5 counts one bin
+      of this length per ping in the duration tables.
+
+steps:
+
+  - include: sub_recipes/dive_plan.yaml
+    input_overrides:
+      json_dir: "./Auxiliary/JSON_Files"
+      evl_root: "./Auxiliary"
+      pad_minutes: 0.0
+      dive_labels:
+        - "SWD_20160707-OE20"
+        - "SWD_20160707-OE29"
+        - "SWD_20160707-OE32"
+        - "SWD_20160719-OE07"
+        - "SWD_20160725-OE50"
+        - "SWD_20160725-OE54"
+        - "SWD_20160725-OE61"
+        - "SWD_20160725-OE62"
+        - "SWD_20160725-OE64"
+        - "SWD_20160802-OE16"
+        - "SWD_20160814-OE03"
+        - "SWD_20160814-OE09"
+        - "SWD_20160814-OE44"
+
+  - include: sub_recipes/processing_lvl_0_user.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+
+  - include: sub_recipes/processing_lvl_2_combined.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+      dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
+      surface_depth_m: 10.0
+      frequencies_to_mask: [70, 120, 200]
+      seabed_lines_dir: "./Auxiliary/seabed_lines"
+      seabed_min_coverage: 0.99
+      seafloor_buffer_m: 10.0
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      noise_snr_threshold: "6.0dB"
+      noise_background_max: "-66dB"
+
+  - include: sub_recipes/processing_lvl_3_user.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_bin: "2m"
+      range_var: "depth"
+      nan_threshold: 0.99
+      # Pinned so every file shares one depth axis. HB1603 recorded to about
+      # 3003 m of range, and depth adds the transducer's own depth below the
+      # surface (about 9 m, plus heave), so 3020m clears every file.
+      mvbs_range_var_max: "3020m"
+      dive_chunk_ping_time: 1000
+
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs: ${rechunk_dive_mvbs.ds_Sv}
+      cell_stats_sv: ${merge_dive_files_cell_stats.merged}
+      dive_windows: ${plan_dives.windows}
+      sample_size: 1200000
+      min_cluster_size_fraction: 0.01
+      min_samples: 4
+
+  - include: sub_recipes/processing_lvl_5_sv_codes.yaml
+    input_overrides:
+      clustered: ${embed_results.ds_normalized}
+      dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
+      code_output_dir: "./outputs/sv_codes"
+      depth_interval_m: 200.0

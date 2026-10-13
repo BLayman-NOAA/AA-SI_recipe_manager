@@ -35,6 +35,21 @@ def parse_ref(value: Any) -> tuple[str, str] | None:
     return None
 
 
+def parse_input_ref(value: Any) -> str | None:
+    """Return the input name if value is exactly one ``${inputs.name}``, else None."""
+    if not isinstance(value, str):
+        return None
+    match = _INPUT_REF.fullmatch(value)
+    return match.group(1) if match else None
+
+
+def input_ref_names(value: Any) -> list[str]:
+    """Return the names of every ``${inputs.name}`` inside a string, in order."""
+    if not isinstance(value, str):
+        return []
+    return list(dict.fromkeys(_INPUT_REF.findall(value)))
+
+
 def is_item_ref(value: Any) -> bool:
     """Return True if value is exactly the ``${_item}`` current-element token."""
     return isinstance(value, str) and value.strip() == _ITEM_TOKEN

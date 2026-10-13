@@ -14,6 +14,7 @@ import pytest
 from aa_recipe_manager.exceptions import RecipeValidationError
 from aa_recipe_manager.model.types import (
   Dependency,
+    InputDeclaration,
     ParamDeclaration,
     PortDeclaration,
     Recipe,
@@ -700,6 +701,54 @@ class TestParamTypeMismatchWarning:
         assert dag.nodes["step1"] is not None
         warning_msgs = [str(w.message) for w in caught]
         assert any("threshold" in m and "float" in m for m in warning_msgs)
+
+
+class TestWarnIfSetInput:
+    @staticmethod
+    def _build(default=None, input_values=None):
+        reg = Registry()
+        reg.register_spec(
+            Spec(
+                op="window_op",
+                description="Takes an optional window bound",
+                params={"start": ParamDeclaration(type="str", required=False)},
+            )
+        )
+        recipe = Recipe(
+            name="windowed",
+            version="1.0",
+            schema_version="1",
+            inputs={
+                "start": InputDeclaration(
+                    type="str",
+                    default=default,
+                    required=False,
+                    warn_if_set="Leave unset to process every file.",
+                )
+            },
+            steps=[
+                Step(id="step1", op="window_op", params={"start": "${inputs.start}"})
+            ],
+        )
+        import warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            build_dag(recipe, reg, input_values=input_values)
+        return [str(w.message) for w in caught]
+
+    def test_warns_when_default_is_set(self):
+        msgs = self._build(default="2023-07-17T16:30:46")
+        assert any(
+            "'start'" in m and "2023-07-17T16:30:46" in m and "every file" in m
+            for m in msgs
+        )
+
+    def test_warns_when_value_is_supplied(self):
+        msgs = self._build(input_values={"start": "2023-07-17"})
+        assert any("'start'" in m and "every file" in m for m in msgs)
+
+    def test_silent_when_unset(self):
+        assert not any("every file" in m for m in self._build())
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,76 @@
+# Build the documentation site and publish it to GitHub Pages.
+#
+# The site's data under docs/data is generated locally with `aa-recipe
+# site-data`, which needs the scientific packages, and committed. This
+# workflow only checks that data is current, then builds with the docs extra.
+#
+# One-time setup: Settings > Pages > Build and deployment > Source: GitHub Actions.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - "tests/test_recipe_graph.py"
+      - "tests/test_site_data.py"
+      - "tests/test_cli_reference.py"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DISABLE_MKDOCS_2_WARNING: "true"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install ".[docs]" pytest
+
+      - name: Check that docs/data is current
+        run: aa-recipe site-data --check
+
+      - name: Test the site data builders
+        run: pytest tests/test_recipe_graph.py tests/test_site_data.py tests/test_cli_reference.py -q
+
+      - name: Build
+        run: mkdocs build --strict
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

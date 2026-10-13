@@ -1,0 +1,14 @@
+/* Small site-wide adjustments. */
+
+/* Long YAML and notebook code inside the recipe tabs scrolls inside its own
+   box rather than making the page very long. Material scrolls code on the
+   inner <code>, so the cap goes there: capping <pre> lets the code spill
+   over whatever follows. */
+.md-typeset .tabbed-block .highlight pre > code {
+  max-height: 36rem;
+}
+
+/* Keep the tab labels clear of the content under them. */
+.md-typeset .tabbed-set {
+  margin: 1em 0 1.5em;
+}

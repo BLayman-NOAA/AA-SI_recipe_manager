@@ -389,6 +389,74 @@ def docs_cmd(
         webbrowser.open(_Path(result.output).resolve().as_uri())
 
 
+@main.command("site-data")
+@click.option(
+    "--manifest",
+    default="docs/site_recipes.yaml",
+    show_default=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Manifest listing the recipes the documentation site shows.",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    default="docs/data",
+    show_default=True,
+    help="Folder for the generated data files.",
+)
+@click.option(
+    "--source-links/--no-source-links",
+    default=True,
+    show_default=True,
+    help="Link each op implementation to its source on GitHub. Needs the "
+    "scientific packages installed.",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Compare the committed data with a fresh build instead of writing, "
+    "ignoring source links. Exits 1 when anything is out of date.",
+)
+def site_data_cmd(manifest: str, out_dir: str, source_links: bool, check: bool) -> None:
+    """Generate the documentation site's op, recipe graph and tab data."""
+    try:
+        if check:
+            problems = api.check_site_data(manifest, out_dir)
+        else:
+            result = api.export_site_data(
+                manifest, out_dir, resolve_sources=source_links
+            )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    if check:
+        if problems:
+            for line in problems:
+                click.echo(line, err=True)
+            _fail("site data is out of date; run 'aa-recipe site-data' and commit.")
+        click.echo("Site data is current.")
+        return
+
+    counts = result.counts
+    click.echo(f"Wrote {len(result.written)} files to {out_dir}")
+    for path in result.removed:
+        click.echo(f"Removed {path}, no longer in the manifest")
+    summary = f"{counts['ops']} ops, {counts['recipes']} recipes"
+    if source_links:
+        summary += f", {counts['sources_resolved']} source links resolved"
+    click.echo(summary)
+    if result.unresolved:
+        click.echo("No source link for: " + ", ".join(result.unresolved), err=True)
+    if result.stale_links:
+        click.echo(
+            f"{len(result.stale_links)} link(s) point at files with uncommitted "
+            "changes; commit and push for exact line numbers.",
+            err=True,
+        )
+
+
 @main.group("env")
 def env_group() -> None:
     """Manage virtual environments for recipe dependencies."""

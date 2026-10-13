@@ -74,6 +74,12 @@ def build_dag(
     if input_values:
         input_defaults.update(input_values)
 
+    for name, decl in recipe.inputs.items():
+        if decl.warn_if_set and input_defaults.get(name) is not None:
+            warn_msgs.append(
+                f"Input '{name}' is set to {input_defaults[name]!r}. {decl.warn_if_set}"
+            )
+
     nodes: dict[str, DAGNode] = {}
     edges: list[DAGEdge] = []
 
@@ -223,6 +229,26 @@ def _resolve_implementation(
     except DependencyVersionError as exc:
         errors.append(f"Step '{step.id}': {exc}")
         return None
+
+
+def resolve_custom_spec(step: Step, registry: Registry) -> Spec:
+    """Build the Spec a custom step declares, merging ``extends`` if set.
+
+    Args:
+        step: A step with a ``custom_spec`` block.
+        registry: Registry holding the spec named by ``extends``.
+
+    Returns:
+        The merged Spec.
+
+    Raises:
+        SpecNotFoundError: ``extends`` names an op the registry does not have.
+    """
+    errors: list[str] = []
+    spec = _resolve_custom_spec(step, registry, errors)
+    if spec is None:
+        raise SpecNotFoundError(errors[0])
+    return spec
 
 
 def _resolve_custom_spec(

@@ -1,0 +1,4027 @@
+{
+  "schema": 1,
+  "slug": "hb2407-herring-per-file",
+  "title": "HB2407 herring, per file",
+  "recipe": {
+    "name": "herring_10_15_per_file",
+    "description": "HB2407 Herring 10-15 pipeline with per-raw-file processing and a pre-MVBS fan-in.",
+    "version": "1.0",
+    "source": "recipes/HB2407/Herring_10-15_per_file.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": "HB2407"
+  },
+  "nodes": [
+    {
+      "id": "in:raw_input_folder",
+      "kind": "input",
+      "label": "inputs.raw_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+    },
+    {
+      "id": "in:raw_file_names",
+      "kind": "input",
+      "label": "inputs.raw_file_names",
+      "type": "list",
+      "declared": true,
+      "required": false,
+      "default": [],
+      "description": "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\"."
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2024-10-15T13:38:52",
+      "description": null
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2024-10-15T23:43:36",
+      "description": null
+    },
+    {
+      "id": "in:cal_input_folder",
+      "kind": "input",
+      "label": "inputs.cal_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "./HB2407_calibration_files",
+      "description": null
+    },
+    {
+      "id": "in:ping_time_chunk",
+      "kind": "input",
+      "label": "inputs.ping_time_chunk",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 10000,
+      "description": "Chunk length along ping_time for each file's EchoData (and therefore its zarr checkpoint). A single raw file holds far fewer pings than this, so the default writes each file's checkpoint as one chunk, which is the cheapest shape for a gs://-backed cache. Lower it if a per-file chunk does not fit in memory.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_folder",
+      "kind": "input",
+      "label": "inputs.seabed_line_folder",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines",
+      "description": null,
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_max_gap_s",
+      "kind": "input",
+      "label": "inputs.seabed_line_max_gap_s",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 600,
+      "description": "Widest hole in the combined seabed line, in seconds, to interpolate across. Consecutive line files butt up against each other to within a second, so this only bites across a survey-leg gap, where interpolating would otherwise draw a straight seafloor over days of missing line.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:seabed_line_min_coverage",
+      "kind": "input",
+      "label": "inputs.seabed_line_min_coverage",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0.99,
+      "description": "Fraction of a file's pings that must land on the line before the step fails. Exposed here because the per-file split makes it stricter than it looks: a short uncovered stretch that is a rounding error against the whole survey can be a large fraction of the one file it falls in, so a threshold that passed survey-wide can fail a single file. Lower it (or widen the seabed_line window) rather than letting uncovered pings through -- create_seafloor_mask drops every sample of a ping whose seafloor is NaN.",
+      "group": "group:0"
+    },
+    {
+      "id": "in:crop_trailing_all_nan",
+      "kind": "input",
+      "label": "inputs.crop_trailing_all_nan",
+      "type": "bool",
+      "declared": true,
+      "required": false,
+      "default": true,
+      "description": "Drop trailing range samples that hold no finite Sv anywhere in the survey. Lossless. Ignored when crop_outlier_sigma is set. Set false with the other two unset to disable the crop step."
+    },
+    {
+      "id": "in:crop_max_range_m",
+      "kind": "input",
+      "label": "inputs.crop_max_range_m",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Hard depth ceiling for the crop, in metres. Composes with the criteria above rather than replacing them: the shallowest cut wins. Drops samples whether or not they hold data, so a ceiling shallower than the deepest echo of interest silently discards it. Check the crop step's reported \"deepest kept\" against the seabed line before relying on a hand-picked value."
+    },
+    {
+      "id": "in:noise_chunk_ping_time",
+      "kind": "input",
+      "label": "inputs.noise_chunk_ping_time",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 1000,
+      "description": "Ping-time chunk size applied to the MERGED survey Sv before remove_noise, so its coarsen()-based noise estimate runs in dask-parallel chunks instead of as one in-memory block. Should stay a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly."
+    },
+    {
+      "id": "in:min_depth",
+      "kind": "input",
+      "label": "inputs.min_depth",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0,
+      "description": null
+    },
+    {
+      "id": "in:max_depth",
+      "kind": "input",
+      "label": "inputs.max_depth",
+      "type": "float",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null
+    },
+    {
+      "id": "in:time_min",
+      "kind": "input",
+      "label": "inputs.time_min",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null
+    },
+    {
+      "id": "in:time_max",
+      "kind": "input",
+      "label": "inputs.time_max",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null
+    },
+    {
+      "id": "in:x_axis_units",
+      "kind": "input",
+      "label": "inputs.x_axis_units",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "datetime",
+      "description": null
+    },
+    {
+      "id": "in:y_axis_units",
+      "kind": "input",
+      "label": "inputs.y_axis_units",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "meters",
+      "description": null
+    },
+    {
+      "id": "in:mvbs_chunk_ping_time",
+      "kind": "input",
+      "label": "inputs.mvbs_chunk_ping_time",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 1000,
+      "description": "Ping-time chunk size applied before compute_mvbs, so it runs in dask-parallel chunks instead of as one in-memory block. mask_sparse_bins materializes Sv eagerly, so chunking has to be re-established after it by a standalone rechunk step."
+    },
+    {
+      "id": "in:echodata",
+      "kind": "input",
+      "label": "inputs.echodata",
+      "type": "echodata",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML features. Only needed when seafloor_depth below is not wired, and not at all for the features list this recipe currently uses."
+    },
+    {
+      "id": "in:seafloor_depth",
+      "kind": "input",
+      "label": "inputs.seafloor_depth",
+      "type": "dataarray",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Pre-detected seafloor line, 1-D over ping_time, wired from a detect_seafloor step. Takes precedence over echodata for the 'seafloor_depth' and 'altitude' features, so the ML features use the same line the masking stack used. In a per-file pipeline, wire a merge_datasets step that collects the per-file lines rather than the mapped step itself."
+    },
+    {
+      "id": "initial_setup",
+      "kind": "step",
+      "op": "initial_setup",
+      "op_url": "ops/initial_setup/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "calibration_outputs",
+          "type": "str",
+          "units": null,
+          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "default": "calibration",
+          "set": true,
+          "value": "${inputs.calibration_outputs}"
+        },
+        {
+          "name": "raw_file_names",
+          "type": "list",
+          "units": null,
+          "description": "Explicit file name list; empty means include all files in folder",
+          "default": [],
+          "set": true,
+          "value": "${inputs.raw_file_names}"
+        },
+        {
+          "name": "clear_previous_json_logs",
+          "type": "bool",
+          "units": null,
+          "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "description": "Ordered list of absolute paths to raw acoustic files",
+          "disposed": false
+        },
+        {
+          "name": "calibration_output_dir",
+          "type": "path",
+          "description": "Resolved full path to the calibration outputs directory. Pass this to generate_standardized_cal_mapping as output_base.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "gen_cal_mapping",
+      "kind": "step",
+      "op": "generate_standardized_cal_mapping",
+      "op_url": "ops/generate_standardized_cal_mapping/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Read manufacturer calibration files, convert them to per-channel standardized files, match each raw channel to its calibration data, and return a mapping dict and a calibration dict.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing raw acoustic files; used to determine channel configuration. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw). Remote raw files are scanned one at a time: each is downloaded to local scratch, read for its channel config, and the local copy deleted before the next file is fetched.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "cal_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing manufacturer calibration files (.cal / .xml). May be a local path or a remote fsspec URL; a remote folder is downloaded to a local scratch directory for the duration of the parse (these files are small) and removed afterwards.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.cal_input_folder}"
+        },
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Root directory the standardized calibration files, mapping files, and logs are written under. Normally wired to ${initial_setup.calibration_output_dir} so calibration artifacts land beside the run's other outputs. Subdirectories are created as needed.",
+          "default": null,
+          "set": true,
+          "value": "${initial_setup.calibration_output_dir}"
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "units": null,
+          "description": "Cruise identifier recorded in every generated single-channel calibration file (e.g. \"HB1603\"), so a standardized file stays traceable to the survey it came from.",
+          "default": null,
+          "set": true,
+          "value": "HB2407"
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "units": null,
+          "description": "Name recorded as the author of every generated single-channel calibration file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "default": null,
+          "set": true,
+          "value": "<Your Name>"
+        },
+        {
+          "name": "short_filenames",
+          "type": "bool",
+          "units": null,
+          "description": "Use compact names for the generated single-channel files and the keys in mapping_dict. Set false for fully descriptive names, which are easier to read and longer.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "keep_unused",
+          "type": "bool",
+          "units": null,
+          "description": "Retain standardized files not matched to any channel",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "conflict_resolution",
+          "type": "str",
+          "units": null,
+          "description": "'error' or 'interactive' when multiple cal files match a channel",
+          "default": "error",
+          "set": true,
+          "value": "error"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print progress information during mapping; implementation-specific",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime restricting the scanned raw files to those whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Should match the initial_setup window so the channel-configuration scan covers exactly the files being processed. For remote folders the filter is applied before any file is downloaded.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "description": "Maps each raw channel to its standardized calibration file path",
+          "disposed": false
+        },
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "description": "Parsed standardized calibration data keyed by channel",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "read_raw",
+      "kind": "step",
+      "op": "read_raw_files",
+      "op_url": "ops/read_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "never",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "required": true,
+          "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
+          "value": [
+            "${_item}"
+          ]
+        }
+      ],
+      "params": [
+        {
+          "name": "sonar_model",
+          "type": "str",
+          "units": null,
+          "description": "Sonar model string recognized by echopype (e.g. 'EK60', 'EK80')",
+          "default": null,
+          "set": true,
+          "value": "EK80"
+        },
+        {
+          "name": "include_bot",
+          "type": "bool",
+          "units": null,
+          "description": "Include bottom-detection (.bot) data if available",
+          "default": true,
+          "set": true,
+          "value": false
+        },
+        {
+          "name": "intermediate_format",
+          "type": "str",
+          "units": null,
+          "description": "Intermediate store format written to exe_temp/data between the read_raw and combine_raw steps. Supported values: \"netcdf\" (default), \"zarr\", \"none\".\n\"netcdf\" (default, recommended): each raw file is written as a temporary .nc file, reopened, and combined. After combining, all EchoData groups are rechunked to a single uniform chunk so the downstream zarr v2 checkpoint write (combine_raw with checkpoint: always) always succeeds.\n\"none\": all EchoData objects are kept in memory with no temp files. Use when the full dataset fits comfortably in RAM.\n\"zarr\": each raw file is written as a temporary zarr store (zarr_format=2, matching the checkpoint writer) and reopened lazily for combining. Unlike netcdf, zarr stores can live on remote object storage (e.g. a GCS bucket) by passing a gs:// --temp-dir, which is the intended path for surveys too large to stage on local disk. Combined with gs:// raw_file_paths, local disk usage stays at roughly one raw file for the whole run.",
+          "default": "netcdf",
+          "set": true,
+          "value": "zarr"
+        },
+        {
+          "name": "use_swap",
+          "type": "str",
+          "units": null,
+          "description": "Passed to echopype open_raw as use_swap. \"auto\" (default) triggers per-file swap when the expanded data would exceed ~40% of total RAM.",
+          "default": "auto",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "combine_raw",
+      "kind": "step",
+      "op": "combine_raw_files",
+      "op_url": "ops/combine_raw_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "raw_stores",
+          "type": "list",
+          "required": true,
+          "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
+          "value": "${read_raw.raw_stores}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk length along ping_time for the combined EchoData, which directly sets the chunking of the downstream zarr checkpoint. Larger values mean fewer, bigger objects: faster remote (gs://) checkpoint writes and fewer read requests, at the cost of more RAM per computed chunk and coarser lazy-read granularity for windowed access. 1000 is a balanced default; try 2000-4000 for bucket-backed caches if the combined checkpoint write is slow and memory allows.",
+          "default": 1000,
+          "set": true,
+          "value": "${inputs.ping_time_chunk}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "description": "Combined echopype EchoData object",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "extract_cal_params",
+      "kind": "step",
+      "op": "extract_standardized_cal_params",
+      "op_url": "ops/extract_standardized_cal_params/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Extract calibration parameters (gain, sa-correction, EBA) and environmental parameters (sound speed, absorption) from standardized calibration files, cross-referenced against the EchoData object for channel alignment.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "required": true,
+          "description": "Parsed standardized calibration data keyed by calibration key, from generate_standardized_cal_mapping. Holds the values themselves.",
+          "value": "${gen_cal_mapping.calibration_dict}"
+        },
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "required": true,
+          "description": "Raw channel to calibration key mapping, from generate_standardized_cal_mapping. Says which entry of calibration_dict belongs to each channel of each file.",
+          "value": "${gen_cal_mapping.mapping_dict}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "EchoData whose channel labels the calibration values are aligned to, normally the combined object from combine_raw_files. The outputs are keyed by that object's channels, so they can be passed straight to compute_sv.",
+          "value": "${combine_raw.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "raw_file_path",
+          "type": "path",
+          "units": null,
+          "description": "Path to the specific raw file whose channel mapping should be selected from mapping_dict (matched by basename). Wire this to ${_item} in a per-file map_over chain so each instance picks its own file's calibration mapping instead of defaulting to the first file in the survey. Leave unset for whole-survey recipes.",
+          "default": null,
+          "set": true,
+          "value": "${_item}"
+        },
+        {
+          "name": "unmapped_channels",
+          "type": "str",
+          "units": null,
+          "description": "What to do about a channel the mapping does not cover, which happens when no calibration file matched it. \"warn\" (the default) reports the channel on the terminal and falls back to the values the raw file itself records, which is what echopype would calibrate that channel with given no calibration file at all. \"error\" stops the run instead. The fallback needs the echodata input; without it \"warn\" raises the way \"error\" would.",
+          "default": "warn",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "output_logs_folder",
+          "type": "path",
+          "units": null,
+          "description": "Where the fallback writes its calibration flags. A temporary folder is used when omitted, which is what a per-file chain wants: several files falling back at once would otherwise race on one flags file.",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cal_params",
+          "type": "dict",
+          "description": "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)",
+          "disposed": false
+        },
+        {
+          "name": "env_params",
+          "type": "dict",
+          "description": "Environmental parameters keyed by channel (sound_speed, sound_absorption)",
+          "disposed": false
+        },
+        {
+          "name": "other_params",
+          "type": "dict",
+          "description": "Additional extracted calibration metadata keyed by channel and source file details. Its unmapped_channels entry names the channels that fell back to the raw file's own recorded values, and is empty when the mapping covered every channel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_sv",
+      "kind": "step",
+      "op": "compute_sv",
+      "op_url": "ops/compute_sv/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
+          "value": "${combine_raw.echodata}"
+        },
+        {
+          "name": "cal_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
+          "value": "${extract_cal_params.cal_params}"
+        },
+        {
+          "name": "env_params",
+          "type": "dict",
+          "required": false,
+          "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
+          "value": "${extract_cal_params.env_params}"
+        },
+        {
+          "name": "waveform_mode",
+          "type": null,
+          "required": false,
+          "description": null,
+          "value": "CW"
+        },
+        {
+          "name": "encode_mode",
+          "type": null,
+          "required": false,
+          "description": null,
+          "value": "power"
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_transducer_depth",
+      "kind": "step",
+      "op": "compute_transducer_depth",
+      "op_url": "ops/compute_transducer_depth/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute per-ping transducer depth in metres below the water surface from the EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.\nReads the Platform group directly rather than going through ``ep_add_depth(use_platform_vertical_offsets=true)``, which gets the sign wrong on both EK families for different reasons.\nOn an EK80 drop keel vessel the transducers ride on a retractable keel and ``drop_keel_offset`` records how far it was lowered, while the ``transducer_offset_z`` and ``water_level`` fields echopype's formula reads are left at zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.\nAn EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60 per-ping transducer depth into ``water_level``, whose value its formula then subtracts (``transducer_offset_z - (water_level + vertical_offset)``, with ``transducer_offset_z`` zero because the ER60 does not populate it). The transducer comes out above the water surface and every depth is short by twice the draft. This step reads ``water_level`` directly instead.\n``drop_keel_offset`` is preferred when both are present; the field actually used is recorded in the output's ``static_offset_field`` attr.\nThe static position is per file and heave is per ping, so the result is ``static offset + datum_correction_m + heave_sign * vertical_offset``. Heave is interpolated onto ds_Sv's ping_time here, which also means ``ep_add_depth`` passes the array straight through instead of resampling it again with nearest neighbour.\nThe output is small (one value per ping) and is the record of what vertical reference a run actually used, so checkpointing it is cheap and makes the reference auditable without recomputing Sv.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate.",
+          "value": "${compute_sv.ds_Sv}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": true,
+          "description": "Source EchoData supplying the Platform group.",
+          "value": "${combine_raw.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "datum_correction_m",
+          "type": "float",
+          "units": "m",
+          "description": "Metres added to the static offset to reach depth below the water surface, for when the recorded offset is measured from a hull datum rather than the waterline. Positive pushes the transducer deeper. The default 0.0 takes the recorded offset as already waterline referenced.",
+          "default": 0.0,
+          "set": true,
+          "value": -1.0
+        },
+        {
+          "name": "use_heave",
+          "type": "bool",
+          "units": null,
+          "description": "Add the per-ping ``vertical_offset`` (heave) term. False holds the static keel depth on every ping. When the Platform group carries no usable heave the step reports that and falls back to the static depth.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "heave_sign",
+          "type": "float",
+          "units": null,
+          "description": "Sign applied to ``vertical_offset``. The default 1.0 was determined empirically on HB2407 (EK80, Henry B. Bigelow) by correlating raw heave against the hand-verified EVL seabed line: the correct sign left a 0.14 m residual against 0.75 m for the wrong one. The convention is not recorded in the file attributes and is not the same sign echopype's own platform-vertical-offsets formula uses (that formula is referenced from a hull datum, not drop_keel_offset) - re-verify the same way on a new vessel or instrument setup rather than assuming.",
+          "default": 1.0,
+          "set": true,
+          "value": 1.0
+        },
+        {
+          "name": "interp_method",
+          "type": "str",
+          "units": null,
+          "description": "Interpolation used to put heave on ping_time. Heave is typically sampled several times coarser than the ping rate, so the default linear is preferred over nearest.",
+          "default": "linear",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "transducer_depth",
+          "type": "DataArray",
+          "description": "Transducer depth in metres below the surface, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s ``depth_offset``. Provenance (the static offset and which Platform field it came from, the correction applied, the heave sign and coverage) is recorded in its attrs.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "ep_add_depth",
+      "kind": "step",
+      "op": "ep_add_depth",
+      "op_url": "ops/ep_add_depth/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step is echopype.consolidate.add_depth called directly, so the depth computation and its parameters are echopype's. The result preserves all existing variables (including ``echo_range``) and adds ``depth`` on ``(channel, ping_time, range_sample)`` in metres below surface.\nWhatever depth-computation technique is selected (constant ``depth_offset``, Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``) is fully captured in the values of the resulting ``depth`` array, so downstream consumers can treat the dataset as the single source of truth for vertical reference frame without knowing which technique was used.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset (typically from compute_sv).",
+          "value": "${compute_sv.ds_Sv}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": false,
+          "description": "Source EchoData. Required when any of ``use_platform_vertical_offsets``, ``use_platform_angles``, or ``use_beam_angles`` is true.",
+          "value": "${combine_raw.echodata}"
+        }
+      ],
+      "params": [
+        {
+          "name": "depth_offset",
+          "type": null,
+          "units": "m",
+          "description": "Vertical offset for the transducer position, in metres. Either a constant, or a per-ping DataArray wired from a producer step such as ``compute_transducer_depth`` (echopype accepts both on this argument; a DataArray must have exactly one dimension and is aligned to ping_time). When set, takes precedence over Platform vertical offsets. Left untyped because the two accepted forms are a scalar and a DataArray.",
+          "default": null,
+          "set": true,
+          "value": "${compute_transducer_depth.transducer_depth}"
+        },
+        {
+          "name": "tilt",
+          "type": "float",
+          "units": "degree",
+          "description": "Constant transducer tilt; 0 corresponds to a vertically-pointing transducer. When set, takes precedence over Platform/Beam angles.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "downward",
+          "type": "bool",
+          "units": null,
+          "description": "True when transducers point downward (typical hull-mounted).",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_platform_vertical_offsets",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Platform group vertical offsets to compute transducer depth. EK60/EK80 only. Ignored when ``depth_offset`` is set.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_platform_angles",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Platform group angles to compute echo_range scaling. EK60/EK80 only. Cannot be combined with ``use_beam_angles``.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "use_beam_angles",
+          "type": "bool",
+          "units": null,
+          "description": "Use Echodata Beam group angles to compute echo_range scaling. EK60/EK80 only. Cannot be combined with ``use_platform_angles``.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Input Sv dataset with an added ``depth`` variable.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "detect_seafloor",
+      "kind": "step",
+      "op": "read_seafloor_line",
+      "op_url": "ops/read_seafloor_line/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Read a seafloor line from an Echoview ``.evl`` line file and align it to the Sv dataset's pings, returning a 1-D (ping_time,) DataArray in metres. Use it when a hand-verified Echoview bottom line is more trustworthy than running detection over the Sv data.\nEchoview exports a survey as a series of part-day line files, so ``evl_path`` may be a folder: the files whose names span ``file_time_start`` to ``file_time_end`` are selected and concatenated into one line before interpolation. Give it the same window that selected the raw files.\nDrop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe step's ``inputs`` drop the ``echodata`` line (no detection is run) and the ``params`` block takes ``evl_path`` plus the alignment settings below instead of ``channel`` / ``min_valid_depth_m`` or ``method`` / ``method_params``.\nPings the line does not cover come back as NaN, and ``create_seafloor_mask`` rejects **every sample** of a ping whose seafloor is NaN (the metres-vs-metres comparison is False against NaN). The step therefore prints its ping coverage on every run; set ``min_coverage`` to turn a shortfall into a hard error, or widen ``edge_extend_s`` / ``max_gap_s`` if the gaps are benign.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "save",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate. Also supplies the vertical reference: pass a dataset that has been through ``ep_add_depth`` so the line can be matched to ``depth`` (metres below the surface), which is what an Echoview seabed line normally records.",
+          "value": "${ep_add_depth.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "evl_path",
+          "type": "path",
+          "units": null,
+          "description": "A single Echoview ``.evl`` line file, or a folder of them to select from with file_time_start / file_time_end. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/seabed_lines); remote files are read in place (no download) since line files are small. The must_exist check is skipped at validation time for remote URLs and enforced by the step at run time instead.\nMutually exclusive with ``window``: exactly one of the two is required.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.seabed_line_folder}"
+        },
+        {
+          "name": "window",
+          "type": "dict",
+          "units": null,
+          "description": "Mapping carrying the line path under ``window_key``, used instead of ``evl_path``.\nThis is the form a mapped fan-out needs. ${_item} is an all-or-nothing token with no attribute access - there is no ${_item.seabed_evl} - so a step mapped over a list of window dicts cannot pull the path out of the item as its own param and has to take the dict. Wire it as ``window: ${_item}``.\nA window also supplies file_time_start / file_time_end when those are not given directly, so a folder of part-day seabed exports narrows to the window without repeating its bounds. Extra keys are ignored, and an optional ``label`` names the instance in errors.\nNote that a window's path is NOT content-fingerprinted the way evl_path is: it arrives as a runtime value rather than a declared param, so re-exporting that line does not by itself invalidate the step. The upstream step that produced the window is what carries its identity.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "window_key",
+          "type": "str",
+          "units": null,
+          "description": "Key the line path is read from when ``window`` is given. Defaults to \"seabed_evl\", which is what plan_dive_datasets emits.",
+          "default": "seabed_evl",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "vertical_reference",
+          "type": "str",
+          "units": null,
+          "description": "What the EVL depths are measured from. \"surface\" (the default, and Echoview's usual seabed-line reference) means metres below the water surface; \"transducer\" means metres along the beam from the transducer face. The line is converted to whichever reference ds_Sv carries - depth when ep_add_depth ran upstream, otherwise echo_range.",
+          "default": "surface",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "min_status",
+          "type": "int",
+          "units": null,
+          "description": "Drop line points whose Echoview status is below this value (0 = none, 1 = unverified, 2 = bad, 3 = good). When null (the default) every point is kept. Dropped points leave a gap in the line, subject to max_gap_s.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "max_gap_s",
+          "type": "float",
+          "units": "s",
+          "description": "Widest hole in the line, in seconds, to interpolate across; pings sitting inside a wider hole come back as NaN. A ping landing exactly on a line point always keeps that point's depth. When null (the default) holes of any width are interpolated across.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.seabed_line_max_gap_s}"
+        },
+        {
+          "name": "edge_extend_s",
+          "type": "float",
+          "units": "s",
+          "description": "How many seconds past the line's first and last point to hold that point's depth. The default 0.0 does no extrapolation at all, so pings outside the line's time span are NaN - this is what keeps a line covering only part of a survey from silently asserting a constant seafloor over the rest. Set null to hold the end depths indefinitely.",
+          "default": 0.0,
+          "set": true,
+          "value": 0.0
+        },
+        {
+          "name": "depth_offset_m",
+          "type": "float",
+          "units": "m",
+          "description": "Constant metres added to the line, for when the transducer draft configured in Echoview differs from the one baked into ds_Sv['depth']. Positive pushes the seafloor deeper.",
+          "default": 0.0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "min_coverage",
+          "type": "float",
+          "units": null,
+          "description": "Fraction of pings (0-1) that must end up with a finite seafloor depth; below it the step fails instead of silently masking the uncovered pings away. Default 0.0 never fails.",
+          "default": 0.0,
+          "set": true,
+          "value": "${inputs.seabed_line_min_coverage}"
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime (e.g. \"2024-10-12T00:15\") selecting which line files in an evl_path folder to read, by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same window that selected the raw files so the line and the pings stay in step.\nA file's span runs from its own name stamp to the *next* file's, not to the end stamp in its own name - Echoview's end stamp under-reports the line's real last point by about one raw file's duration, so trusting it would drop the export straddling the window start and leave the leading pings with no seafloor. Selection is name-based, so no line data is read (or downloaded) to filter. Ignored when evl_path names a single file.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for line file selection. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seafloor_depth",
+          "type": "DataArray",
+          "description": "Seafloor depth in metres, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Always 1-D (no channel dimension), matching the output of the ``detect_seafloor`` and ``ep_detect_seafloor`` ops so downstream masking steps are interchangeable. NaN wherever the line does not cover a ping.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "create_seafloor_mask",
+      "kind": "step",
+      "op": "create_seafloor_mask",
+      "op_url": "ops/create_seafloor_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Build a seafloor mask from baseline Sv and detected seafloor depth. The seafloor depth is passed as an explicit input, enabling swappable detection methods without modifying masking logic.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset the mask is shaped to. Supplies the meter-valued range variable that each sample's depth is compared against.",
+          "value": "${ep_add_depth.ds_Sv}"
+        },
+        {
+          "name": "seafloor_depth",
+          "type": "DataArray",
+          "required": true,
+          "description": "Seafloor depth per ping, shape (ping_time,), from detect_seafloor, ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN produce no valid samples, so an undetected stretch is masked out entirely rather than guessed at.",
+          "value": "${detect_seafloor.seafloor_depth}"
+        }
+      ],
+      "params": [
+        {
+          "name": "seafloor_buffer_m",
+          "type": "float",
+          "units": "m",
+          "description": "Height above the detected seafloor line to also mask out. Widens the exclusion zone to cover detection error and the near-bottom dead zone, at the cost of discarding real backscatter just above the bottom.",
+          "default": 0.0,
+          "set": true,
+          "value": 1
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of the meter-valued variable on ds_Sv to compare against the seafloor line. Must use the same vertical reference as the seafloor line. When null (the default), auto-selects \"depth\" if present on ds_Sv (i.e., add_depth was run upstream), otherwise falls back to \"echo_range\".",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Boolean DataArray shaped like ds_Sv['Sv']; True means valid data (above seafloor)",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "create_surface_mask",
+      "kind": "step",
+      "op": "create_surface_mask",
+      "op_url": "ops/create_surface_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Build a surface-interference mask from baseline Sv using a selectable method.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset the mask is shaped to. Supplies the range variable each sample's depth is read from.",
+          "value": "${compute_sv.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "surface_depth_m",
+          "type": "float",
+          "units": "m",
+          "description": "Depth above which samples are masked out, removing the transmit pulse ringdown and near-surface bubble layer. The default of 0.0 masks nothing.",
+          "default": 0.0,
+          "set": true,
+          "value": 5.0
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Boolean mask DataArray; True means valid data",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "combine_masks",
+      "kind": "step",
+      "op": "combine_masks",
+      "op_url": "ops/combine_masks/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Combine two or more mask datasets into one final mask. Accepts a list of mask inputs to support inserting additional custom mask-producing steps into the chain without changing core framework code.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "masks",
+          "type": "list",
+          "required": true,
+          "description": "List of boolean mask DataArrays to combine",
+          "value": [
+            "${create_seafloor_mask.mask}",
+            "${create_surface_mask.mask}"
+          ]
+        }
+      ],
+      "params": [
+        {
+          "name": "mode",
+          "type": "str",
+          "units": null,
+          "description": "Combination mode: 'and' (all must be valid) or 'or' (any must be valid)",
+          "default": "and",
+          "set": true,
+          "value": "and"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "description": "Combined boolean mask DataArray",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "apply_mask",
+      "kind": "step",
+      "op": "apply_sv_mask",
+      "op_url": "ops/apply_sv_mask/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.\nThin wrapper over echopype.mask.apply_mask, calling it against the Sv variable with NaN as the fill value. It adds nothing of its own, so the broadcasting and alignment rules are echopype's.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to mask, normally straight from compute_sv.",
+          "value": "${ep_add_depth.ds_Sv}"
+        },
+        {
+          "name": "mask",
+          "type": "DataArray",
+          "required": true,
+          "description": "Boolean mask broadcastable against ds_Sv[\"Sv\"], where True marks a sample to keep. Normally the single mask from combine_masks, so every exclusion rule the recipe built is applied in one pass.",
+          "value": "${combine_masks.mask}"
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Sv Dataset with masked samples set to NaN",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "merge_sv",
+      "kind": "step",
+      "op": "merge_datasets",
+      "op_url": "ops/merge_datasets/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Reconsolidate a collected list of xarray Datasets into a single Dataset by concatenating along a dimension. This is the recipe system's fan-in (collect) target for segment-parallel work: a mapped step that produces one Dataset per data segment (e.g. per-file MVBS) is gathered via ``collect`` and merged back into one Dataset along ``dim`` (default ``ping_time``). A single Dataset passes through unchanged (single-item transparency).",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": true,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "datasets",
+          "type": "Dataset | DataArray",
+          "required": true,
+          "description": "Collected list of Datasets (one per mapped/swept instance), supplied by a ``collect: ${mapped_step.output}`` directive on the recipe step.",
+          "value": "${apply_mask.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dim",
+          "type": "str",
+          "units": null,
+          "description": "Dimension to concatenate the collected Datasets along.",
+          "default": "ping_time",
+          "set": true,
+          "value": "ping_time"
+        },
+        {
+          "name": "on_duplicate",
+          "type": "str",
+          "units": null,
+          "description": "What to do when two collected segments carry the same label on ``dim``.\nUnset (the default) leaves both, which is right when segments cannot overlap - per-file Sv concatenated on raw ping_time, for instance.\n\"mean\" averages them into one entry. That is what a fan-in over per segment BINNED products needs: compute_mvbs and compute_per_cell_statistics anchor their time bins to a global origin, so a segment boundary falling inside a bin makes the segment on each side emit that bin, each holding part of its pings. Left alone the merged store carries a duplicate index, which every downstream reindex rejects - add_auxiliary_features raises InvalidIndexError on it.\n\"first\" keeps the first entry for a label and sorts the result. That is what a fan-in over overlapping SLICES OF ONE STORE needs: dive windows cut from the survey grid, where two dives sharing a minute are the same cells twice, so nothing should be averaged. A per-segment variable that differs on the overlap is kept from the first segment only, which is the sign it does not belong on the shared axis; attach it per segment after the fan-in.\nVariables carrying \"units: dB\" are averaged in the linear domain and converted back, since a mean of decibels is not the mean of what they measure. The average is unweighted: the partial bins do not record how many pings each held.",
+          "default": null,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "merged",
+          "type": "Dataset | DataArray",
+          "description": "Single concatenated result, matching the collected element type: a Dataset for collected Datasets, a DataArray for collected DataArrays (e.g. a per-file detect_seafloor line collected into a survey-wide one).",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "crop_range",
+      "kind": "step",
+      "op": "crop_range",
+      "op_url": "ops/crop_range/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Trim trailing range samples that carry no data. A raw file records to the sonar's configured range, so after seafloor masking the deep end of ``range_sample`` is entirely NaN. Those samples still cost memory and time in every downstream step, and they widen the binned cell grid that ``compute_mvbs`` and ``compute_per_cell_statistics`` build - the flox reduction behind the latter allocates dense bookkeeping sized by channels x ping bins x range bins, so an over-wide range axis is what pushes it into a MemoryError on a long survey.\nA standalone step rather than a parameter on ``apply_sv_mask``, for the same reason ``rechunk_dataset`` is standalone: masking is ping-local and runs correctly per file, but the crop point is a property of the whole survey. Cropping per file would leave the segments with different ``range_sample`` lengths, and the ping_time concatenation resolves that by padding the short ones back out with NaN - which undoes the crop and leaves NaN in ``echo_range``, where downstream range binning reads it. Place this after the fan-in instead.\nThree criteria are available and compose - whichever are active each produce a candidate cut and the shallowest wins:\n* ``outlier_sigma`` rejects anomalous pings and then crops to the deepest\n  **retained** ping. Prefer this survey-wide: a single glitch ping reaching\n  far past the seafloor otherwise holds the whole range axis open, which is\n  exactly what defeats the lossless mode. The threshold is deliberately\n  generous, so uncommon-but-real depths survive and only wild outliers go.\n* ``max_range_m`` is a hard ceiling, applied whether or not samples above it\n  hold data. Cheapest when the answer is already known (e.g. from the\n  deepest point in the survey's seabed lines).\n* ``drop_trailing_all_nan`` is the lossless fallback used when no outlier\n  test is requested.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to crop, normally after apply_sv_mask so the seafloor returns are already NaN. Place this after any per-file fan-in, since the crop point is a property of the whole survey.",
+          "value": "${merge_sv.merged}"
+        }
+      ],
+      "params": [
+        {
+          "name": "max_range_m",
+          "type": "float",
+          "units": "m",
+          "description": "Explicit cap. Range samples deeper than this are dropped whether or not they hold data, so a cap shallower than the deepest echo of interest discards it. Leave unset to derive the crop from the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.crop_max_range_m}"
+        },
+        {
+          "name": "outlier_sigma",
+          "type": "float",
+          "units": null,
+          "description": "Standard deviations above the mean, over the per-ping deepest finite sample, at which a ping becomes a candidate outlier. Combined with outlier_margin to form the reject threshold. Leave unset to disable outlier rejection and fall back to drop_trailing_all_nan.",
+          "default": null,
+          "set": true,
+          "value": 3.0
+        },
+        {
+          "name": "outlier_margin",
+          "type": "float",
+          "units": null,
+          "description": "Multiplier applied to (mean + outlier_sigma * sd) to get the reject threshold. Raise it to flag fewer pings, lower it to flag more. The default 1.5 is deliberately loose: on HB2407's 2024-10-15 window it puts the threshold at 424 m against a deepest retained ping of 214 m, so it catches only genuine anomalies. Only used when outlier_sigma is set.",
+          "default": 1.5,
+          "set": true,
+          "value": 1.5
+        },
+        {
+          "name": "drop_trailing_all_nan",
+          "type": "bool",
+          "units": null,
+          "description": "Crop to one past the deepest range sample holding a finite Sv value anywhere in the dataset. Lossless. Ignored when outlier_sigma is set. Set false with the other two criteria unset to disable the step without removing it from the recipe.",
+          "default": true,
+          "set": true,
+          "value": "${inputs.crop_trailing_all_nan}"
+        },
+        {
+          "name": "data_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable inspected for finite values.",
+          "default": "Sv",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable supplying each sample's range in metres.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset with the trailing empty range samples dropped, so every downstream step works on a narrower range axis.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "rechunk_before_noise",
+      "kind": "step",
+      "op": "rechunk_dataset",
+      "op_url": "ops/rechunk_dataset/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
+          "value": "${crop_range.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk size along ping_time.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.noise_chunk_ping_time}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "remove_noise",
+      "kind": "step",
+      "op": "remove_background_noise",
+      "op_url": "ops/remove_background_noise/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Estimate and remove background noise from Sv using the De Robertis and Higginbottom method. Returns a cleaned Sv Dataset.\nThin wrapper over echopype.clean.remove_background_noise. Every parameter below is forwarded to it unchanged, so its behavior is echopype's. The one thing the wrapper adds is that the corrected values are copied over the Sv variable, so downstream steps reading Sv get the cleaned data without having to know about Sv_corrected. Both variables are present on the result.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to denoise, normally the masked Sv from apply_sv_mask so the seafloor and surface returns are not folded into the noise estimate.",
+          "value": "${rechunk_before_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_num",
+          "type": "int",
+          "units": null,
+          "description": "Number of pings used to estimate the noise level",
+          "default": 5,
+          "set": true,
+          "value": 5
+        },
+        {
+          "name": "range_sample_num",
+          "type": "int",
+          "units": null,
+          "description": "Number of range samples used to estimate the noise level",
+          "default": 10,
+          "set": true,
+          "value": 10
+        },
+        {
+          "name": "background_noise_max",
+          "type": "str",
+          "units": null,
+          "description": "Upper limit on the estimated noise level (e.g. '-125dB'); omit to leave it unbounded",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "SNR_threshold",
+          "type": "str",
+          "units": null,
+          "description": "Signal-to-noise ratio below which corrected samples are masked out (e.g. '3.0dB')",
+          "default": "3.0dB",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Noise-corrected Sv Dataset",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "plot_sv_clean",
+      "kind": "step",
+      "op": "plot_sv_echogram",
+      "op_url": "ops/plot_sv_echogram/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
+      "sink": true,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Primary Sv dataset to plot",
+          "value": "${remove_noise.ds_Sv}"
+        },
+        {
+          "name": "ds_Sv_source",
+          "type": "Dataset",
+          "required": false,
+          "description": "Reference Sv dataset whose coordinates set the axes",
+          "value": null
+        }
+      ],
+      "params": [
+        {
+          "name": "min_depth",
+          "type": "float",
+          "units": null,
+          "description": "Minimum depth (y-axis) in meters",
+          "default": 0,
+          "set": true,
+          "value": "${inputs.min_depth}"
+        },
+        {
+          "name": "max_depth",
+          "type": "float",
+          "units": null,
+          "description": "Maximum depth (y-axis) in meters. Omit to use the deepest depth present in the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.max_depth}"
+        },
+        {
+          "name": "ping_min",
+          "type": "int",
+          "units": null,
+          "description": "First ping index to display",
+          "default": 0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "ping_max",
+          "type": "int",
+          "units": null,
+          "description": "Last ping index to display. Omit to display through the last ping.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "units": null,
+          "description": "Start of the displayed window as a UTC timestamp, for example \"2024-10-15T12:30\". Resolved to the closest ping and used instead of ping_min. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_min}"
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "units": null,
+          "description": "End of the displayed window as a UTC timestamp. Resolved to the closest ping and used instead of ping_max. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_max}"
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the x-axis: 'datetime' (default, absolute UTC clock times), 'seconds' from the first ping shown, 'pings', 'meters' (distance travelled, derived from the GPS track), or 'bins' (MVBS input only).",
+          "default": "datetime",
+          "set": true,
+          "value": "${inputs.x_axis_units}"
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the y-axis: 'meters' (default), 'range_sample', or 'bins' (MVBS input only).",
+          "default": "meters",
+          "set": true,
+          "value": "${inputs.y_axis_units}"
+        },
+        {
+          "name": "panel_width_to_height",
+          "type": "float",
+          "units": null,
+          "description": "Force each frequency panel to be this many times wider than tall (for example 8 for a long strip). Omit for automatic sizing.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_lines",
+          "type": "list",
+          "units": null,
+          "description": "Optional list of line overlays. Each entry is a dict with 'var' (variable name in ds_Sv) and 'style' (dict of matplotlib kwargs).",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_image",
+          "type": "bool",
+          "units": null,
+          "description": "Save the rendered figure to an image file; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_formats",
+          "type": "list",
+          "units": null,
+          "description": "Image formats to save, chosen from png, svg, jpeg, jpg, and pdf",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_dir",
+          "type": "str",
+          "units": null,
+          "description": "Optional directory override for saved image artifacts",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "show",
+          "type": "bool",
+          "units": null,
+          "description": "Whether to display the figure interactively or inline; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "dpi",
+          "type": "int",
+          "units": null,
+          "description": "Optional DPI override for raster image outputs",
+          "default": 100,
+          "set": true,
+          "value": 100
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "id": "mask_sparse",
+      "kind": "step",
+      "op": "mask_sparse_bins",
+      "op_url": "ops/mask_sparse_bins/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Remove spatiotemporal bins with fewer valid samples than a threshold, reducing noise in MVBS computation.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Sv Dataset to screen, normally the noise-removed Sv from remove_background_noise. Masking has already emptied parts of the grid, which is what leaves some bins with too few samples to average.",
+          "value": "${remove_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": null,
+          "description": "Range bin size (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "4m"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": null,
+          "description": "Ping-time bin size (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "4s"
+        },
+        {
+          "name": "nan_threshold",
+          "type": "float",
+          "units": null,
+          "description": "Fraction of NaN values above which a bin is masked (0.0 to 1.0)",
+          "default": 0.5,
+          "set": true,
+          "value": 0.95
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Meter-valued variable to bin along, which must match the value given to compute_mvbs and compute_per_cell_statistics or the sparse mask lands on a different grid than the one it is meant to clean. 'echo_range' measures from the transducer face, 'depth' from the surface and needs the dataset to carry a depth variable. The bin edges are read from the first ping of the first channel, so a range variable that varies from ping to ping, as depth does under platform vertical offsets, is approximated by its first ping.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset with samples in under-populated bins set to NaN. Feed this to compute_mvbs using the same bin sizes.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "rechunk_before_mvbs",
+      "kind": "step",
+      "op": "rechunk_dataset",
+      "op_url": "ops/rechunk_dataset/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
+          "value": "${mask_sparse.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "units": null,
+          "description": "Target chunk size along ping_time.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.mvbs_chunk_ping_time}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_mvbs",
+      "kind": "step",
+      "op": "compute_mvbs",
+      "op_url": "ops/compute_mvbs/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute Mean Volume Backscattering Strength by averaging Sv over range and time bins. Returns a gridded MVBS Dataset.\nThis step is echopype.commongrid.compute_MVBS called directly, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins, so bins that failed the sparsity check are already NaN and do not pull the bin means toward the noise floor.",
+          "value": "${rechunk_before_mvbs.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": "m",
+          "description": "Depth bin size for averaging (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "4m"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": "s",
+          "description": "Ping-time bin size for averaging (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "4s"
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Variable to bin along: 'echo_range' for range from the transducer face, or 'depth' for depth below the surface. 'depth' requires the dataset to carry a depth variable, which ep_add_depth adds; binning by it is what puts channels mounted at different depths on one vertical reference.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var_max",
+          "type": "str",
+          "units": "m",
+          "description": "Deepest value the bins cover, as a unit string (e.g. '2100m'). When unset, echopype reads the maximum from the data, which forces a compute on a lazy dataset. Supplying it keeps the step lazy.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "closed",
+          "type": "str",
+          "units": null,
+          "description": "Which side of each bin interval is closed: 'left' or 'right'",
+          "default": "left",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "skipna",
+          "type": "bool",
+          "units": null,
+          "description": "Skip NaN values when averaging. When false, any NaN in a bin makes the whole bin NaN, so masked data collapses.",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "fill_value",
+          "type": "float",
+          "units": null,
+          "description": "Value for bins holding no data to aggregate. echopype defaults to NaN, which YAML cannot express here, so leaving this unset keeps that default.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "method",
+          "type": "str",
+          "units": null,
+          "description": "Flox reduction strategy for dask arrays, normally 'map-reduce'. Any other value requires reindex to be set to null in the same params block, since echopype rejects a non-null reindex outside map-reduce and its own default for reindex is false rather than null.",
+          "default": "map-reduce",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "reindex",
+          "type": "bool",
+          "units": null,
+          "description": "Reindex at the blockwise stage rather than after it. False uses less memory and more time. Only meaningful when method is 'map-reduce'.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_MVBS",
+          "type": "Dataset",
+          "description": "Gridded MVBS Dataset",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "compute_cell_stats",
+      "kind": "step",
+      "op": "compute_per_cell_statistics",
+      "op_url": "ops/compute_per_cell_statistics/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Compute per-MVBS-cell statistics (e.g. coefficient of variation) from fine-resolution Sv data before masking or MVBS averaging. Results are stored as new DataArrays in the returned dataset at MVBS-bin resolution. Must be called with the same range_bin, ping_time_bin and range_var values used by mask_sparse_bins and compute_mvbs so that bin grids align exactly. Pass the returned dataset to add_auxiliary_features via the ds_sv input to absorb the statistics into the ML feature matrix.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv from remove_background_noise. Take it from before mask_sparse_bins: the within-cell spread is the signal here, and dropping sparse bins first would hide the cells whose variability is most informative.",
+          "value": "${remove_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "range_bin",
+          "type": "str",
+          "units": null,
+          "description": "Range bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '2m')",
+          "default": null,
+          "set": true,
+          "value": "4m"
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "units": null,
+          "description": "Ping-time bin size. Must match mask_sparse_bins and compute_mvbs (e.g. '10s')",
+          "default": null,
+          "set": true,
+          "value": "4s"
+        },
+        {
+          "name": "statistics",
+          "type": "list",
+          "units": null,
+          "description": "List of statistics to compute. Supported: ['cv']",
+          "default": [
+            "cv"
+          ],
+          "set": true,
+          "value": [
+            "cv"
+          ]
+        },
+        {
+          "name": "data_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of the Sv variable in the input Dataset",
+          "default": "Sv",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "units": null,
+          "description": "Meter-valued variable to bin along, which must match the value given to mask_sparse_bins and compute_mvbs or the cell statistics describe cells offset from the MVBS cells they are joined to. 'echo_range' measures from the transducer face, 'depth' from the surface and needs the dataset to carry a depth variable. The cell dimension names stay cell_ping_time and cell_echo_range either way, since add_auxiliary_features selects on them by name.",
+          "default": "echo_range",
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "range_var_max",
+          "type": "str",
+          "units": "m",
+          "description": "Deepest value the cells cover, as a unit string (e.g. '1810m'), matching the value given to compute_mvbs.\nWhen unset the extent is read from the data. That forces a compute on a lazy dataset, and it lets each dataset choose its own cell grid length, which is only safe when this step runs once on one merged dataset. Mapped over a survey's per-file Sv it is the bug: each file bins to its own extent and the fan-in outer-joins cell_echo_range and NaN-pads the short ones, the same trap the survey tier guards against on range_sample.\nPin it whenever the results will be merged.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cells_only",
+          "type": "bool",
+          "units": null,
+          "description": "Return only the statistic arrays instead of a copy of ds_Sv carrying them.\nThe default keeps the source variables, which is what a single call on a merged dataset wants. Set it true whenever this step is checkpointed or its results are merged: otherwise the fine-resolution Sv is written a second time, and a merge on cell_ping_time drags ping_time and range_sample into the join, which across files with differing range_sample lengths outer-joins and NaN-pads them. That is the same trap the survey tier exists to avoid, reintroduced one dimension over.",
+          "default": false,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Input Dataset with per-cell statistic variables appended (e.g. cell_cv with dims channel x cell_ping_time x cell_echo_range)",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "plot_mvbs",
+      "kind": "step",
+      "op": "plot_sv_echogram",
+      "op_url": "ops/plot_sv_echogram/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
+      "sink": true,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Primary Sv dataset to plot",
+          "value": "${compute_mvbs.ds_MVBS}"
+        },
+        {
+          "name": "ds_Sv_source",
+          "type": "Dataset",
+          "required": false,
+          "description": "Reference Sv dataset whose coordinates set the axes",
+          "value": "${mask_sparse.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "min_depth",
+          "type": "float",
+          "units": null,
+          "description": "Minimum depth (y-axis) in meters",
+          "default": 0,
+          "set": true,
+          "value": "${inputs.min_depth}"
+        },
+        {
+          "name": "max_depth",
+          "type": "float",
+          "units": null,
+          "description": "Maximum depth (y-axis) in meters. Omit to use the deepest depth present in the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.max_depth}"
+        },
+        {
+          "name": "ping_min",
+          "type": "int",
+          "units": null,
+          "description": "First ping index to display",
+          "default": 0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "ping_max",
+          "type": "int",
+          "units": null,
+          "description": "Last ping index to display. Omit to display through the last ping.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "units": null,
+          "description": "Start of the displayed window as a UTC timestamp, for example \"2024-10-15T12:30\". Resolved to the closest ping and used instead of ping_min. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_min}"
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "units": null,
+          "description": "End of the displayed window as a UTC timestamp. Resolved to the closest ping and used instead of ping_max. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_max}"
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the x-axis: 'datetime' (default, absolute UTC clock times), 'seconds' from the first ping shown, 'pings', 'meters' (distance travelled, derived from the GPS track), or 'bins' (MVBS input only).",
+          "default": "datetime",
+          "set": true,
+          "value": "${inputs.x_axis_units}"
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the y-axis: 'meters' (default), 'range_sample', or 'bins' (MVBS input only).",
+          "default": "meters",
+          "set": true,
+          "value": "${inputs.y_axis_units}"
+        },
+        {
+          "name": "panel_width_to_height",
+          "type": "float",
+          "units": null,
+          "description": "Force each frequency panel to be this many times wider than tall (for example 8 for a long strip). Omit for automatic sizing.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_lines",
+          "type": "list",
+          "units": null,
+          "description": "Optional list of line overlays. Each entry is a dict with 'var' (variable name in ds_Sv) and 'style' (dict of matplotlib kwargs).",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_image",
+          "type": "bool",
+          "units": null,
+          "description": "Save the rendered figure to an image file; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_formats",
+          "type": "list",
+          "units": null,
+          "description": "Image formats to save, chosen from png, svg, jpeg, jpg, and pdf",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_dir",
+          "type": "str",
+          "units": null,
+          "description": "Optional directory override for saved image artifacts",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "show",
+          "type": "bool",
+          "units": null,
+          "description": "Whether to display the figure interactively or inline; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "dpi",
+          "type": "int",
+          "units": null,
+          "description": "Optional DPI override for raster image outputs",
+          "default": 100,
+          "set": true,
+          "value": 50
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "id": "reshape_ml",
+      "kind": "step",
+      "op": "reshape_for_ml",
+      "op_url": "ops/reshape_for_ml/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Reshape an MVBS Dataset into a flat, ML-ready xarray Dataset where each observation corresponds to one spatial or temporal bin.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_MVBS",
+          "type": "Dataset",
+          "required": true,
+          "description": "Gridded MVBS Dataset to flatten, from compute_mvbs, or from add_line_overlay when a line variable should travel with it. One MVBS cell becomes one ML sample, with the channels of that cell as its features.",
+          "value": "${compute_mvbs.ds_MVBS}"
+        }
+      ],
+      "params": [
+        {
+          "name": "data_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of the data variable to use as features",
+          "default": null,
+          "set": true,
+          "value": "Sv"
+        },
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "Name this ML dataset is stored under inside the returned Dataset. Every later ML step (add_auxiliary_features, normalize_ml_data, run_hdbscan, the ML plots) takes the same dataset_name to find the feature matrix again, so a recipe can carry several independent ML datasets side by side.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "feature_strategy",
+          "type": "str",
+          "units": null,
+          "description": "Feature construction strategy (e.g. 'mean_centered')",
+          "default": null,
+          "set": true,
+          "value": "mean_centered"
+        },
+        {
+          "name": "baseline_channel",
+          "type": "int",
+          "units": null,
+          "description": "Channel index used as the baseline when computing relative features",
+          "default": 0,
+          "set": true,
+          "value": 0
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_ml_ready",
+          "type": "Dataset",
+          "description": "Flattened ML-ready Dataset",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "add_aux_features",
+      "kind": "step",
+      "op": "add_auxiliary_features",
+      "op_url": "ops/add_auxiliary_features/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Append auxiliary coordinate-derived features (e.g. depth, ping_time_seconds) to the flattened ML-ready Dataset. Optional step; omit when no auxiliary features are needed.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_ml",
+          "type": "Dataset",
+          "required": true,
+          "description": "Flattened ML Dataset from reshape_for_ml. The new features are appended as extra columns on its feature matrix.",
+          "value": "${reshape_ml.ds_ml_ready}"
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "required": false,
+          "description": "Raw EchoData supplying the echosounder's own bottom pick, used for the 'seafloor_depth' and 'altitude' features when the seafloor_depth input is not wired. Ignored when it is.",
+          "value": "${inputs.echodata}"
+        },
+        {
+          "name": "ds_sv",
+          "type": "Dataset",
+          "required": false,
+          "description": "Dataset returned by compute_per_cell_statistics, carrying per-MVBS-cell statistic variables (e.g. cell_cv). Required when 'cell_cv' is listed in features.",
+          "value": "${compute_cell_stats.ds_Sv}"
+        },
+        {
+          "name": "seafloor_depth",
+          "type": "DataArray",
+          "required": false,
+          "description": "Pre-detected seafloor line, 1-D over ping_time, typically wired from a detect_seafloor step. Takes precedence over echodata for the 'seafloor_depth' and 'altitude' features, so the ML features use the same line the masking stack used instead of a channel mean recomputed internally. Either this or echodata is required for those features.\nIn a per-file map_over pipeline, collect the per-file lines into one survey-wide line and wire that, e.g. a merge_datasets step with collect: ${detect_seafloor.seafloor_depth}. This input does accept the raw list of per-file lines and concatenates it along ping_time in segment order, but a recipe cannot reference a mapped step from outside its chain and still resume: the runner prunes a mapped chain as a whole once the downstream fan-in is a cache hit, so the direct reference resolves on a cold run and fails on a resumed one.\nVertical reference: 'altitude' is a difference (seafloor minus sample), so a constant offset shared by both terms cancels and the frame does not matter as long as they agree. They normally do: detect_seafloor promotes its line to surface-referenced only when its ds_Sv carries depth, the same condition under which depth reaches the ML dataset, and 'altitude' prefers depth over echo_range to pair with it.",
+          "value": "${inputs.seafloor_depth}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset to append the features to. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "features",
+          "type": "list",
+          "units": null,
+          "description": "List of built-in feature name strings to append. Supported built-ins: 'depth', 'ping_time_seconds', 'seafloor_depth', 'altitude', 'cell_cv'. 'seafloor_depth' and 'altitude' require the echodata input. 'cell_cv' requires the ds_sv input (from compute_per_cell_statistics).",
+          "default": null,
+          "set": true,
+          "value": [
+            "cell_cv"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_ml_ready",
+          "type": "Dataset",
+          "description": "ML-ready Dataset with auxiliary features appended",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "normalize_ml",
+      "kind": "step",
+      "op": "normalize_ml_data",
+      "op_url": "ops/normalize_ml_data/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Normalize ML features in the flattened Dataset. Supports per-feature normalization methods via per_group_methods.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_ml",
+          "type": "Dataset",
+          "required": true,
+          "description": "Flattened ML Dataset to normalize, from reshape_for_ml, or from add_auxiliary_features when auxiliary columns were appended. Those columns are on unrelated scales (metres, seconds, a coefficient of variation), which is what per_group_methods exists to handle.",
+          "value": "${add_aux_features.ds_ml_ready}"
+        }
+      ],
+      "params": [
+        {
+          "name": "method",
+          "type": "str",
+          "units": null,
+          "description": "Global normalization method (e.g. 'flatten', 'minmax', 'zscore')",
+          "default": null,
+          "set": true,
+          "value": "flatten"
+        },
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset to normalize. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "normalization_name",
+          "type": "str",
+          "units": null,
+          "description": "Name this normalized result is stored under. run_hdbscan, the ML plots, and filter_normalized_by_cluster take the same name to find it, so several normalizations of one dataset can coexist and be compared.",
+          "default": null,
+          "set": true,
+          "value": "normalized_flatten_mean_centered"
+        },
+        {
+          "name": "shift_positive",
+          "type": "bool",
+          "units": null,
+          "description": "Shift all values to be non-negative after normalization",
+          "default": false,
+          "set": true,
+          "value": false
+        },
+        {
+          "name": "feature_weights",
+          "type": "list",
+          "units": null,
+          "description": "Per-feature weight multipliers applied before normalization",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "per_group_methods",
+          "type": "dict",
+          "units": null,
+          "description": "Map of feature name to individual normalization method override",
+          "default": {},
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "description": "Dataset with normalized feature values",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "plot_normalized_ml",
+      "kind": "step",
+      "op": "plot_ml_echogram",
+      "op_url": "ops/plot_ml_echogram/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Render a normalized ML feature echogram for inspection. This is a sink step: it produces a side-effect (figure) with no data output.",
+      "sink": true,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "required": true,
+          "description": "Normalized ML Dataset from normalize_ml_data. Its flattened features are folded back onto the ping and range grid for display, which is the quickest way to see what the clustering will actually be given.",
+          "value": "${normalize_ml.ds_normalized}"
+        },
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": true,
+          "description": "Original Sv Dataset supplying the depth and ping coordinates the axes are drawn against. Use the same Sv the MVBS grid was built from, so this plot lines up with the Sv echograms next to it.",
+          "value": "${remove_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset to plot. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "normalization_name",
+          "type": "str",
+          "units": null,
+          "description": "Normalized feature set to plot. Must match the normalization_name used by normalize_ml_data.",
+          "default": null,
+          "set": true,
+          "value": "normalized_flatten_mean_centered"
+        },
+        {
+          "name": "min_depth",
+          "type": "float",
+          "units": null,
+          "description": "Minimum depth (y-axis) in meters",
+          "default": 0,
+          "set": true,
+          "value": "${inputs.min_depth}"
+        },
+        {
+          "name": "max_depth",
+          "type": "float",
+          "units": null,
+          "description": "Maximum depth (y-axis) in meters. Omit to use the deepest depth present in the data.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.max_depth}"
+        },
+        {
+          "name": "ping_min",
+          "type": "int",
+          "units": null,
+          "description": "First ping index to display",
+          "default": 0,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "ping_max",
+          "type": "int",
+          "units": null,
+          "description": "Last ping index to display. Omit to display through the last ping.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "units": null,
+          "description": "Start of the displayed window as a UTC timestamp, for example \"2024-10-15T12:30\". Resolved to the closest ping and used instead of ping_min. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_min}"
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "units": null,
+          "description": "End of the displayed window as a UTC timestamp. Resolved to the closest ping and used instead of ping_max. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_max}"
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the x-axis: 'datetime' (default, absolute UTC clock times), 'seconds' from the first ping shown, 'pings', 'meters' (distance travelled, derived from the GPS track), or 'bins' (MVBS-derived data only).",
+          "default": "datetime",
+          "set": true,
+          "value": "${inputs.x_axis_units}"
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the y-axis: 'meters' (default), 'range_sample', or 'bins' (MVBS-derived data only).",
+          "default": "meters",
+          "set": true,
+          "value": "${inputs.y_axis_units}"
+        },
+        {
+          "name": "save_image",
+          "type": "bool",
+          "units": null,
+          "description": "Save the rendered figure to an image file; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_formats",
+          "type": "list",
+          "units": null,
+          "description": "Image formats to save, chosen from png, svg, jpeg, jpg, and pdf",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_dir",
+          "type": "str",
+          "units": null,
+          "description": "Optional directory override for saved image artifacts",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "show",
+          "type": "bool",
+          "units": null,
+          "description": "Whether to display the figure interactively or inline; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "dpi",
+          "type": "int",
+          "units": null,
+          "description": "Optional DPI override for raster image outputs",
+          "default": 50,
+          "set": true,
+          "value": 30
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "id": "run_hdbscan",
+      "kind": "step",
+      "op": "run_hdbscan",
+      "op_url": "ops/run_hdbscan/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Run HDBSCAN unsupervised clustering on normalized feature data. Pure-compute step: accepts normalized features and returns a clustering result dict without modifying any Dataset. Designed to be a sweep target for hyperparameter comparison.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "required": true,
+          "description": "Normalized ML Dataset from normalize_ml_data, or the single-cluster subset from filter_normalized_by_cluster for a second-pass run. Only the feature matrix is read; the Dataset is not modified.",
+          "value": "${normalize_ml.ds_normalized}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset to cluster. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "normalization_name",
+          "type": "str",
+          "units": null,
+          "description": "Normalized feature set to cluster. Must match the normalization_name used by normalize_ml_data.",
+          "default": null,
+          "set": true,
+          "value": "normalized_flatten_mean_centered"
+        },
+        {
+          "name": "ml_result_name",
+          "type": "str",
+          "units": null,
+          "description": "Name this clustering result is stored under. embed_clustering_results and plot_clustering_report take the same name to find it, so a recipe can keep several clusterings of one dataset side by side.",
+          "default": null,
+          "set": true,
+          "value": "hdbscan_results"
+        },
+        {
+          "name": "min_cluster_size",
+          "type": "int",
+          "units": null,
+          "description": "Absolute minimum cluster size. Mutually exclusive with min_cluster_size_fraction.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "min_cluster_size_fraction",
+          "type": "float",
+          "units": null,
+          "description": "Fraction of the points actually fitted used to derive min_cluster_size when min_cluster_size is omitted. Mutually exclusive with min_cluster_size. When omitted, the ML function defaults to 0.03.\nTaken of the subsample when sample_size binds, so the number means the same thing at any scale: a cluster must hold this share of what the model saw. Raising sample_size therefore raises the absolute floor proportionally, and lowering it lowers it.",
+          "default": null,
+          "set": true,
+          "value": 0.001
+        },
+        {
+          "name": "min_samples",
+          "type": "int",
+          "units": null,
+          "description": "Neighbourhood size HDBSCAN uses to judge how dense a point is. Higher values make the run more conservative, pushing sparse points into noise instead of into a cluster.",
+          "default": 2,
+          "set": true,
+          "value": 7
+        },
+        {
+          "name": "sample_size",
+          "type": "int",
+          "units": null,
+          "description": "Cap on how many samples are clustered. A survey flattens to more points than HDBSCAN can handle in memory, so when the dataset is larger than this a random subset of this size is clustered and the remaining points receive no label at all. Set it above the sample count to cluster everything.",
+          "default": 100000,
+          "set": true,
+          "value": 1000000
+        },
+        {
+          "name": "cluster_selection_method",
+          "type": "str",
+          "units": null,
+          "description": "HDBSCAN cluster selection method ('eom' or 'leaf')",
+          "default": "leaf",
+          "set": true,
+          "value": "eom"
+        },
+        {
+          "name": "use_hdbscan",
+          "type": "bool",
+          "units": null,
+          "description": "Use HDBSCAN; set false to fall back to a simpler clustering method",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "epsilon",
+          "type": "float",
+          "units": null,
+          "description": "DBSCAN epsilon distance parameter",
+          "default": 0.004,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "find_background_cluster",
+          "type": "bool",
+          "units": null,
+          "description": "Run background-cluster detection path instead of standard HDBSCAN. When true, background_label output is populated.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "soft_membership_threshold",
+          "type": "float",
+          "units": null,
+          "description": "Reassign noise points via soft-membership probabilities when set. null disables soft-membership reassignment.",
+          "default": null,
+          "set": true,
+          "value": 0.6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "clustering_results",
+          "type": "Dataset",
+          "description": "Checkpoint-friendly xarray Dataset containing cluster labels, sample indices, and scalar metadata. Saved as Zarr by default.",
+          "disposed": false
+        },
+        {
+          "name": "clustering_model",
+          "type": "object",
+          "description": "Optional fitted clustering model used for HDBSCAN hierarchy plots. This output is intentionally separate from clustering_results so the label data can checkpoint as Zarr while the model falls back to pickle.",
+          "disposed": false
+        },
+        {
+          "name": "background_label",
+          "type": "int",
+          "description": "Cluster label identified as background. Only populated when find_background_cluster is true; null otherwise.",
+          "disposed": false
+        },
+        {
+          "name": "cluster_labels",
+          "type": "list",
+          "description": "Sorted list of non-noise cluster labels found in this result (all labels >= 0). Provided as scaffolding for a future map_over fan-out: map_over: ${this_step.cluster_labels} will fan filter_normalized_by_cluster across every discovered cluster without any changes to the op or its spec.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "embed_results",
+      "kind": "step",
+      "op": "embed_clustering_results",
+      "op_url": "ops/embed_clustering_results/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a single result dict from run_hdbscan, or a collected list of result dicts when used with the collect pattern for ensemble runs. For a list, one cluster-label variable is embedded per collected result using deterministic names derived from ml_result_name.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "required": true,
+          "description": "Normalized ML Dataset to enrich with cluster-label variables",
+          "value": "${normalize_ml.ds_normalized}"
+        },
+        {
+          "name": "clustering_results",
+          "type": "Dataset",
+          "required": true,
+          "description": "Clustering result dataset from run_hdbscan. When collect is used for ensemble runs, a list of result datasets is accepted (many: true).",
+          "value": "${run_hdbscan.clustering_results}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset the labels are embedded into. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "ml_result_name",
+          "type": "str",
+          "units": null,
+          "description": "Name the embedded cluster labels are stored under. Normally the ml_result_name from run_hdbscan, so plot_clustering_report finds the same result. For a collected list of results this is the stem the per-result variable names are derived from.",
+          "default": null,
+          "set": true,
+          "value": "hdbscan_results"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "description": "Normalized ML Dataset enriched with cluster-label variables",
+          "disposed": false
+        },
+        {
+          "name": "gridded_results",
+          "type": "DataArray",
+          "description": "Gridded cluster labels as a DataArray for a single result, or a dict keyed by embedded result name for multi-result fan-in (many: true).",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "plot_clustering_report",
+      "kind": "step",
+      "op": "plot_clustering_report",
+      "op_url": "ops/plot_clustering_report/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Render a full clustering report for one or more clustering results. Produces the clustering echogram, per-cluster statistics report, and the HDBSCAN hierarchy plot when the clustering result includes a model and hierarchy plotting is applicable. This is a sink step: it produces figures with no data output.",
+      "sink": true,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "required": true,
+          "description": "Embedded normalized ML Dataset containing stored cluster-label variables",
+          "value": "${embed_results.ds_normalized}"
+        },
+        {
+          "name": "clustering_results",
+          "type": "Dataset",
+          "required": false,
+          "description": "Clustering result Dataset from run_hdbscan or assign_clusters_to_all_points. Legacy dict results and collected lists are also accepted (many: true). Optional: every panel but the HDBSCAN hierarchy reads the labels embed_clustering_results stored in ds_normalized, so a report can be drawn from that checkpointed dataset alone and the fit never has to be rerun for it. Leave it out to do that; the hierarchy panel is then skipped.",
+          "value": "${run_hdbscan.clustering_results}"
+        },
+        {
+          "name": "clustering_model",
+          "type": "object",
+          "required": false,
+          "description": "Optional fitted clustering model from run_hdbscan, used only for the HDBSCAN hierarchy plot. Other report panels use clustering_results.",
+          "value": "${run_hdbscan.clustering_model}"
+        },
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "required": false,
+          "description": "Original Sv Dataset for echogram depth reference",
+          "value": "${remove_noise.ds_Sv}"
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset to report on. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "set": true,
+          "value": "ml_dataset"
+        },
+        {
+          "name": "ml_result_name",
+          "type": "str",
+          "units": null,
+          "description": "Clustering result to report on. Must match the ml_result_name used by embed_clustering_results, which is the name the labels were stored under in ds_normalized.",
+          "default": null,
+          "set": true,
+          "value": "hdbscan_results"
+        },
+        {
+          "name": "plot_window",
+          "type": "list",
+          "units": null,
+          "description": "[min_depth, max_depth, ping_min, ping_max] for echogram display",
+          "default": [],
+          "set": true,
+          "value": [
+            "${inputs.min_depth}",
+            "${inputs.max_depth}"
+          ]
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "units": null,
+          "description": "Start of the displayed window as a UTC timestamp, for example \"2024-10-15T12:30\". Resolved to the closest ping and used instead of the ping_min entry in plot_window. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_min}"
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "units": null,
+          "description": "End of the displayed window as a UTC timestamp. Resolved to the closest ping and used instead of the ping_max entry in plot_window. Omit to window by ping index.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.time_max}"
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the clustering echogram x-axis: 'datetime' (default, absolute UTC clock times), 'seconds' from the first ping shown, 'pings', 'bins', or 'meters'.",
+          "default": "datetime",
+          "set": true,
+          "value": "${inputs.x_axis_units}"
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "units": null,
+          "description": "Units for the clustering echogram y-axis ('meters', 'range_sample', or 'bins')",
+          "default": "meters",
+          "set": true,
+          "value": "${inputs.y_axis_units}"
+        },
+        {
+          "name": "overlay_line_var",
+          "type": "str",
+          "units": null,
+          "description": "Name of a variable in ds_normalized to draw as a line overlay",
+          "default": null,
+          "set": true,
+          "value": "sw_dive_profile"
+        },
+        {
+          "name": "overlay_windows",
+          "type": "list",
+          "units": null,
+          "description": "Window dicts (as plan_dive_datasets emits) whose line files are drawn onto the echogram. Each window's lines are read onto its own pings, so every window is a separate segment and windows that overlap in time each keep their own line. Empty draws nothing.",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_window_keys",
+          "type": "list",
+          "units": null,
+          "description": "Window keys naming the line files to draw. Defaults to the three dive profile keys dive_fit_evl, dive_u99_evl and dive_l99_evl. A window missing a key is skipped for that key.",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_fit_style",
+          "type": "dict",
+          "units": null,
+          "description": "Matplotlib line keywords for the fitted dive profile drawn by overlay_windows, for example {color: \"#23FFFF\", linewidth: 3.0}. Merged over the built-in style, so naming only one key leaves the rest alone. Empty uses the built-in style: solid cyan.",
+          "default": {},
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "overlay_bound_style",
+          "type": "dict",
+          "units": null,
+          "description": "The same for both 99% confidence bound lines, for example {color: \"#D08BFF\", linestyle: \":\"}. Empty uses the built-in style: dotted violet, thinner than the fitted profile. Both bounds always share one style, since they are two edges of one interval.",
+          "default": {},
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "normalization_name",
+          "type": "str",
+          "units": null,
+          "description": "Normalized feature set to plot statistics for when cluster_stats_sv_data_var is \"ml_features\" and no clustering_results input is wired. Ignored otherwise; with a result wired, its own normalization_name is used.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cluster_colors",
+          "type": "list",
+          "units": null,
+          "description": "Hex color strings for each cluster label",
+          "default": [],
+          "set": true,
+          "value": [
+            "#9D00FF",
+            "#35E200",
+            "#FF0000",
+            "#2F00FF",
+            "#FF8800",
+            "#FFFB1C",
+            "#FF44E9",
+            "#00BE8BCA",
+            "#00FFE5",
+            "#3D8D00FF",
+            "#9C67FFFF"
+          ]
+        },
+        {
+          "name": "y_to_x_aspect_ratio_override",
+          "type": "float",
+          "units": null,
+          "description": "Override the echogram aspect ratio; null uses the default",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cluster_stats_sv_data_var",
+          "type": "str",
+          "units": null,
+          "description": "Sv variable name used when computing per-cluster statistics, or \"ml_features\" to plot the flattened ML features used for clustering",
+          "default": "Sv",
+          "set": true,
+          "value": "Sv"
+        },
+        {
+          "name": "cluster_stats_compute_pairwise_differences",
+          "type": "bool",
+          "units": null,
+          "description": "Compute inter-channel diffs in cluster statistics, taken against the second-lowest-frequency channel",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "cluster_stats_dpi",
+          "type": "int",
+          "units": null,
+          "description": "DPI for the cluster statistics figure, which holds much smaller text than the echogram. Null falls back to dpi.",
+          "default": 200,
+          "set": true,
+          "value": 200
+        },
+        {
+          "name": "save_image",
+          "type": "bool",
+          "units": null,
+          "description": "Save the rendered figures to image files; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_formats",
+          "type": "list",
+          "units": null,
+          "description": "Image formats to save, chosen from png, svg, jpeg, jpg, and pdf",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "save_dir",
+          "type": "str",
+          "units": null,
+          "description": "Optional directory override for saved image artifacts",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "show",
+          "type": "bool",
+          "units": null,
+          "description": "Whether to display figures interactively or inline; null uses runtime defaults",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "dpi",
+          "type": "int",
+          "units": null,
+          "description": "Optional DPI override for raster image outputs",
+          "default": 50,
+          "set": true,
+          "value": 50
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "id": "out:extract_cal_params.other_params",
+      "kind": "output",
+      "label": "extract_cal_params.other_params",
+      "type": "dict",
+      "declared": false,
+      "from": {
+        "step": "extract_cal_params",
+        "output": "other_params"
+      },
+      "group": "group:0"
+    },
+    {
+      "id": "out:run_hdbscan.background_label",
+      "kind": "output",
+      "label": "run_hdbscan.background_label",
+      "type": "int",
+      "declared": false,
+      "from": {
+        "step": "run_hdbscan",
+        "output": "background_label"
+      }
+    },
+    {
+      "id": "out:run_hdbscan.cluster_labels",
+      "kind": "output",
+      "label": "run_hdbscan.cluster_labels",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "run_hdbscan",
+        "output": "cluster_labels"
+      }
+    },
+    {
+      "id": "out:embed_results.gridded_results",
+      "kind": "output",
+      "label": "embed_results.gridded_results",
+      "type": "DataArray",
+      "declared": false,
+      "from": {
+        "step": "embed_results",
+        "output": "gridded_results"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:raw_input_folder",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "raw_input_folder",
+      "label": "raw_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "in:calibration_outputs",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "calibration_outputs",
+      "target_input": "calibration_outputs",
+      "label": "calibration_outputs",
+      "type": "str"
+    },
+    {
+      "source": "in:raw_file_names",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "raw_file_names",
+      "target_input": "raw_file_names",
+      "label": "raw_file_names",
+      "type": "list"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:raw_input_folder",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "raw_input_folder",
+      "label": "raw_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "in:cal_input_folder",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "cal_input_folder",
+      "target_input": "cal_input_folder",
+      "label": "cal_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "initial_setup",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "calibration_output_dir",
+      "target_input": "output_base",
+      "label": "calibration_output_dir -> output_base",
+      "type": "path"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "initial_setup",
+      "target": "read_raw",
+      "kind": "map_over",
+      "source_output": "raw_file_paths",
+      "target_input": "raw_file_paths",
+      "label": "raw_file_paths -> _item -> raw_file_paths",
+      "type": "list",
+      "group": "group:0",
+      "item_inputs": [
+        "raw_file_paths"
+      ]
+    },
+    {
+      "source": "read_raw",
+      "target": "combine_raw",
+      "kind": "data",
+      "source_output": "raw_stores",
+      "target_input": "raw_stores",
+      "label": "raw_stores",
+      "type": "list"
+    },
+    {
+      "source": "in:ping_time_chunk",
+      "target": "combine_raw",
+      "kind": "param",
+      "source_output": "ping_time_chunk",
+      "target_input": "ping_time_chunk",
+      "label": "ping_time_chunk",
+      "type": "int"
+    },
+    {
+      "source": "gen_cal_mapping",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "calibration_dict",
+      "target_input": "calibration_dict",
+      "label": "calibration_dict",
+      "type": "dict"
+    },
+    {
+      "source": "gen_cal_mapping",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "mapping_dict",
+      "target_input": "mapping_dict",
+      "label": "mapping_dict",
+      "type": "dict"
+    },
+    {
+      "source": "combine_raw",
+      "target": "extract_cal_params",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "EchoData"
+    },
+    {
+      "source": "initial_setup",
+      "target": "extract_cal_params",
+      "kind": "item",
+      "source_output": "_item",
+      "target_input": "raw_file_path",
+      "label": "_item -> raw_file_path",
+      "type": "path"
+    },
+    {
+      "source": "combine_raw",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "EchoData"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "cal_params",
+      "target_input": "cal_params",
+      "label": "cal_params",
+      "type": "dict"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "compute_sv",
+      "kind": "data",
+      "source_output": "env_params",
+      "target_input": "env_params",
+      "label": "env_params",
+      "type": "dict"
+    },
+    {
+      "source": "compute_sv",
+      "target": "compute_transducer_depth",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "combine_raw",
+      "target": "compute_transducer_depth",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "EchoData"
+    },
+    {
+      "source": "compute_sv",
+      "target": "ep_add_depth",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "combine_raw",
+      "target": "ep_add_depth",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "EchoData"
+    },
+    {
+      "source": "compute_transducer_depth",
+      "target": "ep_add_depth",
+      "kind": "param",
+      "source_output": "transducer_depth",
+      "target_input": "depth_offset",
+      "label": "transducer_depth -> depth_offset",
+      "type": "DataArray"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "detect_seafloor",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:seabed_line_folder",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_folder",
+      "target_input": "evl_path",
+      "label": "seabed_line_folder -> evl_path",
+      "type": "path"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:seabed_line_max_gap_s",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_max_gap_s",
+      "target_input": "max_gap_s",
+      "label": "seabed_line_max_gap_s -> max_gap_s",
+      "type": "float"
+    },
+    {
+      "source": "in:seabed_line_min_coverage",
+      "target": "detect_seafloor",
+      "kind": "param",
+      "source_output": "seabed_line_min_coverage",
+      "target_input": "min_coverage",
+      "label": "seabed_line_min_coverage -> min_coverage",
+      "type": "float"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "create_seafloor_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "detect_seafloor",
+      "target": "create_seafloor_mask",
+      "kind": "data",
+      "source_output": "seafloor_depth",
+      "target_input": "seafloor_depth",
+      "label": "seafloor_depth",
+      "type": "DataArray"
+    },
+    {
+      "source": "compute_sv",
+      "target": "create_surface_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "create_seafloor_mask",
+      "target": "combine_masks",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "masks",
+      "label": "mask -> masks",
+      "type": "DataArray"
+    },
+    {
+      "source": "create_surface_mask",
+      "target": "combine_masks",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "masks",
+      "label": "mask -> masks",
+      "type": "DataArray"
+    },
+    {
+      "source": "ep_add_depth",
+      "target": "apply_mask",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "combine_masks",
+      "target": "apply_mask",
+      "kind": "data",
+      "source_output": "mask",
+      "target_input": "mask",
+      "label": "mask",
+      "type": "DataArray"
+    },
+    {
+      "source": "apply_mask",
+      "target": "merge_sv",
+      "kind": "collect",
+      "source_output": "ds_Sv",
+      "target_input": "datasets",
+      "label": "ds_Sv -> datasets",
+      "type": "Dataset"
+    },
+    {
+      "source": "merge_sv",
+      "target": "crop_range",
+      "kind": "data",
+      "source_output": "merged",
+      "target_input": "ds_Sv",
+      "label": "merged -> ds_Sv",
+      "type": "Dataset | DataArray"
+    },
+    {
+      "source": "in:crop_trailing_all_nan",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_trailing_all_nan",
+      "target_input": "drop_trailing_all_nan",
+      "label": "crop_trailing_all_nan -> drop_trailing_all_nan",
+      "type": "bool"
+    },
+    {
+      "source": "in:crop_max_range_m",
+      "target": "crop_range",
+      "kind": "param",
+      "source_output": "crop_max_range_m",
+      "target_input": "max_range_m",
+      "label": "crop_max_range_m -> max_range_m",
+      "type": "float"
+    },
+    {
+      "source": "crop_range",
+      "target": "rechunk_before_noise",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:noise_chunk_ping_time",
+      "target": "rechunk_before_noise",
+      "kind": "param",
+      "source_output": "noise_chunk_ping_time",
+      "target_input": "ping_time_chunk",
+      "label": "noise_chunk_ping_time -> ping_time_chunk",
+      "type": "int"
+    },
+    {
+      "source": "rechunk_before_noise",
+      "target": "remove_noise",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "remove_noise",
+      "target": "plot_sv_clean",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:min_depth",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "min_depth",
+      "target_input": "min_depth",
+      "label": "min_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:max_depth",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "max_depth",
+      "target_input": "max_depth",
+      "label": "max_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:time_min",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "time_min",
+      "target_input": "time_min",
+      "label": "time_min",
+      "type": "str"
+    },
+    {
+      "source": "in:time_max",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "time_max",
+      "target_input": "time_max",
+      "label": "time_max",
+      "type": "str"
+    },
+    {
+      "source": "in:x_axis_units",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "x_axis_units",
+      "target_input": "x_axis_units",
+      "label": "x_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "in:y_axis_units",
+      "target": "plot_sv_clean",
+      "kind": "param",
+      "source_output": "y_axis_units",
+      "target_input": "y_axis_units",
+      "label": "y_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "remove_noise",
+      "target": "mask_sparse",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "mask_sparse",
+      "target": "rechunk_before_mvbs",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:mvbs_chunk_ping_time",
+      "target": "rechunk_before_mvbs",
+      "kind": "param",
+      "source_output": "mvbs_chunk_ping_time",
+      "target_input": "ping_time_chunk",
+      "label": "mvbs_chunk_ping_time -> ping_time_chunk",
+      "type": "int"
+    },
+    {
+      "source": "rechunk_before_mvbs",
+      "target": "compute_mvbs",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "remove_noise",
+      "target": "compute_cell_stats",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "compute_mvbs",
+      "target": "plot_mvbs",
+      "kind": "data",
+      "source_output": "ds_MVBS",
+      "target_input": "ds_Sv",
+      "label": "ds_MVBS -> ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "mask_sparse",
+      "target": "plot_mvbs",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv_source",
+      "label": "ds_Sv -> ds_Sv_source",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:min_depth",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "min_depth",
+      "target_input": "min_depth",
+      "label": "min_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:max_depth",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "max_depth",
+      "target_input": "max_depth",
+      "label": "max_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:time_min",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "time_min",
+      "target_input": "time_min",
+      "label": "time_min",
+      "type": "str"
+    },
+    {
+      "source": "in:time_max",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "time_max",
+      "target_input": "time_max",
+      "label": "time_max",
+      "type": "str"
+    },
+    {
+      "source": "in:x_axis_units",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "x_axis_units",
+      "target_input": "x_axis_units",
+      "label": "x_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "in:y_axis_units",
+      "target": "plot_mvbs",
+      "kind": "param",
+      "source_output": "y_axis_units",
+      "target_input": "y_axis_units",
+      "label": "y_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "compute_mvbs",
+      "target": "reshape_ml",
+      "kind": "data",
+      "source_output": "ds_MVBS",
+      "target_input": "ds_MVBS",
+      "label": "ds_MVBS",
+      "type": "Dataset"
+    },
+    {
+      "source": "reshape_ml",
+      "target": "add_aux_features",
+      "kind": "data",
+      "source_output": "ds_ml_ready",
+      "target_input": "ds_ml",
+      "label": "ds_ml_ready -> ds_ml",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:echodata",
+      "target": "add_aux_features",
+      "kind": "data",
+      "source_output": "echodata",
+      "target_input": "echodata",
+      "label": "echodata",
+      "type": "echodata"
+    },
+    {
+      "source": "compute_cell_stats",
+      "target": "add_aux_features",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_sv",
+      "label": "ds_Sv -> ds_sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:seafloor_depth",
+      "target": "add_aux_features",
+      "kind": "data",
+      "source_output": "seafloor_depth",
+      "target_input": "seafloor_depth",
+      "label": "seafloor_depth",
+      "type": "dataarray"
+    },
+    {
+      "source": "add_aux_features",
+      "target": "normalize_ml",
+      "kind": "data",
+      "source_output": "ds_ml_ready",
+      "target_input": "ds_ml",
+      "label": "ds_ml_ready -> ds_ml",
+      "type": "Dataset"
+    },
+    {
+      "source": "normalize_ml",
+      "target": "plot_normalized_ml",
+      "kind": "data",
+      "source_output": "ds_normalized",
+      "target_input": "ds_normalized",
+      "label": "ds_normalized",
+      "type": "Dataset"
+    },
+    {
+      "source": "remove_noise",
+      "target": "plot_normalized_ml",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:min_depth",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "min_depth",
+      "target_input": "min_depth",
+      "label": "min_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:max_depth",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "max_depth",
+      "target_input": "max_depth",
+      "label": "max_depth",
+      "type": "float"
+    },
+    {
+      "source": "in:time_min",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "time_min",
+      "target_input": "time_min",
+      "label": "time_min",
+      "type": "str"
+    },
+    {
+      "source": "in:time_max",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "time_max",
+      "target_input": "time_max",
+      "label": "time_max",
+      "type": "str"
+    },
+    {
+      "source": "in:x_axis_units",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "x_axis_units",
+      "target_input": "x_axis_units",
+      "label": "x_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "in:y_axis_units",
+      "target": "plot_normalized_ml",
+      "kind": "param",
+      "source_output": "y_axis_units",
+      "target_input": "y_axis_units",
+      "label": "y_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "normalize_ml",
+      "target": "run_hdbscan",
+      "kind": "data",
+      "source_output": "ds_normalized",
+      "target_input": "ds_normalized",
+      "label": "ds_normalized",
+      "type": "Dataset"
+    },
+    {
+      "source": "normalize_ml",
+      "target": "embed_results",
+      "kind": "data",
+      "source_output": "ds_normalized",
+      "target_input": "ds_normalized",
+      "label": "ds_normalized",
+      "type": "Dataset"
+    },
+    {
+      "source": "run_hdbscan",
+      "target": "embed_results",
+      "kind": "data",
+      "source_output": "clustering_results",
+      "target_input": "clustering_results",
+      "label": "clustering_results",
+      "type": "Dataset"
+    },
+    {
+      "source": "embed_results",
+      "target": "plot_clustering_report",
+      "kind": "data",
+      "source_output": "ds_normalized",
+      "target_input": "ds_normalized",
+      "label": "ds_normalized",
+      "type": "Dataset"
+    },
+    {
+      "source": "run_hdbscan",
+      "target": "plot_clustering_report",
+      "kind": "data",
+      "source_output": "clustering_results",
+      "target_input": "clustering_results",
+      "label": "clustering_results",
+      "type": "Dataset"
+    },
+    {
+      "source": "run_hdbscan",
+      "target": "plot_clustering_report",
+      "kind": "data",
+      "source_output": "clustering_model",
+      "target_input": "clustering_model",
+      "label": "clustering_model",
+      "type": "object"
+    },
+    {
+      "source": "remove_noise",
+      "target": "plot_clustering_report",
+      "kind": "data",
+      "source_output": "ds_Sv",
+      "target_input": "ds_Sv",
+      "label": "ds_Sv",
+      "type": "Dataset"
+    },
+    {
+      "source": "in:min_depth",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "min_depth",
+      "target_input": "plot_window",
+      "label": "min_depth -> plot_window",
+      "type": "float"
+    },
+    {
+      "source": "in:max_depth",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "max_depth",
+      "target_input": "plot_window",
+      "label": "max_depth -> plot_window",
+      "type": "float"
+    },
+    {
+      "source": "in:time_min",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "time_min",
+      "target_input": "time_min",
+      "label": "time_min",
+      "type": "str"
+    },
+    {
+      "source": "in:time_max",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "time_max",
+      "target_input": "time_max",
+      "label": "time_max",
+      "type": "str"
+    },
+    {
+      "source": "in:x_axis_units",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "x_axis_units",
+      "target_input": "x_axis_units",
+      "label": "x_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "in:y_axis_units",
+      "target": "plot_clustering_report",
+      "kind": "param",
+      "source_output": "y_axis_units",
+      "target_input": "y_axis_units",
+      "label": "y_axis_units",
+      "type": "str"
+    },
+    {
+      "source": "extract_cal_params",
+      "target": "out:extract_cal_params.other_params",
+      "kind": "exit",
+      "source_output": "other_params",
+      "target_input": null,
+      "label": "other_params",
+      "type": "dict"
+    },
+    {
+      "source": "run_hdbscan",
+      "target": "out:run_hdbscan.background_label",
+      "kind": "exit",
+      "source_output": "background_label",
+      "target_input": null,
+      "label": "background_label",
+      "type": "int"
+    },
+    {
+      "source": "run_hdbscan",
+      "target": "out:run_hdbscan.cluster_labels",
+      "kind": "exit",
+      "source_output": "cluster_labels",
+      "target_input": null,
+      "label": "cluster_labels",
+      "type": "list"
+    },
+    {
+      "source": "embed_results",
+      "target": "out:embed_results.gridded_results",
+      "kind": "exit",
+      "source_output": "gridded_results",
+      "target_input": null,
+      "label": "gridded_results",
+      "type": "DataArray"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${initial_setup.raw_file_paths}",
+      "label": "Runs once per item of initial_setup.raw_file_paths",
+      "source": "initial_setup",
+      "members": [
+        "read_raw",
+        "combine_raw",
+        "extract_cal_params",
+        "compute_sv",
+        "compute_transducer_depth",
+        "ep_add_depth",
+        "detect_seafloor",
+        "create_seafloor_mask",
+        "create_surface_mask",
+        "combine_masks",
+        "apply_mask"
+      ]
+    }
+  ]
+}

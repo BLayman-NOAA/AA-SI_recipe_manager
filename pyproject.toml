@@ -57,10 +57,12 @@ dev = [
 gcs = [
     "gcsfs>=2024.1",
 ]
+# mkdocs is held below 2.0, which drops the plugin and theme systems this site uses.
 docs = [
-    "mkdocs>=1.5.0",
+    "mkdocs>=1.5.0,<2",
     "mkdocs-material>=9.0.0",
-    "mkdocstrings[python]>=0.24.0",
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-literate-nav>=0.6.0",
 ]
 dask = [
     "dask[distributed]>=2023.1.0",

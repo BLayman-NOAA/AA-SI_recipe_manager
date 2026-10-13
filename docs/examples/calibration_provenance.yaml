@@ -1,0 +1,215 @@
+schema_version: '1'
+generated: '2026-09-24T18:12:30.064256+00:00'
+cruise_id: HB1603
+summary:
+  raw_files: 9
+  time_start: '2016-07-25T20:35:35.923+00:00'
+  time_end: '2016-07-25T23:49:23.916+00:00'
+  channels_total: 45
+  channels_matched: 45
+  channels_matched_under_override: 0
+  channels_unmatched: 0
+  channels_multiple_matches: 0
+  channels_multiplexed: 0
+  calibration_files_loaded: 5
+  calibration_files_used: 5
+tolerances:
+  defaults:
+    frequency: 1.0
+    frequency_start: 1.0
+    frequency_end: 1.0
+    transmit_power: 1.0
+    transmit_duration_nominal: 1.0e-06
+  applied:
+    frequency: 1.0
+    frequency_start: 1.0
+    frequency_end: 1.0
+    transmit_power: 1.0
+    transmit_duration_nominal: 1.0e-06
+  overridden: {}
+unmatched_channel_policy:
+  unmapped_channels: not declared to this step
+  effect: >-
+    No calibration matched. What happens next is set by the consuming step's unmapped_channels
+    parameter, which this run did not declare: warn falls back to the raw file's own recorded
+    values, error stops the run.
+outcomes:
+  calibration_applied: >-
+    The matched calibration was applied. Every compared field is within its default tolerance.
+channels:
+  GPT  18 kHz 009072056b0e 2-1 ES18-11:
+    frequency_hz: 18000.0
+    transducer_model: ES18-11
+    transceiver_id: 009072056b0e
+    segments:
+    - status: matched
+      outcome: calibration_applied
+      calibration_key: 2016-07-18__18000__config-1
+      raw_files: 9
+      time_start: '2016-07-25T20:35:35.923+00:00'
+      time_end: '2016-07-25T23:49:23.916+00:00'
+      first_file: D20160725-T203535.raw
+      last_file: D20160725-T233217.raw
+      raw_settings:
+        frequency_start: 18000.0
+        frequency_end: 18000.0
+        transmit_power: 1000.0
+        transmit_duration_nominal: 0.0010239999974146485
+      calibration_settings:
+        frequency_start: 18000.0
+        frequency_end: 18000.0
+        transmit_power: 1000.0
+        transmit_duration_nominal: 0.001024
+  GPT  38 kHz 0090720346bc 1-1 ES38B:
+    frequency_hz: 38000.0
+    transducer_model: ES38B
+    transceiver_id: 0090720346bc
+    segments:
+    - status: matched
+      outcome: calibration_applied
+      calibration_key: 2016-07-18__38000__config-1
+      raw_files: 9
+      time_start: '2016-07-25T20:35:35.923+00:00'
+      time_end: '2016-07-25T23:49:23.916+00:00'
+      first_file: D20160725-T203535.raw
+      last_file: D20160725-T233217.raw
+      raw_settings:
+        frequency_start: 38000.0
+        frequency_end: 38000.0
+        transmit_power: 1000.0
+        transmit_duration_nominal: 0.0010239999974146485
+      calibration_settings:
+        frequency_start: 38000.0
+        frequency_end: 38000.0
+        transmit_power: 1000.0
+        transmit_duration_nominal: 0.001024
+  GPT  70 kHz 00907206042f 5-1 ES70-7C:
+    frequency_hz: 70000.0
+    transducer_model: ES70-7C
+    transceiver_id: 00907206042f
+    segments:
+    - status: matched
+      outcome: calibration_applied
+      calibration_key: 2016-07-18__70000__config-1
+      raw_files: 9
+      time_start: '2016-07-25T20:35:35.923+00:00'
+      time_end: '2016-07-25T23:49:23.916+00:00'
+      first_file: D20160725-T203535.raw
+      last_file: D20160725-T233217.raw
+      raw_settings:
+        frequency_start: 70000.0
+        frequency_end: 70000.0
+        transmit_power: 750.0
+        transmit_duration_nominal: 0.0010239999974146485
+      calibration_settings:
+        frequency_start: 70000.0
+        frequency_end: 70000.0
+        transmit_power: 750.0
+        transmit_duration_nominal: 0.001024
+  GPT 120 kHz 0090720580f1 3-1 ES120-7:
+    frequency_hz: 120000.0
+    transducer_model: ES120-7
+    transceiver_id: 0090720580f1
+    segments:
+    - status: matched
+      outcome: calibration_applied
+      calibration_key: 2016-07-18__120000__config-1
+      raw_files: 9
+      time_start: '2016-07-25T20:35:35.923+00:00'
+      time_end: '2016-07-25T23:49:23.916+00:00'
+      first_file: D20160725-T203535.raw
+      last_file: D20160725-T233217.raw
+      raw_settings:
+        frequency_start: 120000.0
+        frequency_end: 120000.0
+        transmit_power: 500.0
+        transmit_duration_nominal: 0.0010239999974146485
+      calibration_settings:
+        frequency_start: 120000.0
+        frequency_end: 120000.0
+        transmit_power: 500.0
+        transmit_duration_nominal: 0.001024
+  GPT 200 kHz 009072034261 4-1 ES200-7:
+    frequency_hz: 200000.0
+    transducer_model: ES200-7
+    transceiver_id: 009072034261
+    segments:
+    - status: matched
+      outcome: calibration_applied
+      calibration_key: 2016-07-18__200000__config-1
+      raw_files: 9
+      time_start: '2016-07-25T20:35:35.923+00:00'
+      time_end: '2016-07-25T23:49:23.916+00:00'
+      first_file: D20160725-T203535.raw
+      last_file: D20160725-T233217.raw
+      raw_settings:
+        frequency_start: 200000.0
+        frequency_end: 200000.0
+        transmit_power: 300.0
+        transmit_duration_nominal: 0.0010239999974146485
+      calibration_settings:
+        frequency_start: 200000.0
+        frequency_end: 200000.0
+        transmit_power: 300.0
+        transmit_duration_nominal: 0.001024
+calibration_files:
+  2016-07-18__120000__config-1:
+    channel: GPT 120 kHz 0090720580f1 3-1 ES120-7
+    calibration_date: '2016-07-18'
+    frequency_hz:
+    - 120000.0
+    measured_at:
+      frequency_start: 120000.0
+      frequency_end: 120000.0
+      transmit_power: 500.0
+      transmit_duration_nominal: 0.001024
+    source_filenames:
+    - HBB_120kHz_18July2016.cal
+  2016-07-18__18000__config-1:
+    channel: GPT  18 kHz 009072056b0e 2-1 ES18-11
+    calibration_date: '2016-07-18'
+    frequency_hz:
+    - 18000.0
+    measured_at:
+      frequency_start: 18000.0
+      frequency_end: 18000.0
+      transmit_power: 1000.0
+      transmit_duration_nominal: 0.001024
+    source_filenames:
+    - HBB_018kHz_18July2016.cal
+  2016-07-18__200000__config-1:
+    channel: GPT 200 kHz 009072034261 4-1 ES200-7
+    calibration_date: '2016-07-18'
+    frequency_hz:
+    - 200000.0
+    measured_at:
+      frequency_start: 200000.0
+      frequency_end: 200000.0
+      transmit_power: 300.0
+      transmit_duration_nominal: 0.001024
+    source_filenames:
+    - HBB_200kHz_18July2016.cal
+  2016-07-18__38000__config-1:
+    channel: GPT  38 kHz 0090720346bc 1-1 ES38B
+    calibration_date: '2016-07-18'
+    frequency_hz:
+    - 38000.0
+    measured_at:
+      frequency_start: 38000.0
+      frequency_end: 38000.0
+      transmit_power: 1000.0
+      transmit_duration_nominal: 0.001024
+    source_filenames:
+    - HBB_038kHz_18July2016.cal
+  2016-07-18__70000__config-1:
+    channel: GPT  70 kHz 00907206042f 5-1 ES70-7C
+    calibration_date: '2016-07-18'
+    frequency_hz:
+    - 70000.0
+    measured_at:
+      frequency_start: 70000.0
+      frequency_end: 70000.0
+      transmit_power: 750.0
+      transmit_duration_nominal: 0.001024
+    source_filenames:
+    - HBB_070kHz_18July2016.cal

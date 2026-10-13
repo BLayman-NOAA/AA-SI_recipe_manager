@@ -300,6 +300,11 @@ class InputDeclaration(BaseModel):
     ``"raw_file_list"`` tags a directly-supplied raw file list so a recipe that
     skips the reader step still records what it read.
     """
+    warn_if_set: str | None = None
+    """Message to warn with whenever this input resolves to a value, from the
+    recipe default, the run config or the command line. For optional inputs
+    that are normally left unset, such as a debugging time window.
+    """
 
     @model_validator(mode="after")
     def set_required_from_default(self) -> InputDeclaration:

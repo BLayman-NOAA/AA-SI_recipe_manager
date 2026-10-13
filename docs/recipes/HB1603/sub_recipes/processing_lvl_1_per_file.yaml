@@ -1,0 +1,114 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/sub_recipes/processing_lvl_1_per_file.yaml
+
+# Processing level 1: raw ingest.
+#
+#   read_raw -> combine_raw
+#
+# The top of the per-file chain: one instance per file, streamed from NCEI,
+# ending at a lazily opened EchoData object. It knows nothing about
+# calibration, which is what lets the survey recipes and the raw-calibration
+# variant share it: the calibrated path continues in processing_lvl_2_survey,
+# the raw path in processing_lvl_2_raw_cal. Nothing here is checkpointed:
+# read_raw's output is a scratch store the run deletes, and the Sv in level 2
+# is what is worth caching.
+#
+# WHAT THE STEPS MAP OVER
+#
+#   per_file_source, an input the including recipe must set, normally
+#   ${query_ncei.raw_urls}: the whole catalogue, or the dive files alone when
+#   that query carries file_names. Every level that continues this chain must
+#   be given the same value, or the chain splits. The include substitutes the
+#   value into map_over textually, so the fingerprint sees the step reference
+#   and a recipe passing the catalogue hashes exactly as it did before this
+#   input existed.
+#
+# THE STEPS BELOW ARE FROZEN
+#
+#   A step's fingerprint folds in its wiring, params and parents, not the file
+#   it was declared in, so every recipe including this file addresses the same
+#   per-file checkpoints. Editing anything here invalidates the whole survey
+#   Sv. Instances are content-addressed on the raw file URL with no ordinal
+#   index, so list position does not matter; the catalogue query does.
+#
+# INCLUDE LEVELS 1 TO 3 BACK TO BACK
+#
+#   They are one chain mapped over per_file_source. A non-mapped step
+#   declared between two of them splits it, and the halves stop sharing an
+#   element context.
+
+recipe:
+  name: "hb1603_processing_lvl_1_per_file"
+  description: "Per-file raw ingest, streamed from NCEI."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  per_file_source:
+    type: str
+    description: >
+      The ${step.output} list the per-file steps map over, one instance per
+      entry. Must be overridden by the including recipe, with the same value
+      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
+      the whole catalogue, or the dive files alone when that query carries
+      file_names. Substituted textually, so the fingerprinted map_over is the
+      value passed.
+  sonar_model:
+    type: str
+    default: "EK60"
+    description: "Sonar model string for echopype."
+
+steps:
+
+  # checkpoint: never because the output is an exe_temp store path that the
+  # run deletes; the Sv below is what is worth caching. Mapping over plain URL
+  # strings keeps each instance content-addressed by its own file, so an
+  # interrupted survey resumes from what it already converted.
+  #
+  # intermediate_format IS THE RUN'S LARGEST CONSUMER OF LOCAL DISK
+  #
+  #   temp_dir/data is cleared once, when the run ends, not as instances
+  #   finish. So "zarr" and "netcdf" both leave one store per CATALOGUE FILE on
+  #   disk simultaneously - per file, not per worker, so changing the worker
+  #   count does not change the total. Measured on the three-dive smoke test:
+  #   335 files in the slice, 36+ GB in exe_temp.
+  #
+  #   "zarr" is what lets those stores live on a bucket instead, by pointing
+  #   temp_dir at a gs:// URL. "none" writes nothing at all and holds each
+  #   file's EchoData in memory, which does scale with worker count and has
+  #   read_raw_files' use_swap="auto" as its backstop.
+  #
+  #   It is a literal rather than an input on purpose: a step's fingerprint
+  #   folds in the pipeline inputs it references, so merely wiring this to an
+  #   input changes read_raw's hash and re-runs the whole survey tier even when
+  #   the value is unchanged. Editing the literal costs the same recompute, but
+  #   only when you actually change it.
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${inputs.per_file_source}
+    checkpoint: never
+    # Delete each file's intermediate store as soon as its instance finishes,
+    # instead of letting temp_dir/data grow to one store per catalogue file.
+    # Safe only while every chain member that a fan-in collects is
+    # checkpointed: the client reloads a checkpointed member from the cache when
+    # it folds the chain in, whereas an uncheckpointed member arrives as a lazy
+    # graph still rooted in the deleted store and reads back as NaN. Level 2a's
+    # crop and level 3's per-file grid and cell statistics are all checkpointed
+    # for this reason.
+    dispose_outputs: [raw_stores]
+    execution:
+      dask_config:
+        scheduler: processes
+    inputs:
+      raw_file_paths:
+        - ${_item}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: false
+      intermediate_format: "zarr"
+
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${inputs.per_file_source}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}

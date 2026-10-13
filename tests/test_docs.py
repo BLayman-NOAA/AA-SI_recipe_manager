@@ -17,8 +17,8 @@ from aa_recipe_manager import api
 from aa_recipe_manager.cli import main
 from aa_recipe_manager.docs import sources
 from aa_recipe_manager.docs.html import render_html
-from aa_recipe_manager.docs.payload import build_payload
-from aa_recipe_manager.registry.loader import load_builtin_registry
+from aa_recipe_manager.docs.payload import build_payload, strip_environment
+from aa_recipe_manager.registry.loader import experimental_ops, load_builtin_registry
 from aa_recipe_manager.registry.registry import Registry
 from conftest import make_implementation, make_spec
 
@@ -102,6 +102,38 @@ def test_untyped_param_survives(payload):
     ep_add_depth = find_op(payload, "ep_add_depth")
     params = {param["name"]: param for param in ep_add_depth["params"]}
     assert params["depth_offset"]["type"] is None
+
+
+def test_spec_file_points_into_the_package(payload):
+    assert find_op(payload, "compute_sv")["spec_file"] == (
+        "registry/builtin/specs/compute_sv.yaml"
+    )
+    assert find_op(payload, "compute_sv")["experimental"] is False
+
+
+def test_experimental_ops_are_flagged(payload):
+    flagged = {op["op"] for op in payload["ops"] if op["experimental"]}
+    assert flagged == experimental_ops()
+    assert "hdbscan_detect_seafloor" in flagged
+
+
+def test_spec_file_is_none_for_a_spec_without_a_file():
+    registry = Registry()
+    registry.register_spec(make_spec(op="bare"))
+    [op] = build_payload(registry, resolve_sources=False)["ops"]
+    assert op["spec_file"] is None
+    assert op["experimental"] is False
+
+
+def test_strip_environment_drops_machine_dependent_fields(payload):
+    stripped = strip_environment(payload)
+    assert "generator" not in stripped
+    assert "sources_resolved" not in stripped["counts"]
+    assert all(
+        "source" not in impl for op in stripped["ops"] for impl in op["implementations"]
+    )
+    # The original is left untouched.
+    assert "generator" in payload
 
 
 def test_search_blob_covers_name_and_description(payload):
@@ -305,6 +337,17 @@ def test_cli_docs_writes_file(cli_runner, tmp_path):
     assert result.exit_code == 0, result.output
     assert out.read_text(encoding="utf-8").startswith("<!doctype html")
     assert f"{len(load_builtin_registry().list_ops())} ops" in result.output
+
+
+def test_cli_site_data_check_passes_on_committed_data(cli_runner):
+    repo = Path(__file__).parent.parent
+    result = cli_runner.invoke(
+        main,
+        ["site-data", "--check", "--manifest", str(repo / "docs" / "site_recipes.yaml"),
+         "--out", str(repo / "docs" / "data")],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Site data is current." in result.output
 
 
 def test_cli_docs_writes_stdout(cli_runner, tmp_path):

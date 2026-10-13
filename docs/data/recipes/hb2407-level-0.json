@@ -1,0 +1,618 @@
+{
+  "schema": 1,
+  "slug": "hb2407-level-0",
+  "title": "HB2407 level 0, file selection and calibration mapping",
+  "recipe": {
+    "name": "processing_lvl_0_calibration",
+    "description": "Raw file selection and the survey's calibration mapping (gs:// inputs).",
+    "version": "1.0",
+    "source": "recipes/HB2407/sub_recipes/processing_lvl_0_calibration.yaml",
+    "parent": "hb2407-herring-per-file",
+    "level": 0,
+    "cruise": "HB2407"
+  },
+  "nodes": [
+    {
+      "id": "in:raw_input_folder",
+      "kind": "input",
+      "label": "inputs.raw_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Folder containing the raw acoustic files (local path or gs:// URL)."
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+    },
+    {
+      "id": "in:raw_file_names",
+      "kind": "input",
+      "label": "inputs.raw_file_names",
+      "type": "list",
+      "declared": true,
+      "required": false,
+      "default": [],
+      "description": "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\"."
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Optional inclusive ISO datetime restricting processing to raw files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Applied to both the processed file set and the calibration scan; leave unset to process every file. This bound also sets the fan-out width: one mapped instance per selected file."
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Optional inclusive ISO datetime upper bound; see file_time_start."
+    },
+    {
+      "id": "in:cal_input_folder",
+      "kind": "input",
+      "label": "inputs.cal_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Folder containing manufacturer calibration files (local path or gs:// URL)."
+    },
+    {
+      "id": "in:cruise_id",
+      "kind": "input",
+      "label": "inputs.cruise_id",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Cruise identifier used in calibration mapping."
+    },
+    {
+      "id": "in:record_author",
+      "kind": "input",
+      "label": "inputs.record_author",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "<Your Name>",
+      "description": null
+    },
+    {
+      "id": "initial_setup",
+      "kind": "step",
+      "op": "initial_setup",
+      "op_url": "ops/initial_setup/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "calibration_outputs",
+          "type": "str",
+          "units": null,
+          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "default": "calibration",
+          "set": true,
+          "value": "${inputs.calibration_outputs}"
+        },
+        {
+          "name": "raw_file_names",
+          "type": "list",
+          "units": null,
+          "description": "Explicit file name list; empty means include all files in folder",
+          "default": [],
+          "set": true,
+          "value": "${inputs.raw_file_names}"
+        },
+        {
+          "name": "clear_previous_json_logs",
+          "type": "bool",
+          "units": null,
+          "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "description": "Ordered list of absolute paths to raw acoustic files",
+          "disposed": false
+        },
+        {
+          "name": "calibration_output_dir",
+          "type": "path",
+          "description": "Resolved full path to the calibration outputs directory. Pass this to generate_standardized_cal_mapping as output_base.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "gen_cal_mapping",
+      "kind": "step",
+      "op": "generate_standardized_cal_mapping",
+      "op_url": "ops/generate_standardized_cal_mapping/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Read manufacturer calibration files, convert them to per-channel standardized files, match each raw channel to its calibration data, and return a mapping dict and a calibration dict.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing raw acoustic files; used to determine channel configuration. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw). Remote raw files are scanned one at a time: each is downloaded to local scratch, read for its channel config, and the local copy deleted before the next file is fetched.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "cal_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing manufacturer calibration files (.cal / .xml). May be a local path or a remote fsspec URL; a remote folder is downloaded to a local scratch directory for the duration of the parse (these files are small) and removed afterwards.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.cal_input_folder}"
+        },
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Root directory the standardized calibration files, mapping files, and logs are written under. Normally wired to ${initial_setup.calibration_output_dir} so calibration artifacts land beside the run's other outputs. Subdirectories are created as needed.",
+          "default": null,
+          "set": true,
+          "value": "${initial_setup.calibration_output_dir}"
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "units": null,
+          "description": "Cruise identifier recorded in every generated single-channel calibration file (e.g. \"HB1603\"), so a standardized file stays traceable to the survey it came from.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.cruise_id}"
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "units": null,
+          "description": "Name recorded as the author of every generated single-channel calibration file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.record_author}"
+        },
+        {
+          "name": "short_filenames",
+          "type": "bool",
+          "units": null,
+          "description": "Use compact names for the generated single-channel files and the keys in mapping_dict. Set false for fully descriptive names, which are easier to read and longer.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "keep_unused",
+          "type": "bool",
+          "units": null,
+          "description": "Retain standardized files not matched to any channel",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "conflict_resolution",
+          "type": "str",
+          "units": null,
+          "description": "'error' or 'interactive' when multiple cal files match a channel",
+          "default": "error",
+          "set": true,
+          "value": "error"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print progress information during mapping; implementation-specific",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime restricting the scanned raw files to those whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Should match the initial_setup window so the channel-configuration scan covers exactly the files being processed. For remote folders the filter is applied before any file is downloaded.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "description": "Maps each raw channel to its standardized calibration file path",
+          "disposed": false
+        },
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "description": "Parsed standardized calibration data keyed by channel",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:initial_setup.raw_file_paths",
+      "kind": "output",
+      "label": "initial_setup.raw_file_paths",
+      "type": "list",
+      "declared": false,
+      "from": {
+        "step": "initial_setup",
+        "output": "raw_file_paths"
+      }
+    },
+    {
+      "id": "out:gen_cal_mapping.mapping_dict",
+      "kind": "output",
+      "label": "gen_cal_mapping.mapping_dict",
+      "type": "dict",
+      "declared": false,
+      "from": {
+        "step": "gen_cal_mapping",
+        "output": "mapping_dict"
+      }
+    },
+    {
+      "id": "out:gen_cal_mapping.calibration_dict",
+      "kind": "output",
+      "label": "gen_cal_mapping.calibration_dict",
+      "type": "dict",
+      "declared": false,
+      "from": {
+        "step": "gen_cal_mapping",
+        "output": "calibration_dict"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:raw_input_folder",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "raw_input_folder",
+      "label": "raw_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "in:calibration_outputs",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "calibration_outputs",
+      "target_input": "calibration_outputs",
+      "label": "calibration_outputs",
+      "type": "str"
+    },
+    {
+      "source": "in:raw_file_names",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "raw_file_names",
+      "target_input": "raw_file_names",
+      "label": "raw_file_names",
+      "type": "list"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "in:raw_input_folder",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "raw_input_folder",
+      "label": "raw_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "in:cal_input_folder",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "cal_input_folder",
+      "target_input": "cal_input_folder",
+      "label": "cal_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "initial_setup",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "calibration_output_dir",
+      "target_input": "output_base",
+      "label": "calibration_output_dir -> output_base",
+      "type": "path"
+    },
+    {
+      "source": "in:cruise_id",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "cruise_id",
+      "target_input": "cruise_id",
+      "label": "cruise_id",
+      "type": "str"
+    },
+    {
+      "source": "in:record_author",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "record_author",
+      "target_input": "record_author",
+      "label": "record_author",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "gen_cal_mapping",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "initial_setup",
+      "target": "out:initial_setup.raw_file_paths",
+      "kind": "exit",
+      "source_output": "raw_file_paths",
+      "target_input": null,
+      "label": "raw_file_paths",
+      "type": "list"
+    },
+    {
+      "source": "gen_cal_mapping",
+      "target": "out:gen_cal_mapping.mapping_dict",
+      "kind": "exit",
+      "source_output": "mapping_dict",
+      "target_input": null,
+      "label": "mapping_dict",
+      "type": "dict"
+    },
+    {
+      "source": "gen_cal_mapping",
+      "target": "out:gen_cal_mapping.calibration_dict",
+      "kind": "exit",
+      "source_output": "calibration_dict",
+      "target_input": null,
+      "label": "calibration_dict",
+      "type": "dict"
+    }
+  ],
+  "groups": [],
+  "context": {
+    "upstream": [],
+    "downstream": [
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "read_raw",
+        "op": "read_raw_files",
+        "recipe": "hb2407-level-1",
+        "title": "HB2407 level 1, raw ingest",
+        "page": "levels/level-1/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "combine_raw",
+        "op": "combine_raw_files",
+        "recipe": "hb2407-level-1",
+        "title": "HB2407 level 1, raw ingest",
+        "page": "levels/level-1/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "extract_cal_params",
+        "op": "extract_standardized_cal_params",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "compute_sv",
+        "op": "compute_sv",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "compute_transducer_depth",
+        "op": "compute_transducer_depth",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "ep_add_depth",
+        "op": "ep_add_depth",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "detect_seafloor",
+        "op": "read_seafloor_line",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "create_seafloor_mask",
+        "op": "create_seafloor_mask",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "create_surface_mask",
+        "op": "create_surface_mask",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "combine_masks",
+        "op": "combine_masks",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:initial_setup.raw_file_paths",
+        "input": "map_over",
+        "step": "apply_mask",
+        "op": "apply_sv_mask",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:gen_cal_mapping.mapping_dict",
+        "input": "mapping_dict",
+        "step": "extract_cal_params",
+        "op": "extract_standardized_cal_params",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      },
+      {
+        "source": "out:gen_cal_mapping.calibration_dict",
+        "input": "calibration_dict",
+        "step": "extract_cal_params",
+        "op": "extract_standardized_cal_params",
+        "recipe": "hb2407-level-2",
+        "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
+        "page": "levels/level-2/"
+      }
+    ],
+    "values": {
+      "in:raw_input_folder": "(from parent input raw_input_folder)",
+      "in:file_time_start": "(from parent input file_time_start)",
+      "in:file_time_end": "(from parent input file_time_end)",
+      "in:cal_input_folder": "(from parent input cal_input_folder)",
+      "in:cruise_id": "= HB2407",
+      "in:record_author": "= <Your Name>"
+    }
+  }
+}

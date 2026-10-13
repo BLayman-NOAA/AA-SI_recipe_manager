@@ -1,0 +1,112 @@
+site_name: AA-SI Recipe Manager
+site_description: Define, share, generate and run standardized active acoustics processing recipes.
+site_url: https://blayman-noaa.github.io/AA-SI_recipe_manager/
+repo_url: https://github.com/BLayman-NOAA/AA-SI_recipe_manager
+repo_name: AA-SI_recipe_manager
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+# Partials are pulled into pages by snippets, not built as pages of their own.
+exclude_docs: |
+  data/partials/
+  gen_pages.py
+  site_recipes.yaml
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.tabs.link
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs/gen_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - def_list
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path:
+        - docs
+      check_paths: true
+
+extra_javascript:
+  - https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js
+  - assets/recipe-flow.js
+
+extra_css:
+  - assets/recipe-flow.css
+  - assets/extra.css
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Quickstart: quickstart.md
+  - Concepts:
+      - Recipes: concepts/recipes.md
+      - Wiring steps together: concepts/wiring.md
+      - Sub-recipes and includes: concepts/includes.md
+      - Per-file fan-out: concepts/fan-out.md
+      - Checkpoints and caching: concepts/caching.md
+      - Provenance: concepts/provenance.md
+  - Processing levels:
+      - levels/index.md
+      - Level 0, retrieval and calibration: levels/level-0.md
+      - Level 1, raw ingest: levels/level-1.md
+      - Level 2, calibrated Sv and cleaning: levels/level-2.md
+      - Level 3, gridding: levels/level-3.md
+      - Level 4, machine learning: levels/level-4.md
+      - Level 5, analysis products: levels/level-5.md
+      - HB1603 dive analysis: levels/hb1603-dive-analysis.md
+      - HB2407 herring, per file: levels/hb2407-herring-per-file.md
+  - Calibration:
+      - calibration/index.md
+      - Three-phase recipes: calibration/phases.md
+      - One-step recipe: calibration/fused.md
+  - Op reference: ops/
+  - Reference:
+      - CLI: reference/cli.md
+      - Running recipes and executors: reference/executors.md
+      - Config files: reference/config.md
+      - Environments: reference/environments.md
+      - Building this site: reference/site.md

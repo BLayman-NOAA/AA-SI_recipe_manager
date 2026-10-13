@@ -1,0 +1,170 @@
+# Recipes the documentation site shows. `aa-recipe site-data` reads this and
+# writes each one's flow diagram graph and Flow / YAML / Notebook tabs under
+# docs/data. Paths are relative to this folder.
+#
+#   slug     names the data files; a page embeds a recipe with
+#            --8<-- "data/partials/<slug>.md"
+#   page     the page that embeds it, used for relative links
+#   parent   the full recipe that includes this file. Its notebook tab is cut
+#            from the parent's generated notebook, and its diagram can show
+#            the steps of other levels it connects to. Without a parent, the
+#            recipe is generated on its own.
+#   level    the processing level it documents
+#   focus    for a full recipe, the steps its diagram shows; the others are
+#            drawn as context, documented by the `context` entry
+
+recipes:
+
+  - slug: quickstart
+    path: recipes/quickstart/quickstart.yaml
+    title: Quickstart
+    page: quickstart.md
+
+  # --- HB1603 dive analysis -------------------------------------------------
+
+  - slug: hb1603-dive-analysis
+    path: recipes/HB1603/dive_analysis.yaml
+    title: HB1603 dive analysis
+    cruise: HB1603
+    page: levels/hb1603-dive-analysis.md
+    description: Pooled HDBSCAN clustering of 13 sperm whale dives with per-dive SVCodes.
+
+  - slug: hb1603-dive-plan
+    path: recipes/HB1603/sub_recipes/dive_plan.yaml
+    title: HB1603 dive plan
+    parent: hb1603-dive-analysis
+    page: levels/hb1603-dive-analysis.md
+
+  - slug: hb1603-level-0
+    path: recipes/HB1603/sub_recipes/processing_lvl_0_user.yaml
+    title: HB1603 level 0, NCEI catalogue and calibration mapping
+    parent: hb1603-dive-analysis
+    level: 0
+    page: levels/level-0.md
+
+  - slug: hb1603-level-1
+    path: recipes/HB1603/sub_recipes/processing_lvl_1_per_file.yaml
+    title: HB1603 level 1, raw ingest
+    parent: hb1603-dive-analysis
+    level: 1
+    page: levels/level-1.md
+
+  - slug: hb1603-level-2
+    path: recipes/HB1603/sub_recipes/processing_lvl_2_combined.yaml
+    title: HB1603 level 2, calibrated Sv, masks and noise removal
+    parent: hb1603-dive-analysis
+    level: 2
+    page: levels/level-2.md
+
+  - slug: hb1603-level-3
+    path: recipes/HB1603/sub_recipes/processing_lvl_3_user.yaml
+    title: HB1603 level 3, gridding and per-cell statistics
+    parent: hb1603-dive-analysis
+    level: 3
+    page: levels/level-3.md
+
+  - slug: hb1603-level-4
+    path: recipes/HB1603/sub_recipes/processing_lvl_4.yaml
+    title: HB1603 level 4, clustering
+    parent: hb1603-dive-analysis
+    level: 4
+    page: levels/level-4.md
+
+  - slug: hb1603-level-5
+    path: recipes/HB1603/sub_recipes/processing_lvl_5_sv_codes.yaml
+    title: HB1603 level 5, dive SVCodes
+    parent: hb1603-dive-analysis
+    level: 5
+    page: levels/level-5.md
+
+  # --- HB2407 herring, per file ---------------------------------------------
+
+  - slug: hb2407-herring-per-file
+    path: recipes/HB2407/Herring_10-15_per_file.yaml
+    title: HB2407 herring, per file
+    cruise: HB2407
+    page: levels/hb2407-herring-per-file.md
+    description: Per-file calibration and masking, survey-wide noise removal, gridding and clustering.
+
+  - slug: hb2407-level-0
+    path: recipes/HB2407/sub_recipes/processing_lvl_0_calibration.yaml
+    title: HB2407 level 0, file selection and calibration mapping
+    parent: hb2407-herring-per-file
+    level: 0
+    page: levels/level-0.md
+
+  - slug: hb2407-level-0-ncei-download
+    path: recipes/HB2407/sub_recipes/processing_lvl_0_ncei_download.yaml
+    title: HB2407 level 0, NCEI download
+    cruise: HB2407
+    level: 0
+    page: levels/level-0.md
+
+  - slug: hb2407-level-1
+    path: recipes/HB2407/sub_recipes/processing_lvl_1_per_file.yaml
+    title: HB2407 level 1, raw ingest
+    parent: hb2407-herring-per-file
+    level: 1
+    page: levels/level-1.md
+
+  - slug: hb2407-level-2
+    path: recipes/HB2407/sub_recipes/processing_lvl_2_per_file.yaml
+    title: HB2407 level 2, calibrated Sv, masks and noise removal
+    parent: hb2407-herring-per-file
+    level: 2
+    page: levels/level-2.md
+
+  - slug: hb2407-level-3
+    path: recipes/HB2407/sub_recipes/processing_lvl_3.yaml
+    title: HB2407 level 3, gridding and per-cell statistics
+    parent: hb2407-herring-per-file
+    level: 3
+    page: levels/level-3.md
+
+  - slug: hb2407-level-4
+    path: recipes/HB2407/sub_recipes/processing_lvl_4.yaml
+    title: HB2407 level 4, clustering
+    parent: hb2407-herring-per-file
+    level: 4
+    page: levels/level-4.md
+
+  # --- Calibration stream ---------------------------------------------------
+
+  - slug: calibration-staged
+    path: recipes/calibration/calibration_pipeline_staged.yaml
+    title: Calibration pipeline, staged
+    cruise: RL2307
+    section: calibration
+    page: calibration/index.md
+
+  - slug: calibration-standardize
+    path: recipes/calibration/calibration_standardize.yaml
+    title: Calibration phase 1, standardize
+    cruise: RL2307
+    section: calibration
+    page: calibration/phases.md
+
+  # Repeats phase 1's four steps only so it can load them from phase 1's
+  # cache, so the diagram shows the mapping step and draws the rest as phase 1.
+  - slug: calibration-mapping
+    path: recipes/calibration/calibration_mapping.yaml
+    title: Calibration phase 2, mapping
+    cruise: RL2307
+    section: calibration
+    page: calibration/phases.md
+    focus: [build_cal_mapping]
+    context: calibration-standardize
+
+  - slug: calibration-save
+    path: recipes/calibration/save_calibration.yaml
+    title: Calibration phase 3, archive
+    cruise: RL2307
+    section: calibration
+    page: calibration/phases.md
+
+  - slug: calibration-fused
+    path: recipes/calibration/calibration_pipeline_fused.yaml
+    title: Calibration pipeline, one step
+    cruise: HB2407
+    section: calibration
+    page: calibration/fused.md

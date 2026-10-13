@@ -30,6 +30,7 @@ from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from aa_recipe_manager.docs.site_data import SiteDataResult
     from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
 
 
@@ -355,6 +356,39 @@ def export_op_docs(
         unresolved=unresolved_ops(payload),
         stale_links=stale_link_ops(payload),
     )
+
+
+def export_site_data(
+    manifest: str | Path = "docs/site_recipes.yaml",
+    out_dir: str | Path = "docs/data",
+    *,
+    resolve_sources: bool = True,
+) -> SiteDataResult:
+    """Write the documentation site's data files.
+
+    Args:
+        manifest: The site's recipe manifest.
+        out_dir: Folder to write the op payload, recipe graphs and tab
+            partials into.
+        resolve_sources: Import each implementation's package to link its
+            source on GitHub.
+
+    Returns:
+        A SiteDataResult listing what was written and any unresolved links.
+    """
+    from aa_recipe_manager.docs.site_data import build_site_data
+
+    return build_site_data(manifest, out_dir, resolve_sources=resolve_sources)
+
+
+def check_site_data(
+    manifest: str | Path = "docs/site_recipes.yaml",
+    out_dir: str | Path = "docs/data",
+) -> list[str]:
+    """List differences between committed site data and a fresh build."""
+    from aa_recipe_manager.docs.site_data import check_site_data as _check
+
+    return _check(manifest, out_dir)
 
 
 def create_env(

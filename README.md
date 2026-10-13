@@ -176,6 +176,23 @@ Notes:
 - Generated notebooks/scripts assume local paths; remote storage applies to
   `aa-recipe run` / `api.execute`.
 
+## Documentation
+
+The documentation site is at <https://blayman-noaa.github.io/AA-SI_recipe_manager/>,
+built from `docs/` with MkDocs. It covers installation, a quickstart, the
+recipe format, a reference page for every built-in op, and the processing
+levels of the AA-SI data road map with an interactive diagram of each level's
+sub-recipe. `docs/recipes/` holds the recipes the site documents; `examples/`
+holds older runnable examples.
+
+After changing an op spec or a documented recipe, regenerate the site's data
+with the full scientific stack installed, and commit it:
+
+```bash
+aa-recipe site-data
+pip install -e ".[docs]" && mkdocs serve   # preview
+```
+
 ## Development
 
 ```bash

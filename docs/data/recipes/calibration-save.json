@@ -1,0 +1,397 @@
+{
+  "schema": 1,
+  "slug": "calibration-save",
+  "title": "Calibration phase 3, archive",
+  "recipe": {
+    "name": "rl2307_save_calibration",
+    "description": "Archive the finished RL2307 calibration outputs to a user-specified directory.",
+    "version": "1.0",
+    "source": "recipes/calibration/save_calibration.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": "RL2307"
+  },
+  "nodes": [
+    {
+      "id": "in:single_channel_data",
+      "kind": "input",
+      "label": "inputs.single_channel_data",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "The standardized channels the mapping was built from, as returned on either phase's single_channel_data output. Read from the outputs folder when unset."
+    },
+    {
+      "id": "in:mapping_dict",
+      "kind": "input",
+      "label": "inputs.mapping_dict",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Each raw file's channels mapped to their calibration key, from phase 2's mapping_dict output. Read from the outputs folder when unset."
+    },
+    {
+      "id": "in:provenance",
+      "kind": "input",
+      "label": "inputs.provenance",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Phase 2's provenance output. Read from the outputs folder when unset."
+    },
+    {
+      "id": "in:archive_dir",
+      "kind": "input",
+      "label": "inputs.archive_dir",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Directory the calibration is archived into. A local path, or a gs:// URL for a remote client that wants the outputs kept on the bucket."
+    },
+    {
+      "id": "in:output_base",
+      "kind": "input",
+      "label": "inputs.output_base",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Calibration outputs folder to read anything left unset from. Defaults to the folder this run's own outputs directory holds, which is what a local run straight after phase 2 wants. Set it to archive the outputs of a run that happened somewhere else."
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory under the run's outputs folder the earlier phases wrote to. Only consulted when an input below is left unset. Keep it the same as in the other two phase recipes."
+    },
+    {
+      "id": "in:overwrite",
+      "kind": "input",
+      "label": "inputs.overwrite",
+      "type": "bool",
+      "declared": true,
+      "required": false,
+      "default": false,
+      "description": "Replace an archive already in archive_dir, clearing Standardized_Reports/ first."
+    },
+    {
+      "id": "save_calibration",
+      "kind": "step",
+      "op": "save_calibration_archive",
+      "op_url": "ops/save_calibration_archive/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Write the finished calibration outputs to a directory the survey keeps.\nWrites channel_mapping.yaml and calibration_provenance.yaml at the top of archive_dir, and one file per standardized channel under Standardized_Reports/ - the same files a local run writes to single_channel_calibration_files/. The channel files are named by each channel's calibration file key, which is what the mapping refers to, so the archive resolves against itself.\nEverything is rendered from the data the standardization and mapping steps return, so a caller that never sees the run's outputs folder can archive what those steps handed it. Omit an input and it is read from the outputs folder of the run in progress instead, which is how a local run archives with nothing but a directory.\narchive_dir may be a remote fsspec URL, which is the point for a client whose run directory disappears when the container does.\nMark it regenerate: always in a recipe. Its product is files outside the run's outputs directory, where the executor cannot verify them, so a cache hit would return the paths without writing anything.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "never",
+      "regenerate": "always",
+      "inputs": [
+        {
+          "name": "single_channel_data",
+          "type": "dict",
+          "required": false,
+          "description": "The standardized channels, from the standardization step's single_channel_data output. Read from single_channel_calibration_files/ under output_base when omitted.",
+          "value": "${inputs.single_channel_data}"
+        },
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "required": false,
+          "description": "Each raw file's channels mapped to their calibration key, from build_calibration_mapping. Read from mapping_files/channel_mapping.yaml under output_base when omitted. An empty mapping is an error: that is what the mapping step returns while conflicts are unresolved, and an archive that looks complete and is not is worse than a failed run.",
+          "value": "${inputs.mapping_dict}"
+        },
+        {
+          "name": "provenance",
+          "type": "dict",
+          "required": false,
+          "description": "The provenance report from build_calibration_mapping. Read from mapping_files/calibration_provenance.yaml under output_base when omitted.",
+          "value": "${inputs.provenance}"
+        }
+      ],
+      "params": [
+        {
+          "name": "archive_dir",
+          "type": "path",
+          "units": null,
+          "description": "Directory to write the archive into. May be a local path or a remote fsspec URL (e.g. gs://bucket/surveys/RL2307/calibration). Not fingerprinted: it is where this step writes, not something it reads.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.archive_dir}"
+        },
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Calibration outputs folder to read anything omitted from. Defaults to the folder the run in progress is writing, resolved the way initial_setup resolves it, so a local run after the mapping phase finds the files it just wrote.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.output_base}"
+        },
+        {
+          "name": "calibration_outputs",
+          "type": "str",
+          "units": null,
+          "description": "Subdirectory name under the run's outputs folder, used only to build the default output_base. Match the value the earlier phases ran with.",
+          "default": "calibration",
+          "set": true,
+          "value": "${inputs.calibration_outputs}"
+        },
+        {
+          "name": "overwrite",
+          "type": "bool",
+          "units": null,
+          "description": "Replace an archive already in archive_dir. Off by default: an archive directory is written once and kept, so a non-empty destination stops the run rather than overwriting it. When on, Standardized_Reports/ is cleared first, so a channel dropped during review leaves no orphan file behind.",
+          "default": false,
+          "set": true,
+          "value": "${inputs.overwrite}"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print what was written.",
+          "default": true,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "archive_dir",
+          "type": "str",
+          "description": "The directory the archive was written to.",
+          "disposed": false
+        },
+        {
+          "name": "mapping_path",
+          "type": "str",
+          "description": "Full path of the archived channel_mapping.yaml.",
+          "disposed": false
+        },
+        {
+          "name": "provenance_path",
+          "type": "str",
+          "description": "Full path of the archived calibration_provenance.yaml.",
+          "disposed": false
+        },
+        {
+          "name": "reports_dir",
+          "type": "str",
+          "description": "The Standardized_Reports folder holding the channel files.",
+          "disposed": false
+        },
+        {
+          "name": "channel_count",
+          "type": "int",
+          "description": "How many channel files were written.",
+          "disposed": false
+        },
+        {
+          "name": "files_written",
+          "type": "list",
+          "description": "Every path written, in write order, so a caller can report the archive without listing the destination.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:archive_dir",
+      "kind": "output",
+      "label": "archive_dir",
+      "type": "str",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "archive_dir"
+      }
+    },
+    {
+      "id": "out:mapping_path",
+      "kind": "output",
+      "label": "mapping_path",
+      "type": "str",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "mapping_path"
+      }
+    },
+    {
+      "id": "out:provenance_path",
+      "kind": "output",
+      "label": "provenance_path",
+      "type": "str",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "provenance_path"
+      }
+    },
+    {
+      "id": "out:reports_dir",
+      "kind": "output",
+      "label": "reports_dir",
+      "type": "str",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "reports_dir"
+      }
+    },
+    {
+      "id": "out:channel_count",
+      "kind": "output",
+      "label": "channel_count",
+      "type": "int",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "channel_count"
+      }
+    },
+    {
+      "id": "out:files_written",
+      "kind": "output",
+      "label": "files_written",
+      "type": "list",
+      "declared": true,
+      "from": {
+        "step": "save_calibration",
+        "output": "files_written"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:single_channel_data",
+      "target": "save_calibration",
+      "kind": "data",
+      "source_output": "single_channel_data",
+      "target_input": "single_channel_data",
+      "label": "single_channel_data",
+      "type": "dict"
+    },
+    {
+      "source": "in:mapping_dict",
+      "target": "save_calibration",
+      "kind": "data",
+      "source_output": "mapping_dict",
+      "target_input": "mapping_dict",
+      "label": "mapping_dict",
+      "type": "dict"
+    },
+    {
+      "source": "in:provenance",
+      "target": "save_calibration",
+      "kind": "data",
+      "source_output": "provenance",
+      "target_input": "provenance",
+      "label": "provenance",
+      "type": "dict"
+    },
+    {
+      "source": "in:archive_dir",
+      "target": "save_calibration",
+      "kind": "param",
+      "source_output": "archive_dir",
+      "target_input": "archive_dir",
+      "label": "archive_dir",
+      "type": "path"
+    },
+    {
+      "source": "in:output_base",
+      "target": "save_calibration",
+      "kind": "param",
+      "source_output": "output_base",
+      "target_input": "output_base",
+      "label": "output_base",
+      "type": "path"
+    },
+    {
+      "source": "in:calibration_outputs",
+      "target": "save_calibration",
+      "kind": "param",
+      "source_output": "calibration_outputs",
+      "target_input": "calibration_outputs",
+      "label": "calibration_outputs",
+      "type": "str"
+    },
+    {
+      "source": "in:overwrite",
+      "target": "save_calibration",
+      "kind": "param",
+      "source_output": "overwrite",
+      "target_input": "overwrite",
+      "label": "overwrite",
+      "type": "bool"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:archive_dir",
+      "kind": "exit",
+      "source_output": "archive_dir",
+      "target_input": null,
+      "label": "archive_dir",
+      "type": "str"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:mapping_path",
+      "kind": "exit",
+      "source_output": "mapping_path",
+      "target_input": null,
+      "label": "mapping_path",
+      "type": "str"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:provenance_path",
+      "kind": "exit",
+      "source_output": "provenance_path",
+      "target_input": null,
+      "label": "provenance_path",
+      "type": "str"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:reports_dir",
+      "kind": "exit",
+      "source_output": "reports_dir",
+      "target_input": null,
+      "label": "reports_dir",
+      "type": "str"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:channel_count",
+      "kind": "exit",
+      "source_output": "channel_count",
+      "target_input": null,
+      "label": "channel_count",
+      "type": "int"
+    },
+    {
+      "source": "save_calibration",
+      "target": "out:files_written",
+      "kind": "exit",
+      "source_output": "files_written",
+      "target_input": null,
+      "label": "files_written",
+      "type": "list"
+    }
+  ],
+  "groups": []
+}

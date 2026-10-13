@@ -1,0 +1,695 @@
+{
+  "schema": 1,
+  "slug": "calibration-standardize",
+  "title": "Calibration phase 1, standardize",
+  "recipe": {
+    "name": "RL2307_calibration_standardize",
+    "description": "Standardize the RL2307 manufacturer calibration files and return them for review.",
+    "version": "1.0",
+    "source": "recipes/calibration/calibration_standardize.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": "RL2307"
+  },
+  "nodes": [
+    {
+      "id": "in:raw_input_folder",
+      "kind": "input",
+      "label": "inputs.raw_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw",
+      "description": "Folder of .raw files, read for channel configuration only."
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory under the run's outputs folder for the calibration artifacts."
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2023-07-17T16:30:46",
+      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2023-07-18T19:50:19",
+      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    },
+    {
+      "id": "in:cal_input_folder",
+      "kind": "input",
+      "label": "inputs.cal_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS",
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+    },
+    {
+      "id": "in:cruise_id",
+      "kind": "input",
+      "label": "inputs.cruise_id",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "RL2307",
+      "description": "Recorded in every generated single-channel file so it stays traceable to the survey."
+    },
+    {
+      "id": "in:record_author",
+      "kind": "input",
+      "label": "inputs.record_author",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "<Your Name>",
+      "description": "Recorded as the author of every generated single-channel file."
+    },
+    {
+      "id": "in:override_channels",
+      "kind": "input",
+      "label": "inputs.override_channels",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Standardized channels to write instead of parsing the manufacturer files, as returned on standardize_cal's single_channel_data output. This is how a reviewed and edited set comes back from a caller that never sees the folder. Declared here, and left unset, in both phase recipes: an unset value hashes identically, so standardize_cal still shares its cache entry, and only a caller actually supplying edits diverges."
+    },
+    {
+      "id": "initial_setup",
+      "kind": "step",
+      "op": "initial_setup",
+      "op_url": "ops/initial_setup/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.raw_input_folder}"
+        },
+        {
+          "name": "calibration_outputs",
+          "type": "str",
+          "units": null,
+          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "default": "calibration",
+          "set": true,
+          "value": "${inputs.calibration_outputs}"
+        },
+        {
+          "name": "raw_file_names",
+          "type": "list",
+          "units": null,
+          "description": "Explicit file name list; empty means include all files in folder",
+          "default": [],
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "clear_previous_json_logs",
+          "type": "bool",
+          "units": null,
+          "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_start}"
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "units": null,
+          "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.file_time_end}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_file_paths",
+          "type": "list",
+          "description": "Ordered list of absolute paths to raw acoustic files",
+          "disposed": false
+        },
+        {
+          "name": "calibration_output_dir",
+          "type": "path",
+          "description": "Resolved full path to the calibration outputs directory. Pass this to generate_standardized_cal_mapping as output_base.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "scan_raw_config",
+      "kind": "step",
+      "op": "read_raw_file_config",
+      "op_url": "ops/read_raw_file_config/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Read ONE raw file's channel configuration from its datagram headers.\nThe fan-out unit of the calibration raw scan. Map it over initial_setup.raw_file_paths with checkpoint: always and each file becomes its own cache entry, so a run interrupted at file 400 of 500 keeps the 399 already scanned. Pair it with record_raw_file_configs, which collects the results into the survey's raw_file_configs.yaml.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "raw_file_path",
+          "type": "path",
+          "units": null,
+          "description": "One .raw file. May be a local path or a remote fsspec URL, which is downloaded to local scratch, read, and deleted before this step returns. Normally wired to ${_item}. Not fingerprinted, because the mapped item already content-addresses the instance.",
+          "default": null,
+          "set": true,
+          "value": "${_item}"
+        },
+        {
+          "name": "verify_start_time",
+          "type": "bool",
+          "units": null,
+          "description": "If true, EK80 files are additionally read with the full SimradFileReader to verify metadata_start_time, which is slower. The default single pass scan is enough for channel configuration.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print per-file progress. Worth setting false on a long fan-out, where one banner per file buries the rest of the log.",
+          "default": true,
+          "set": true,
+          "value": false
+        },
+        {
+          "name": "max_scan_bytes",
+          "type": "int",
+          "units": null,
+          "description": "Ceiling on how many leading bytes of a remote EK60 or EK80 file may be read in place of transferring it whole. The scan starts at min(8 MiB, this) and doubles up to this cap, stopping as soon as the configuration settles every channel, so a file that settles early pays only the small read and the local prefix grows in place rather than being re-read from zero.\nSize it for the deepest configuration in the survey. Too low is expensive, not wrong: a file that never settles is read whole.\nEK80: CW files settle within a fraction of a MiB; FM files sit behind much larger RAW3 payloads and scale with file size, so a survey of ~1 GiB FM files needs a cap in the tens of MiB.\nEK60 settles far earlier, and the cap doubles as the starting read, so setting it to 1 MiB turns a cruise-wide scan into one small read per file. Measured on HB1603 (52 MB files, five channels), the configuration settles at 256 KiB. Do not be tempted lower on the strength of the channel list alone: at 64 KiB every channel is already listed and looks complete, but three of the five carry CON0's configured 2000 W rather than the 500, 300 and 750 W actually transmitted. The step guards against that by requiring one RAW0 datagram per channel before it trusts a prefix, so a too-small cap costs a whole-file read rather than wrong calibration.\nBecause a prefix cannot measure them, the per-file datagram counts and gps_data come back null; last_ping_time is recovered from the file's tail. Leave unset for the whole-file read, which is also what local files and verify_start_time always get.",
+          "default": null,
+          "set": true,
+          "value": 134217728
+        }
+      ],
+      "outputs": [
+        {
+          "name": "file_config",
+          "type": "dict",
+          "description": "This file's channel configuration: filename, metadata_start_time, and one entry per channel. Null when the instrument type cannot be detected, and record_raw_file_configs drops those entries.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "record_raw_configs",
+      "kind": "step",
+      "op": "record_raw_file_configs",
+      "op_url": "ops/record_raw_file_configs/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Collect per-file channel configurations into the survey's raw config file.\nThe fan-in half of the raw scan. Drops the files that could not be read, sorts the rest by metadata_start_time, and writes raw_file_configs/raw_file_configs.yaml under the calibration output directory. Declare it with collect on the scan step's file_config output.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": true,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "file_configs",
+          "type": "dict",
+          "required": true,
+          "description": "The collected per-file configurations, normally wired to the mapped read_raw_file_config step's file_config output. Null entries are dropped.",
+          "value": "${scan_raw_config.file_config}"
+        }
+      ],
+      "params": [
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
+          "default": null,
+          "set": true,
+          "value": "${initial_setup.calibration_output_dir}"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print a summary of what was recorded.",
+          "default": true,
+          "set": false,
+          "value": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "raw_file_configs",
+          "type": "list",
+          "description": "The saved configurations, sorted by metadata_start_time. Pass to build_calibration_mapping so it need not re-read them from disk.",
+          "disposed": false
+        },
+        {
+          "name": "frequencies",
+          "type": "list",
+          "description": "Sorted unique channel frequencies in Hz. Sets the channel order for EK60 (.cal) calibration data, and is optional for EK80.",
+          "disposed": false
+        },
+        {
+          "name": "raw_configs_path",
+          "type": "path",
+          "description": "Full path of the raw_file_configs.yaml that was written. Wire it into build_calibration_mapping for the ordering dependency.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "standardize_cal",
+      "kind": "step",
+      "op": "standardize_calibration_files",
+      "op_url": "ops/standardize_calibration_files/",
+      "custom": false,
+      "extends": null,
+      "callable_path": null,
+      "description": "Convert manufacturer calibration files to standardized single-channel files.\nParses the EK60 .cal or EK80 .xml files in the calibration input folder, validates them against the standardized schema, and writes one .yaml per channel into single_channel_calibration_files/ under the calibration output directory. These per-channel files are what NCEI archives.\nThe parse is skipped when standardization.fingerprint.json shows the same manufacturer files already produced the files that are there. That sidecar answers to the manufacturer folder, so deleting a single-channel file does not bring it back, which is what the mapping step's \"error\" conflict workflow relies on.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": "always",
+      "regenerate": "if-missing",
+      "inputs": [
+        {
+          "name": "frequencies",
+          "type": "list",
+          "required": false,
+          "description": "Unique channel frequencies in Hz, normally from record_raw_file_configs. Sets the channel order for EK60 (.cal) data and is optional for EK80. Recovered from the saved raw_file_configs.yaml when omitted.",
+          "value": "${record_raw_configs.frequencies}"
+        }
+      ],
+      "params": [
+        {
+          "name": "cal_input_folder",
+          "type": "path",
+          "units": null,
+          "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80). May be a remote fsspec URL, which is downloaded whole to local scratch for the duration of the parse.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.cal_input_folder}"
+        },
+        {
+          "name": "output_base",
+          "type": "path",
+          "units": null,
+          "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
+          "default": null,
+          "set": true,
+          "value": "${initial_setup.calibration_output_dir}"
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "units": null,
+          "description": "Cruise identifier recorded in every generated single-channel file (e.g. \"HB2407\"), so a standardized file stays traceable to the survey it came from.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.cruise_id}"
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "units": null,
+          "description": "Name recorded as the author of every generated single-channel file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.record_author}"
+        },
+        {
+          "name": "short_filenames",
+          "type": "bool",
+          "units": null,
+          "description": "Use compact names for the generated single-channel files. Set false for longer, more descriptive names. The names become the calibration keys the mapping is built from, so this participates in the reuse fingerprint.",
+          "default": true,
+          "set": true,
+          "value": true
+        },
+        {
+          "name": "overwrite",
+          "type": "bool",
+          "units": null,
+          "description": "Re-parse and rewrite even when the sidecar says the existing files are current, forcing a clean rebuild of the single-channel folder.",
+          "default": false,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "units": null,
+          "description": "Print the parsed parameters and the files written.",
+          "default": true,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "override_channels",
+          "type": "dict",
+          "units": null,
+          "description": "Write these channels as the single-channel files instead of parsing the manufacturer files. Same shape as the single_channel_data output: omit an entry to discard that channel, and edit values in place to correct them. This is how a reviewed and edited set of channels comes back from a caller that has no access to the folder.\n_calibration_file_key is ignored on input, because filenames are re-derived from the supplied values and an edit can therefore rename a file. The channels are validated against the standardized schema before anything is written, and the folder is cleared first so a discarded channel leaves no orphan behind for the mapping to match. Folded into the standardization fingerprint, so changing them rewrites the folder, and a later run that parses the manufacturer files again clears what an override wrote rather than mapping both sets.",
+          "default": null,
+          "set": true,
+          "value": "${inputs.override_channels}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "single_channel_dir",
+          "type": "path",
+          "description": "Folder the single-channel files were written to. Wire it into build_calibration_mapping for the ordering dependency.",
+          "disposed": false
+        },
+        {
+          "name": "channel_count",
+          "type": "int",
+          "description": "Number of single-channel calibration files in that folder.",
+          "disposed": false
+        },
+        {
+          "name": "skipped",
+          "type": "bool",
+          "description": "True when the existing files were reused because the manufacturer files had not changed.",
+          "disposed": false
+        },
+        {
+          "name": "single_channel_data",
+          "type": "dict",
+          "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, each carrying the _calibration_file_key that the mapping is built on. Produced on the fresh parse, the reuse path and an override alike, so a caller can review the channels without reading the folder. Plain JSON types only, so it checkpoints as JSON rather than a pickle and stays eligible for the shared survey cache.",
+          "disposed": false
+        }
+      ]
+    },
+    {
+      "id": "out:single_channel_data",
+      "kind": "output",
+      "label": "single_channel_data",
+      "type": "dict",
+      "declared": true,
+      "from": {
+        "step": "standardize_cal",
+        "output": "single_channel_data"
+      }
+    },
+    {
+      "id": "out:single_channel_dir",
+      "kind": "output",
+      "label": "single_channel_dir",
+      "type": "path",
+      "declared": true,
+      "from": {
+        "step": "standardize_cal",
+        "output": "single_channel_dir"
+      }
+    },
+    {
+      "id": "out:raw_file_configs",
+      "kind": "output",
+      "label": "raw_file_configs",
+      "type": "list",
+      "declared": true,
+      "from": {
+        "step": "record_raw_configs",
+        "output": "raw_file_configs"
+      }
+    },
+    {
+      "id": "out:record_raw_configs.raw_configs_path",
+      "kind": "output",
+      "label": "record_raw_configs.raw_configs_path",
+      "type": "path",
+      "declared": false,
+      "from": {
+        "step": "record_raw_configs",
+        "output": "raw_configs_path"
+      }
+    },
+    {
+      "id": "out:standardize_cal.channel_count",
+      "kind": "output",
+      "label": "standardize_cal.channel_count",
+      "type": "int",
+      "declared": false,
+      "from": {
+        "step": "standardize_cal",
+        "output": "channel_count"
+      }
+    },
+    {
+      "id": "out:standardize_cal.skipped",
+      "kind": "output",
+      "label": "standardize_cal.skipped",
+      "type": "bool",
+      "declared": false,
+      "from": {
+        "step": "standardize_cal",
+        "output": "skipped"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:raw_input_folder",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "raw_input_folder",
+      "target_input": "raw_input_folder",
+      "label": "raw_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "in:calibration_outputs",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "calibration_outputs",
+      "target_input": "calibration_outputs",
+      "label": "calibration_outputs",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_start",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_start",
+      "target_input": "file_time_start",
+      "label": "file_time_start",
+      "type": "str"
+    },
+    {
+      "source": "in:file_time_end",
+      "target": "initial_setup",
+      "kind": "param",
+      "source_output": "file_time_end",
+      "target_input": "file_time_end",
+      "label": "file_time_end",
+      "type": "str"
+    },
+    {
+      "source": "initial_setup",
+      "target": "scan_raw_config",
+      "kind": "map_over",
+      "source_output": "raw_file_paths",
+      "target_input": "raw_file_path",
+      "label": "raw_file_paths -> _item -> raw_file_path",
+      "type": "list",
+      "group": "group:0",
+      "item_inputs": [
+        "raw_file_path"
+      ]
+    },
+    {
+      "source": "scan_raw_config",
+      "target": "record_raw_configs",
+      "kind": "collect",
+      "source_output": "file_config",
+      "target_input": "file_configs",
+      "label": "file_config -> file_configs",
+      "type": "dict"
+    },
+    {
+      "source": "initial_setup",
+      "target": "record_raw_configs",
+      "kind": "param",
+      "source_output": "calibration_output_dir",
+      "target_input": "output_base",
+      "label": "calibration_output_dir -> output_base",
+      "type": "path"
+    },
+    {
+      "source": "record_raw_configs",
+      "target": "standardize_cal",
+      "kind": "data",
+      "source_output": "frequencies",
+      "target_input": "frequencies",
+      "label": "frequencies",
+      "type": "list"
+    },
+    {
+      "source": "in:cal_input_folder",
+      "target": "standardize_cal",
+      "kind": "param",
+      "source_output": "cal_input_folder",
+      "target_input": "cal_input_folder",
+      "label": "cal_input_folder",
+      "type": "path"
+    },
+    {
+      "source": "initial_setup",
+      "target": "standardize_cal",
+      "kind": "param",
+      "source_output": "calibration_output_dir",
+      "target_input": "output_base",
+      "label": "calibration_output_dir -> output_base",
+      "type": "path"
+    },
+    {
+      "source": "in:cruise_id",
+      "target": "standardize_cal",
+      "kind": "param",
+      "source_output": "cruise_id",
+      "target_input": "cruise_id",
+      "label": "cruise_id",
+      "type": "str"
+    },
+    {
+      "source": "in:record_author",
+      "target": "standardize_cal",
+      "kind": "param",
+      "source_output": "record_author",
+      "target_input": "record_author",
+      "label": "record_author",
+      "type": "str"
+    },
+    {
+      "source": "in:override_channels",
+      "target": "standardize_cal",
+      "kind": "param",
+      "source_output": "override_channels",
+      "target_input": "override_channels",
+      "label": "override_channels",
+      "type": "dict"
+    },
+    {
+      "source": "standardize_cal",
+      "target": "out:single_channel_data",
+      "kind": "exit",
+      "source_output": "single_channel_data",
+      "target_input": null,
+      "label": "single_channel_data",
+      "type": "dict"
+    },
+    {
+      "source": "standardize_cal",
+      "target": "out:single_channel_dir",
+      "kind": "exit",
+      "source_output": "single_channel_dir",
+      "target_input": null,
+      "label": "single_channel_dir",
+      "type": "path"
+    },
+    {
+      "source": "record_raw_configs",
+      "target": "out:raw_file_configs",
+      "kind": "exit",
+      "source_output": "raw_file_configs",
+      "target_input": null,
+      "label": "raw_file_configs",
+      "type": "list"
+    },
+    {
+      "source": "record_raw_configs",
+      "target": "out:record_raw_configs.raw_configs_path",
+      "kind": "exit",
+      "source_output": "raw_configs_path",
+      "target_input": null,
+      "label": "raw_configs_path",
+      "type": "path"
+    },
+    {
+      "source": "standardize_cal",
+      "target": "out:standardize_cal.channel_count",
+      "kind": "exit",
+      "source_output": "channel_count",
+      "target_input": null,
+      "label": "channel_count",
+      "type": "int"
+    },
+    {
+      "source": "standardize_cal",
+      "target": "out:standardize_cal.skipped",
+      "kind": "exit",
+      "source_output": "skipped",
+      "target_input": null,
+      "label": "skipped",
+      "type": "bool"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${initial_setup.raw_file_paths}",
+      "label": "Runs once per item of initial_setup.raw_file_paths",
+      "source": "initial_setup",
+      "members": [
+        "scan_raw_config"
+      ]
+    }
+  ]
+}

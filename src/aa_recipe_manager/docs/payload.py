@@ -9,11 +9,13 @@ scientific package unless source resolution is asked for.
 
 from __future__ import annotations
 
+import copy
 import importlib.metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.docs import sources
+from aa_recipe_manager.registry.loader import EXPERIMENTAL_SPECS_DIR
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import (
@@ -28,6 +30,9 @@ if TYPE_CHECKING:
 PAYLOAD_SCHEMA = 1
 
 _SOURCES_DISABLED = "source links were not requested"
+
+_PACKAGE_DIR = Path(__file__).resolve().parent.parent
+_EXPERIMENTAL_DIR = EXPERIMENTAL_SPECS_DIR.resolve()
 
 
 def build_payload(
@@ -53,7 +58,10 @@ def build_payload(
 
     ops = [
         _op_entry(
-            registry.get_spec(op), _implementations(registry, op), resolve_sources
+            registry.get_spec(op),
+            _implementations(registry, op),
+            resolve_sources,
+            registry.spec_file(op),
         )
         for op in registry.list_ops()
     ]
@@ -96,6 +104,29 @@ def stale_link_ops(payload: dict[str, Any]) -> list[str]:
     ]
 
 
+def strip_environment(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy without the fields that depend on the build machine.
+
+    Source links, the generator version, and the resolved-source count all
+    vary with what is installed, so two builds of the same specs only agree
+    once these are removed.
+
+    Args:
+        payload: A payload from :func:`build_payload`.
+
+    Returns:
+        A deep copy holding only what the spec files determine.
+    """
+    stripped = copy.deepcopy(payload)
+    stripped.pop("generator", None)
+    stripped.pop("source_links", None)
+    stripped.get("counts", {}).pop("sources_resolved", None)
+    for op in stripped["ops"]:
+        for impl in op["implementations"]:
+            impl.pop("source", None)
+    return stripped
+
+
 def _generator() -> str:
     """Name and version of the package that produced a payload."""
     try:
@@ -114,13 +145,19 @@ def _implementations(registry: Registry, op: str) -> list[Implementation]:
 
 
 def _op_entry(
-    spec: Spec, implementations: list[Implementation], resolve_sources: bool
+    spec: Spec,
+    implementations: list[Implementation],
+    resolve_sources: bool,
+    spec_path: Path | None,
 ) -> dict[str, Any]:
     """One op's full documentation entry."""
+    resolved = spec_path.resolve() if spec_path is not None else None
     entry = {
         "op": spec.op,
-        "description": _clean(spec.description),
+        "description": clean_text(spec.description),
         "category": spec.category,
+        "spec_file": _package_relative(resolved),
+        "experimental": resolved is not None and resolved.parent == _EXPERIMENTAL_DIR,
         "sink": spec.sink,
         "cache_key": spec.cache_key or spec.op,
         "version": spec.version,
@@ -140,9 +177,9 @@ def _port_entry(name: str, port: PortDeclaration) -> dict[str, Any]:
     return {
         "name": name,
         "type": port.type,
-        "description": _clean(port.description),
+        "description": clean_text(port.description),
         "required": port.required,
-        "default": _json_safe(port.default),
+        "default": json_safe(port.default),
         "many": port.many,
         "expected_variables": list(port.expected_variables or []),
         "expected_coords": list(port.expected_coords or []),
@@ -156,10 +193,10 @@ def _param_entry(name: str, param: ParamDeclaration) -> dict[str, Any]:
         "name": name,
         "type": param.type,
         "units": param.units,
-        "description": _clean(param.description),
-        "default": _json_safe(param.default),
+        "description": clean_text(param.description),
+        "default": json_safe(param.default),
         "required": param.required,
-        "constraints": _json_safe(param.constraints or {}),
+        "constraints": json_safe(param.constraints or {}),
         "fingerprint_mode": param.fingerprint_mode,
     }
 
@@ -222,14 +259,23 @@ def _search_blob(entry: dict[str, Any]) -> str:
     return " ".join(" ".join(parts).split()).lower()
 
 
-def _clean(text: str | None) -> str | None:
+def _package_relative(resolved: Path | None) -> str | None:
+    """A spec file's path inside the package, or its bare name outside it."""
+    if resolved is None:
+        return None
+    if resolved.is_relative_to(_PACKAGE_DIR):
+        return resolved.relative_to(_PACKAGE_DIR).as_posix()
+    return resolved.name
+
+
+def clean_text(text: str | None) -> str | None:
     """Collapse the trailing newline a folded YAML block leaves behind."""
     if text is None:
         return None
     return str(text).strip() or None
 
 
-def _json_safe(value: Any) -> Any:
+def json_safe(value: Any) -> Any:
     """Coerce a value (including ruamel scalar subclasses) to plain JSON types."""
     if value is None or isinstance(value, bool):
         return value
@@ -240,9 +286,9 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, str):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        return {str(key): json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
+        return [json_safe(item) for item in value]
     if isinstance(value, Path):
         return str(value)
     return str(value)
