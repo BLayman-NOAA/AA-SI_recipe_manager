@@ -589,3 +589,36 @@ class TestManifest:
         # Steps that finished before the failure are still recorded.
         assert manifest["steps"]["start"]["disposition"] == "computed"
         assert "second" not in manifest["steps"]
+
+
+def test_mapped_member_served_by_the_survey_tier_reports_survey(tmp_path):
+    from aa_recipe_manager import api
+
+    recipe = Path(__file__).parent / "fixtures" / "client_recipes" / "mapped.yaml"
+    api.execute(
+        recipe,
+        user_cache_dir=CURATOR_ROOT,
+        survey_cache_dir=SURVEY_ROOT,
+        cache_write_tier="survey",
+        checkpoint_mode="eager",
+        outputs_dir=tmp_path / "curated",
+    )
+    tiers = {"user_cache_dir": USER_ROOT, "survey_cache_dir": SURVEY_ROOT}
+
+    result = api.execute(
+        recipe, targets=["proc2"], outputs_dir=tmp_path / "user", **tiers
+    )
+    record = result.step_dispositions["proc2"]
+    assert (record.disposition, record.tier) == ("hit-survey-cache", "survey")
+    manifest = json.loads((tmp_path / "user" / MANIFEST_FILENAME).read_text())
+    assert manifest["steps"]["proc2"]["tier"] == "survey"
+
+    forced = api.execute(
+        recipe,
+        targets=["proc2"],
+        force_steps=["proc2"],
+        outputs_dir=tmp_path / "forced",
+        **tiers,
+    )
+    record = forced.step_dispositions["proc"]
+    assert (record.disposition, record.tier) == ("hit-survey-cache", "survey")

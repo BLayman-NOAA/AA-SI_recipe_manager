@@ -20,6 +20,18 @@ EXAMPLES: dict[str, list[str]] = {
         "aa-recipe deps quickstart.yaml --format requirements -o requirements.txt",
     ],
     "schema": ["aa-recipe schema -o recipe.schema.json"],
+    "graph": [
+        "aa-recipe graph quickstart.yaml",
+        "aa-recipe graph quickstart.yaml --json",
+    ],
+    "ops": [
+        "aa-recipe ops",
+        "aa-recipe ops --category calibration --json",
+    ],
+    "serve": [
+        "aa-recipe serve --recipe-root recipes",
+        "aa-recipe serve --recipe-root recipes --recipe-root shared --port 8800",
+    ],
     "docs": ["aa-recipe docs --no-source-links -o op_reference.html --open"],
     "site-data": [
         "aa-recipe site-data",
@@ -35,6 +47,10 @@ EXAMPLES: dict[str, list[str]] = {
         "file_time_start=2016-07-25T21:00:00",
         "aa-recipe run survey.yaml --executor dask --dask-scheduler processes "
         "--dask-workers 4",
+        "aa-recipe run dive_analysis.yaml --to dive_sv",
+        "aa-recipe run dive_analysis.yaml --to dive_sv --only --force-step dive_sv",
+        "aa-recipe run dive_analysis.yaml --to dive_sv --events run_events.jsonl",
+        "aa-recipe run survey.yaml --cancel-file ./stop",
     ],
     "batch": [
         "aa-recipe batch per_file.yaml --input-dir gs://bucket/raw --input-name "
@@ -46,6 +62,10 @@ EXAMPLES: dict[str, list[str]] = {
         "aa-recipe clean quickstart.yaml --all",
     ],
     "explain-cache": ["aa-recipe explain-cache quickstart.yaml"],
+    "preview": [
+        "aa-recipe preview dive_analysis.yaml --to dive_sv",
+        "aa-recipe preview quickstart.yaml --json",
+    ],
 }
 
 _WIDTH = 100

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "calibration-fused",
   "title": "Calibration pipeline, one step",
   "recipe": {
@@ -100,6 +100,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "utility",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.initial_setup_and_validation",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "calibration_pipeline_fused.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
       "sink": false,
       "mapped": false,
@@ -170,13 +180,17 @@
           "name": "raw_file_paths",
           "type": "list",
           "description": "Ordered list of absolute paths to raw acoustic files",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_output_dir",
           "type": "path",
           "description": "Resolved full path to the calibration outputs directory. Pass this to generate_standardized_cal_mapping as output_base.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -188,6 +202,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.generate_standardized_cal_mapping",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "calibration_pipeline_fused.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Read manufacturer calibration files, convert them to per-channel standardized files, match each raw channel to its calibration data, and return a mapping dict and a calibration dict.",
       "sink": false,
       "mapped": false,
@@ -303,13 +327,17 @@
           "name": "mapping_dict",
           "type": "dict",
           "description": "Maps each raw channel to its standardized calibration file path",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_dict",
           "type": "dict",
           "description": "Parsed standardized calibration data keyed by channel",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -484,5 +512,6 @@
       "type": "dict"
     }
   ],
-  "groups": []
+  "groups": [],
+  "includes": []
 }

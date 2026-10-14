@@ -1,0 +1,60 @@
+# Three custom steps in a line, with one recipe input and a declared output.
+recipe:
+  name: client_flat
+  version: "1.0"
+  description: A straight chain of three custom steps.
+  schema_version: "1"
+
+inputs:
+  factor:
+    type: int
+    default: 3
+    description: Multiplier for the last step.
+
+steps:
+  - id: start
+    op: custom
+    custom_spec:
+      description: Return the constant 7.
+      callable_path: _stage9_helpers.const7
+      outputs:
+        v: {type: int}
+      output_map: {v: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: bump
+    op: custom
+    inputs:
+      x: ${start.v}
+    custom_spec:
+      description: Add one.
+      callable_path: _stage9_helpers.inc
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: scaled
+    op: custom
+    inputs:
+      x: ${bump.out}
+    params:
+      factor: ${inputs.factor}
+    custom_spec:
+      description: Multiply by a factor.
+      callable_path: _stage9_helpers.scale
+      inputs:
+        x: {type: int}
+      params:
+        factor: {type: int, default: 2}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+outputs:
+  result:
+    step_id: scaled
+    output_name: out

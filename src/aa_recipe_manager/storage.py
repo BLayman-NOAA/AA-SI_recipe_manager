@@ -193,6 +193,31 @@ class StorageLocation:
         except FileNotFoundError:
             pass
 
+    def listdir(self) -> list[StorageLocation]:
+        """Return the entries directly under this directory, sorted.
+
+        One level only, so it stays cheap on an object store where a recursive
+        glob would walk every file of every zarr store below. Empty when the
+        directory does not exist.
+        """
+        if self.is_local:
+            path = Path(self.url)
+            if not path.is_dir():
+                return []
+            return [
+                StorageLocation.parse(str(p), self.storage_options)
+                for p in sorted(path.iterdir())
+            ]
+        try:
+            names = self.fs.ls(self.fs_path.rstrip("/"), detail=False)
+        except FileNotFoundError:
+            return []
+        return [
+            StorageLocation.parse(self.fs.unstrip_protocol(n), self.storage_options)
+            for n in sorted(names)
+            if n.rstrip("/") != self.fs_path.rstrip("/")
+        ]
+
     def glob(self, pattern: str) -> list[StorageLocation]:
         if self.is_local:
             return [

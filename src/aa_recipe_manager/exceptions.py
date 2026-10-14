@@ -2,6 +2,10 @@
 # SPDX-FileCopyrightText: NOAA Fisheries
 """Package-wide exception classes."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+
 
 class RecipeParseError(Exception):
     """Raised when a recipe file cannot be read or parsed into a Recipe object."""
@@ -81,3 +85,28 @@ class PipelineExecutionError(Exception):
         self.callable_path = callable_path
         self.original = original
         super().__init__(message)
+
+
+class UnknownStepError(ValueError):
+    """Raised when a run names a step id the recipe does not have."""
+
+
+class UpstreamNotCachedError(ValueError):
+    """Raised by run only when a step besides the targets would compute.
+
+    Attributes:
+        targets: The requested targets.
+        missing: Step ids with no valid checkpoint, sorted. Direct parents of
+            the targets when any of them is missing, else deeper ancestors.
+    """
+
+    def __init__(
+        self, targets: Sequence[str], missing: Sequence[str], *, parents: bool = True
+    ) -> None:
+        self.targets = list(targets)
+        self.missing = sorted(missing)
+        what = "parents" if parents else "upstream steps"
+        super().__init__(
+            f"run only: {what} of {', '.join(self.targets)} are not cached: "
+            f"{', '.join(self.missing)}; run to the target instead"
+        )

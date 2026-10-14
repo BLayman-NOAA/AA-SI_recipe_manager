@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from ruamel.yaml import YAML
 
-from aa_recipe_manager.docs.payload import clean_text, json_safe
-from aa_recipe_manager.docs.recipe_graph import GRAPH_SCHEMA, strings_in
+from aa_recipe_manager.graph import GRAPH_SCHEMA, strings_in
+from aa_recipe_manager.plain_values import clean_text, json_safe
 from aa_recipe_manager.resolver.params import (
     input_ref_names,
     parse_input_ref,
@@ -309,6 +309,7 @@ def overview_graph(
         "nodes": [*inputs, *boxes.values()],
         "edges": edges,
         "groups": [],
+        "includes": [],
     }
 
 

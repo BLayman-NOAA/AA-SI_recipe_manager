@@ -25,6 +25,10 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.exceptions import (
+    PipelineExecutionError,
+    UpstreamNotCachedError,
+)
 from aa_recipe_manager.executor.engine.logcapture import capture_output
 from aa_recipe_manager.executor.engine.step import execute_step
 from aa_recipe_manager.executor.invocation import RuntimeContext, _ElementContext
@@ -144,6 +148,13 @@ class ChainInstanceTask:
     write_token: str | None = None
     #: The run's raw input file list (see :class:`StepTask`).
     raw_inputs: dict[str, Any] | None = None
+    #: Members whose instance key the client found in a listing of the cache,
+    #: so only these are probed. ``None`` when nothing was listed: every
+    #: readable member is probed.
+    maybe_cached: frozenset[str] | None = None
+    #: Members a step outside the chain that runs this run reads (see
+    #: :func:`running_readers`). ``None`` counts every outside reader.
+    read_outside: frozenset[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +201,9 @@ class TaskResult:
     #: completion line: disposal that silently does nothing looks exactly like
     #: disposal that is working, so the count has to be visible.
     disposed: int = 0
+    #: True when the task's output was already sent live as log events, which
+    #: is the case for a task run in a thread of the client's process.
+    streamed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +226,60 @@ def _task_temp_dir(wctx: WorkerContext, discriminator: str) -> str | None:
 
 #: Attribute holding a failed task's captured stdout, read by the runner.
 TASK_LOG_ATTR = "aa_task_log"
+#: Attribute saying a failed task's output was already sent live.
+TASK_STREAMED_ATTR = "aa_task_streamed"
+#: Attributes naming the step, instance and fan out item an error came from.
+TASK_STEP_ATTR = "aa_task_step"
+TASK_INSTANCE_ATTR = "aa_task_instance"
+TASK_ITEM_ATTR = "aa_task_item"
 
 
-def attach_task_log(exc: BaseException, text: str) -> None:
+def attribute_error(
+    exc: BaseException,
+    step_id: str,
+    instance: int | None = None,
+    item: Any = None,
+) -> None:
+    """Record on ``exc`` the step, and instance, that raised it.
+
+    An error raised while saving a checkpoint, or by a library inside a chain
+    member, does not say which member it came from; without this the runner
+    could only blame the chain's first member. The innermost record wins.
+    """
+    if getattr(exc, TASK_STEP_ATTR, None) is not None:
+        return
+    if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+        item = None
+    try:
+        setattr(exc, TASK_STEP_ATTR, step_id)
+        setattr(exc, TASK_INSTANCE_ATTR, instance)
+        setattr(exc, TASK_ITEM_ATTR, item)
+    except AttributeError:  # an exception type using __slots__
+        pass
+
+#: Live log taps of the runs in this process, by run id. A task running in a
+#: thread of the client process finds its run's tap here; a worker process
+#: finds nothing and its output travels back with the task result. A registry
+#: rather than a WorkerContext field, because Dask pickles the context even
+#: for a thread worker.
+_LIVE_LOG_TAPS: dict[str, Any] = {}
+
+
+def register_log_tap(run_id: str, tap: Any) -> None:
+    """Make ``tap`` the live log tap of the run ``run_id`` in this process."""
+    _LIVE_LOG_TAPS[run_id] = tap
+
+
+def unregister_log_tap(run_id: str) -> None:
+    """Forget the live log tap of the run ``run_id``."""
+    _LIVE_LOG_TAPS.pop(run_id, None)
+
+
+def _live_log_tap(wctx: WorkerContext) -> Any:
+    return _LIVE_LOG_TAPS.get(wctx.run_id)
+
+
+def attach_task_log(exc: BaseException, text: str, streamed: bool = False) -> None:
     """Stash a failed task's captured output on the exception it raised.
 
     A task hands back its :class:`TaskResult` (and with it ``log_text``) only on
@@ -225,6 +290,7 @@ def attach_task_log(exc: BaseException, text: str) -> None:
         return
     try:
         setattr(exc, TASK_LOG_ATTR, text)
+        setattr(exc, TASK_STREAMED_ATTR, streamed)
     except AttributeError:  # an exception type using __slots__
         pass
 
@@ -234,6 +300,7 @@ def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
     node = wctx.dag.nodes[task.step_id]
     store = wctx.open_store()
     runtime = task.closure.materialize(store)
+    tap = _live_log_tap(wctx)
 
     log_buffer = io.StringIO()
     artifact_paths: list[str] = []
@@ -255,7 +322,7 @@ def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
             temp_dir=_task_temp_dir(wctx, task.step_id),
             storage_options=wctx.storage_options,
             artifact_sink=artifact_paths,
-        ), capture_output(log_buffer):
+        ), capture_output(log_buffer, tap=tap):
             outputs = execute_step(node, runtime, wctx.pipeline_inputs)
 
             if task.checkpoint and store is not None and outputs:
@@ -271,7 +338,8 @@ def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
                 checkpointed = True
                 tier = store.write_tier
     except BaseException as exc:
-        attach_task_log(exc, log_buffer.getvalue())
+        attribute_error(exc, task.step_id)
+        attach_task_log(exc, log_buffer.getvalue(), tap is not None)
         raise
     elapsed = time.perf_counter() - start
     return TaskResult(
@@ -288,6 +356,7 @@ def run_step_task(task: StepTask, wctx: WorkerContext) -> TaskResult:
             )
         ],
         log_text=log_buffer.getvalue(),
+        streamed=tap is not None,
     )
 
 
@@ -306,10 +375,11 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
     log_buffer = io.StringIO()
     members: list[MemberResult] = []
     disposed = 0
+    streamed = _live_log_tap(wctx) is not None
     try:
         _run_chain_members(task, wctx, store, elem_ctx, log_buffer, members)
     except BaseException as exc:
-        attach_task_log(exc, log_buffer.getvalue())
+        attach_task_log(exc, log_buffer.getvalue(), streamed)
         raise
     finally:
         # Per instance, not per chain: _finalize_chain only runs once every
@@ -319,7 +389,10 @@ def run_chain_instance(task: ChainInstanceTask, wctx: WorkerContext) -> TaskResu
         # strand its scratch.
         disposed = _dispose_instance(task, wctx, elem_ctx, log_buffer)
     return TaskResult(
-        members=members, log_text=log_buffer.getvalue(), disposed=disposed
+        members=members,
+        log_text=log_buffer.getvalue(),
+        disposed=disposed,
+        streamed=streamed,
     )
 
 
@@ -340,7 +413,9 @@ def _dispose_instance(
         member = wctx.dag.nodes[mid]
         removed += dispose_step_outputs(member, elem_ctx.own_outputs(mid))
     if removed:
-        with capture_output(log_buffer):
+        with execution_context(step_id=task.member_ids[0]), capture_output(
+            log_buffer, tap=_live_log_tap(wctx)
+        ):
             print(f"disposed {removed} path(s) for instance {task.instance_index}")
     return removed
 
@@ -356,22 +431,39 @@ def _instance_discriminator_kwargs(task: ChainInstanceTask) -> dict[str, Any]:
     return disc
 
 
-def _member_instance_hash(
+def instance_cache_readable(node: Any, base_hash: str | None) -> bool:
+    """Whether a fanned out member's instance checkpoints may be read.
+
+    Any member with outputs and a hash may be served from an instance
+    checkpoint, whether or not this run's policy saves it, just as a plain
+    step loads from cache regardless of policy. ``checkpoint: never`` opts a
+    member out entirely; disposing members are always ``never``.
+
+    Args:
+        node: The member's DAG node.
+        base_hash: The member's step hash.
+
+    Returns:
+        True when the member's instance checkpoints are looked up.
+    """
+    if not base_hash or node.spec.sink or not node.spec.outputs:
+        return False
+    return node.step.checkpoint != "never"
+
+
+def member_instance_hash(
     task: ChainInstanceTask, wctx: WorkerContext, store: Any, mid: str
 ) -> str | None:
     """This instance's checkpoint address for member ``mid``, or ``None``.
 
-    ``None`` whenever the member is not checkpointed at all: no store, no base
-    hash, not among the chain's ``checkpoint_members``, or a side-effect step
-    with no outputs to store.
+    ``None`` when there is no store or the member's instance cache is not
+    readable (see :func:`instance_cache_readable`). Whether the member is
+    saved is a separate question, answered by ``task.checkpoint_members``.
     """
-    if store is None or mid not in task.checkpoint_members:
+    if store is None:
         return None
     base_hash = wctx.step_hashes.get(mid)
-    if not base_hash:
-        return None
-    member = wctx.dag.nodes[mid]
-    if member.spec.sink or not member.spec.outputs:
+    if not instance_cache_readable(wctx.dag.nodes[mid], base_hash):
         return None
     return derive_instance_hash(
         base_hash, instance_discriminator(**_instance_discriminator_kwargs(task))
@@ -380,8 +472,11 @@ def _member_instance_hash(
 
 def _resumable_members(
     task: ChainInstanceTask, wctx: WorkerContext, store: Any
-) -> set[str]:
-    """Members this instance can skip because nothing that still runs reads them.
+) -> tuple[set[str], set[str]]:
+    """Probe this instance's cache, returning ``(cached, skippable)`` members.
+
+    ``skippable`` holds the members this instance can skip because nothing
+    that still runs reads them.
 
     A chain instance runs its members in order and consults the cache one
     member at a time, so a chain whose cached members all sit near the end
@@ -408,38 +503,65 @@ def _resumable_members(
     producing a DAG edge: ``extract_edge_refs`` covers ``inputs`` and
     ``params`` including nested lists and dicts, and ``depends_on``,
     ``map_over`` and ``collect`` are edged separately by the DAG builder.
+
+    Members are probed last first. Whether a member is needed depends only on
+    the members after it, so a member already left unneeded by the hits found
+    so far is not probed at all: a chain whose last member hits costs one
+    probe per instance. A member the client's cache listing ruled out
+    (``task.maybe_cached``) is a certain miss and is not probed either.
     """
     if store is None or wctx.force:
-        return set()
+        return set(), set()
     member_ids = list(task.member_ids)
-    inside = set(member_ids)
-
-    cached = set()
-    for mid in member_ids:
-        inst_hash = _member_instance_hash(task, wctx, store, mid)
+    cached: set[str] = set()
+    for mid in reversed(member_ids):
+        if mid in wctx.force_steps:
+            continue
+        if task.maybe_cached is not None and mid not in task.maybe_cached:
+            continue
+        if mid in skippable_members(member_ids, wctx.dag, cached, task.read_outside):
+            continue
+        inst_hash = member_instance_hash(task, wctx, store, mid)
         if inst_hash is not None and store.has_checkpoint(
             mid, instance_hash=inst_hash
         ):
             cached.add(mid)
+    return cached, skippable_members(
+        member_ids, wctx.dag, cached, task.read_outside
+    )
+
+
+def skippable_members(
+    member_ids, dag, cached: set[str], read_outside=None
+) -> set[str]:
+    """Chain members that one instance can skip, given its cached members.
+
+    The rule of :func:`_resumable_members`, without the cache probes, so a plan
+    preview can apply it to predicted cache state.
+
+    Args:
+        member_ids: The chain members this instance runs, in order.
+        dag: The pipeline DAG.
+        cached: Members holding a checkpoint for this instance.
+        read_outside: Members a step outside the chain still reads. ``None``
+            counts every outside reader, whether or not it runs.
+
+    Returns:
+        The members nothing that still runs reads.
+    """
     if not cached:
         return set()
-
+    member_ids = list(member_ids)
+    inside = set(member_ids)
+    if read_outside is None:
+        read_outside = chain_external_readers(member_ids, dag)
     producers: dict[str, set[str]] = {}
-    needed = {member_ids[-1]}
-    for edge in wctx.dag.edges:
-        if edge.source_step_id not in inside:
-            continue
-        if edge.target_step_id in inside:
+    needed = {member_ids[-1]} | (set(read_outside) & inside)
+    for edge in dag.edges:
+        if edge.source_step_id in inside and edge.target_step_id in inside:
             producers.setdefault(edge.target_step_id, set()).add(edge.source_step_id)
-        else:
-            needed.add(edge.source_step_id)
-    declared = getattr(wctx.dag.recipe, "outputs", None) or {}
-    for output in declared.values():
-        step_id = getattr(output, "step_id", None)
-        if step_id in inside:
-            needed.add(step_id)
     for mid in member_ids:
-        member = wctx.dag.nodes[mid]
+        member = dag.nodes[mid]
         # A step whose value nothing reads may still be the point of the run.
         # Sinks and output-less steps exist only for their side effects, and a
         # regenerate policy is a step saying outright that running it writes
@@ -455,17 +577,20 @@ def _resumable_members(
     return inside - needed
 
 
-def chain_external_readers(member_ids, dag) -> set[str]:
+def chain_external_readers(member_ids, dag, ignored=frozenset()) -> set[str]:
     """Chain members whose outputs something outside the chain reads.
 
     Membership is by DAG edge, plus any member a recipe names in its
-    ``outputs`` block, which is a reader the edges do not show.
+    ``outputs`` block, which is a reader the edges do not show. Readers in
+    ``ignored`` (steps a targeted run never reaches) do not count.
     """
     inside = set(member_ids)
     read = {
         edge.source_step_id
         for edge in dag.edges
-        if edge.source_step_id in inside and edge.target_step_id not in inside
+        if edge.source_step_id in inside
+        and edge.target_step_id not in inside
+        and edge.target_step_id not in ignored
     }
     declared = getattr(dag.recipe, "outputs", None) or {}
     for output in declared.values():
@@ -473,6 +598,26 @@ def chain_external_readers(member_ids, dag) -> set[str]:
         if step_id in inside:
             read.add(step_id)
     return read
+
+
+def running_readers(member_ids, dag, running) -> set[str]:
+    """Chain members that a step this run runs reads from outside the chain.
+
+    A reader that is untargeted, pruned, loaded from cache or marker skipped
+    reads nothing, so it keeps no member needed. A member named in the recipe
+    outputs block always counts.
+
+    Args:
+        member_ids: The chain members the run runs.
+        dag: The pipeline DAG.
+        running: The step ids the run computes (the plan's ``must_run``).
+
+    Returns:
+        The members whose values the run still needs outside the chain.
+    """
+    return chain_external_readers(
+        member_ids, dag, frozenset(set(dag.nodes) - set(running))
+    )
 
 
 def _externally_read_members(
@@ -577,6 +722,40 @@ def _members_read_inside_chain(
     }
 
 
+def _save_member(
+    task: ChainInstanceTask,
+    store: Any,
+    mid: str,
+    inst_hash: str | None,
+    out: dict[str, Any] | None,
+    artifact_paths: list[str],
+) -> bool:
+    """Save one member's result for this instance, when the policy says so.
+
+    An empty instance (every output None, as when a time window excludes the
+    file) is saved too, as JSON nulls, so a later run finds it cached instead
+    of streaming the file again to rediscover that it is empty.
+
+    Returns:
+        True when a checkpoint was written.
+    """
+    if mid not in task.checkpoint_members or inst_hash is None or not out:
+        return False
+    store.save(
+        mid,
+        out,
+        artifacts=artifact_paths,
+        instance_hash=inst_hash,
+        instance_index=task.instance_index,
+        instance_discriminator=instance_discriminator(
+            **_instance_discriminator_kwargs(task)
+        ),
+        write_token=task.write_token,
+        raw_inputs=task.raw_inputs,
+    )
+    return True
+
+
 def _run_chain_members(
     task: ChainInstanceTask,
     wctx: WorkerContext,
@@ -586,119 +765,120 @@ def _run_chain_members(
     members: list[MemberResult],
 ) -> None:
     """Run every member of one chain instance, appending to ``members``."""
-    skippable = _resumable_members(task, wctx, store)
+    cached, skippable = _resumable_members(task, wctx, store)
     externally_read = _externally_read_members(task, wctx)
     read_in_chain = _members_read_inside_chain(task, wctx, skippable)
-    with capture_output(log_buffer):
+    with capture_output(log_buffer, tap=_live_log_tap(wctx)):
         for mid in task.member_ids:
-            if mid in skippable:
-                # Nothing still to run reads this member (see
-                # _resumable_members), so its output is never materialized. It
-                # still reports a result: the client indexes every member of
-                # every instance when it folds the chain in.
-                members.append(
-                    MemberResult(
-                        step_id=mid,
-                        disposition="skipped",
-                        tier=None,
-                        elapsed=0.0,
-                        artifacts=[],
-                        checkpointed=False,
+            try:
+                if mid in skippable:
+                    # Nothing still to run reads this member (see
+                    # _resumable_members), so its output is never materialized. It
+                    # still reports a result: the client indexes every member of
+                    # every instance when it folds the chain in.
+                    members.append(
+                        MemberResult(
+                            step_id=mid,
+                            disposition="skipped",
+                            tier=None,
+                            elapsed=0.0,
+                            artifacts=[],
+                            checkpointed=False,
+                        )
                     )
-                )
-                continue
-            member = wctx.dag.nodes[mid]
-            disc_kwargs = _instance_discriminator_kwargs(task)
-            inst_hash = _member_instance_hash(task, wctx, store, mid)
+                    continue
+                member = wctx.dag.nodes[mid]
+                inst_hash = member_instance_hash(task, wctx, store, mid)
 
-            start = time.perf_counter()
-            if (
-                inst_hash is not None
-                and not wctx.force
-                and store.has_checkpoint(mid, instance_hash=inst_hash)
-            ):
-                if mid in read_in_chain:
-                    out = store.load(mid, instance_hash=inst_hash)
-                    elem_ctx.record(mid, out or {})
-                members.append(
-                    MemberResult(
-                        step_id=mid,
-                        disposition="hit",
-                        tier=store.hit_tier(mid) or "user",
-                        elapsed=time.perf_counter() - start,
-                        artifacts=[],
-                        checkpointed=True,
-                        instance_hash=inst_hash,
+                start = time.perf_counter()
+                if mid in cached:
+                    if mid in read_in_chain:
+                        out = store.load(mid, instance_hash=inst_hash)
+                        elem_ctx.record(mid, out or {})
+                    members.append(
+                        MemberResult(
+                            step_id=mid,
+                            disposition="hit",
+                            tier=store.hit_tier(mid, instance_hash=inst_hash) or "user",
+                            elapsed=time.perf_counter() - start,
+                            artifacts=[],
+                            checkpointed=True,
+                            instance_hash=inst_hash,
+                        )
                     )
-                )
-                continue
+                    continue
 
-            if _empty_upstream(member, task, wctx, elem_ctx):
-                out = {port: None for port in (member.spec.outputs or {})}
-                elem_ctx.record(mid, out)
+                if wctx.only_targets and mid not in wctx.only_targets:
+                    raise PipelineExecutionError(
+                        mid,
+                        f"run only: instance {task.instance_index} of upstream "
+                        f"step {mid!r} is not cached",
+                        original=UpstreamNotCachedError(
+                            sorted(wctx.only_targets), [mid]
+                        ),
+                    )
+
+                if _empty_upstream(member, task, wctx, elem_ctx):
+                    out = {port: None for port in (member.spec.outputs or {})}
+                    elem_ctx.record(mid, out)
+                    saved = _save_member(task, store, mid, inst_hash, out, [])
+                    members.append(
+                        MemberResult(
+                            step_id=mid,
+                            disposition="computed",
+                            tier=store.write_tier if saved else None,
+                            elapsed=0.0,
+                            artifacts=[],
+                            checkpointed=saved,
+                            instance_hash=inst_hash,
+                            inline_outputs=None if saved else out,
+                        )
+                    )
+                    continue
+
+                artifact_paths: list[str] = []
+                checkpointed = False
+                save_seconds = 0.0
+                # store.save runs inside this execution_context too -- see the
+                # matching comment in run_step_task for why.
+                with execution_context(
+                    mode="direct",
+                    user_cache_dir=wctx.user_cache_dir,
+                    step_id=mid,
+                    artifacts_dir=wctx.outputs_dir,
+                    temp_dir=_task_temp_dir(
+                        wctx, f"{mid}-{task.instance_index}"
+                    ),
+                    storage_options=wctx.storage_options,
+                    artifact_sink=artifact_paths,
+                ):
+                    out = execute_step(
+                        member, elem_ctx, wctx.pipeline_inputs,
+                        param_overrides=task.combo,
+                    )
+
+                    save_start = time.perf_counter()
+                    checkpointed = _save_member(
+                        task, store, mid, inst_hash, out, artifact_paths
+                    )
+                    if checkpointed:
+                        save_seconds = time.perf_counter() - save_start
+                elem_ctx.record(mid, out or {})
                 members.append(
                     MemberResult(
                         step_id=mid,
                         disposition="computed",
-                        tier=None,
-                        elapsed=0.0,
-                        artifacts=[],
-                        checkpointed=False,
-                        inline_outputs=out,
-                    )
-                )
-                continue
-
-            artifact_paths: list[str] = []
-            checkpointed = False
-            save_seconds = 0.0
-            # store.save runs inside this execution_context too -- see the
-            # matching comment in run_step_task for why.
-            with execution_context(
-                mode="direct",
-                user_cache_dir=wctx.user_cache_dir,
-                step_id=mid,
-                artifacts_dir=wctx.outputs_dir,
-                temp_dir=_task_temp_dir(
-                    wctx, f"{mid}-{task.instance_index}"
-                ),
-                storage_options=wctx.storage_options,
-                artifact_sink=artifact_paths,
-            ):
-                out = execute_step(
-                    member, elem_ctx, wctx.pipeline_inputs,
-                    param_overrides=task.combo,
-                )
-
-                if inst_hash is not None and out and any(
-                    value is not None for value in out.values()
-                ):
-                    save_start = time.perf_counter()
-                    store.save(
-                        mid,
-                        out,
+                        tier=store.write_tier if checkpointed else None,
+                        elapsed=time.perf_counter() - start,
                         artifacts=artifact_paths,
+                        checkpointed=checkpointed,
                         instance_hash=inst_hash,
-                        instance_index=task.instance_index,
-                        instance_discriminator=instance_discriminator(**disc_kwargs),
-                        write_token=task.write_token,
-                        raw_inputs=task.raw_inputs,
+                        inline_outputs=_inline_outputs(
+                            out, checkpointed, mid in externally_read
+                        ),
+                        save_seconds=save_seconds,
                     )
-                    save_seconds = time.perf_counter() - save_start
-                    checkpointed = True
-            elem_ctx.record(mid, out or {})
-            members.append(
-                MemberResult(
-                    step_id=mid,
-                    disposition="computed",
-                    tier=store.write_tier if checkpointed else None,
-                    elapsed=time.perf_counter() - start,
-                    artifacts=artifact_paths,
-                    checkpointed=checkpointed,
-                    instance_hash=inst_hash,
-                    inline_outputs=_inline_outputs(
-                        out, checkpointed, mid in externally_read
-                    ),
-                    save_seconds=save_seconds,
                 )
-            )
+            except BaseException as exc:
+                attribute_error(exc, mid, task.instance_index, task.item)
+                raise

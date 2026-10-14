@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Iterable, MutableMapping, Sequence
 
+    from aa_recipe_manager.events import CancelToken, EventSink
     from aa_recipe_manager.model.types import (
         CheckpointFormat,
         CheckpointMode,
@@ -24,8 +25,10 @@ class StepRecord:
     """Per-step disposition for the run manifest.
 
     ``disposition`` is one of ``computed`` / ``hit-user-cache`` /
-    ``hit-survey-cache`` / ``pruned`` / ``marker`` / ``skipped``
-    (``skipped`` = excluded by ``--skip-sinks``).
+    ``hit-survey-cache`` / ``pruned`` / ``marker`` / ``skipped`` /
+    ``untargeted`` (``skipped`` = excluded by ``--skip-sinks``, or a mapped
+    member nothing still running reads; ``untargeted`` = outside the
+    ancestry of the run's targets).
     """
 
     disposition: str
@@ -93,6 +96,11 @@ class ExecutionResult:
         elapsed_seconds: Wall-clock duration of the whole run. Not the sum of
             the per-step times: cache probes and manifest writing are included,
             and a concurrent executor overlaps steps.
+        untargeted_steps: Step ids outside the ancestry of the run's targets.
+        targets: The steps the run was aimed at, empty for a whole run.
+        mode: ``all``, ``to`` (run to the targets) or ``only`` (run the
+            targets alone).
+        status: ``completed`` or ``cancelled``.
     """
 
     outputs: dict[str, MutableMapping[str, Any]] = field(default_factory=dict)
@@ -112,6 +120,10 @@ class ExecutionResult:
     manifest_file: Path | StorageLocation | None = None
     environment_mismatches: list[dict[str, Any]] = field(default_factory=list)
     elapsed_seconds: float = 0.0
+    untargeted_steps: list[str] = field(default_factory=list)
+    targets: tuple[str, ...] = ()
+    mode: str = "all"
+    status: str = "completed"
 
 
 @runtime_checkable
@@ -186,4 +198,11 @@ class PipelineExecutor(Protocol):
         cache_write_tier: str = "user",
         progress: ProgressCallback | None = None,
         keep_temp: bool = False,
+        targets: Iterable[str] | None = None,
+        only: bool = False,
+        force_steps: Iterable[str] = (),
+        pin_targets: bool = True,
+        events: EventSink | None = None,
+        recipe_path: str | Path | None = None,
+        cancel: CancelToken | None = None,
     ) -> ExecutionResult: ...

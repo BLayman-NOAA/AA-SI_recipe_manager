@@ -32,7 +32,6 @@ from aa_recipe_manager.docs.payload import (
     strip_environment,
     unresolved_ops,
 )
-from aa_recipe_manager.docs.recipe_graph import build_recipe_graph
 from aa_recipe_manager.docs.recipe_links import (
     Home,
     declared_inputs,
@@ -41,6 +40,7 @@ from aa_recipe_manager.docs.recipe_links import (
     page_url,
     recipe_context,
 )
+from aa_recipe_manager.graph import build_recipe_graph, strings_in
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import Recipe
@@ -276,7 +276,20 @@ def _focused(entry: ManifestEntry, recipe: Recipe) -> Recipe:
         for name, decl in (recipe.outputs or {}).items()
         if decl.step_id in entry.focus
     }
-    return recipe.model_copy(update={"steps": steps, "outputs": outputs or None})
+    text = " ".join(
+        value
+        for step in steps
+        for part in (step.inputs, step.params, step.map_over, step.collect)
+        for value in strings_in(part)
+    )
+    inputs = {
+        name: decl
+        for name, decl in recipe.inputs.items()
+        if "${inputs." + name + "}" in text
+    }
+    return recipe.model_copy(
+        update={"steps": steps, "outputs": outputs or None, "inputs": inputs}
+    )
 
 
 def _home(entry: ManifestEntry) -> Home:

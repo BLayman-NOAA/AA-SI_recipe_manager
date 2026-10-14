@@ -1,0 +1,253 @@
+{
+  "schema": 2,
+  "slug": "mapped",
+  "title": "client_mapped",
+  "recipe": {
+    "name": "client_mapped",
+    "description": "Make a list, process each item twice, and sum the results.",
+    "version": "1.0",
+    "source": "mapped.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": null
+  },
+  "nodes": [
+    {
+      "id": "seg",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.make_list",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "mapped.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Make a list of numbers.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [],
+      "outputs": [
+        {
+          "name": "items",
+          "type": "list",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "proc",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.inc",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "mapped.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Add one to the item.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "x",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${_item}",
+          "many": false,
+          "semantic": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "out",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "proc2",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.scale",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "mapped.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Double the item.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "x",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${proc.out}",
+          "many": false,
+          "semantic": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "out",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "merge",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.collect_sum",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "mapped.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Sum the per item results.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": true,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "values",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${proc2.out}",
+          "many": true,
+          "semantic": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "total",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "out:merge.total",
+      "kind": "output",
+      "label": "merge.total",
+      "type": "int",
+      "declared": false,
+      "from": {
+        "step": "merge",
+        "output": "total"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "seg",
+      "target": "proc",
+      "kind": "map_over",
+      "source_output": "items",
+      "target_input": "x",
+      "label": "items -> _item -> x",
+      "type": "list",
+      "group": "group:0",
+      "item_inputs": [
+        "x"
+      ]
+    },
+    {
+      "source": "proc",
+      "target": "proc2",
+      "kind": "data",
+      "source_output": "out",
+      "target_input": "x",
+      "label": "out -> x",
+      "type": "int"
+    },
+    {
+      "source": "proc2",
+      "target": "merge",
+      "kind": "collect",
+      "source_output": "out",
+      "target_input": "values",
+      "label": "out -> values",
+      "type": "int"
+    },
+    {
+      "source": "merge",
+      "target": "out:merge.total",
+      "kind": "exit",
+      "source_output": "total",
+      "target_input": null,
+      "label": "total",
+      "type": "int"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${seg.items}",
+      "label": "Runs once per item of seg.items",
+      "source": "seg",
+      "members": [
+        "proc",
+        "proc2"
+      ]
+    }
+  ],
+  "includes": []
+}

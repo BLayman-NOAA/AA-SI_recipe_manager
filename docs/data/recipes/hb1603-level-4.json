@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-level-4",
   "title": "HB1603 level 4, clustering",
   "recipe": {
@@ -80,6 +80,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.reshape_data_for_ml",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Reshape an MVBS Dataset into a flat, ML-ready xarray Dataset where each observation corresponds to one spatial or temporal bin.",
       "sink": false,
       "mapped": false,
@@ -94,7 +104,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Gridded MVBS Dataset to flatten, from compute_mvbs, or from add_line_overlay when a line variable should travel with it. One MVBS cell becomes one ML sample, with the channels of that cell as its features.",
-          "value": "${inputs.mvbs}"
+          "value": "${inputs.mvbs}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -140,7 +152,9 @@
           "name": "ds_ml_ready",
           "type": "Dataset",
           "description": "Flattened ML-ready Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -152,6 +166,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.add_auxiliary_features",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Append auxiliary coordinate-derived features (e.g. depth, ping_time_seconds) to the flattened ML-ready Dataset. Optional step; omit when no auxiliary features are needed.",
       "sink": false,
       "mapped": false,
@@ -166,28 +190,36 @@
           "type": "Dataset",
           "required": true,
           "description": "Flattened ML Dataset from reshape_for_ml. The new features are appended as extra columns on its feature matrix.",
-          "value": "${reshape_ml.ds_ml_ready}"
+          "value": "${reshape_ml.ds_ml_ready}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": false,
           "description": "Raw EchoData supplying the echosounder's own bottom pick, used for the 'seafloor_depth' and 'altitude' features when the seafloor_depth input is not wired. Ignored when it is.",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_sv",
           "type": "Dataset",
           "required": false,
           "description": "Dataset returned by compute_per_cell_statistics, carrying per-MVBS-cell statistic variables (e.g. cell_cv). Required when 'cell_cv' is listed in features.",
-          "value": "${inputs.cell_stats_sv}"
+          "value": "${inputs.cell_stats_sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "seafloor_depth",
           "type": "DataArray",
           "required": false,
           "description": "Pre-detected seafloor line, 1-D over ping_time, typically wired from a detect_seafloor step. Takes precedence over echodata for the 'seafloor_depth' and 'altitude' features, so the ML features use the same line the masking stack used instead of a channel mean recomputed internally. Either this or echodata is required for those features.\nIn a per-file map_over pipeline, collect the per-file lines into one survey-wide line and wire that, e.g. a merge_datasets step with collect: ${detect_seafloor.seafloor_depth}. This input does accept the raw list of per-file lines and concatenates it along ping_time in segment order, but a recipe cannot reference a mapped step from outside its chain and still resume: the runner prunes a mapped chain as a whole once the downstream fan-in is a cache hit, so the direct reference resolves on a cold run and fails on a resumed one.\nVertical reference: 'altitude' is a difference (seafloor minus sample), so a constant offset shared by both terms cancels and the frame does not matter as long as they agree. They normally do: detect_seafloor promotes its line to surface-referenced only when its ds_Sv carries depth, the same condition under which depth reaches the ML dataset, and 'altitude' prefers depth over echo_range to pair with it.",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -217,7 +249,9 @@
           "name": "ds_ml_ready",
           "type": "Dataset",
           "description": "ML-ready Dataset with auxiliary features appended",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -229,6 +263,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.normalize_data",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Normalize ML features in the flattened Dataset. Supports per-feature normalization methods via per_group_methods.",
       "sink": false,
       "mapped": false,
@@ -243,7 +287,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Flattened ML Dataset to normalize, from reshape_for_ml, or from add_auxiliary_features when auxiliary columns were appended. Those columns are on unrelated scales (metres, seconds, a coefficient of variation), which is what per_group_methods exists to handle.",
-          "value": "${add_aux_features.ds_ml_ready}"
+          "value": "${add_aux_features.ds_ml_ready}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -307,7 +353,9 @@
           "name": "ds_normalized",
           "type": "Dataset",
           "description": "Dataset with normalized feature values",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -319,6 +367,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_clustering",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.run_hdbscan",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Run HDBSCAN unsupervised clustering on normalized feature data. Pure-compute step: accepts normalized features and returns a clustering result dict without modifying any Dataset. Designed to be a sweep target for hyperparameter comparison.",
       "sink": false,
       "mapped": false,
@@ -333,7 +391,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Normalized ML Dataset from normalize_ml_data, or the single-cluster subset from filter_normalized_by_cluster for a second-pass run. Only the feature matrix is read; the Dataset is not modified.",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -451,25 +511,33 @@
           "name": "clustering_results",
           "type": "Dataset",
           "description": "Checkpoint-friendly xarray Dataset containing cluster labels, sample indices, and scalar metadata. Saved as Zarr by default.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "description": "Optional fitted clustering model used for HDBSCAN hierarchy plots. This output is intentionally separate from clustering_results so the label data can checkpoint as Zarr while the model falls back to pickle.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "background_label",
           "type": "int",
           "description": "Cluster label identified as background. Only populated when find_background_cluster is true; null otherwise.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cluster_labels",
           "type": "list",
           "description": "Sorted list of non-noise cluster labels found in this result (all labels >= 0). Provided as scaffolding for a future map_over fan-out: map_over: ${this_step.cluster_labels} will fan filter_normalized_by_cluster across every discovered cluster without any changes to the op or its spec.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -481,6 +549,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_clustering",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.assign_clusters_by_prediction",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Extend a subsampled clustering to every point in the dataset, so no cell is left unlabelled.\n``run_hdbscan`` clusters at most ``sample_size`` points, and above that the remaining points receive no label at all - they come back NaN once ``embed_clustering_results`` regrids the result. On a survey-scale ML dataset that is most of the data. This step projects the fitted structure onto the unlabelled points with hdbscan's ``approximate_predict``, which walks each point down the condensed tree the fit produced and returns the cluster it falls into, or -1 when it falls outside every cluster.\nPoints the fit did see keep their fitted label rather than a predicted one: the fit is the more authoritative answer where it exists, and only the remainder is being filled in.\nPlace it between ``run_hdbscan`` and ``embed_clustering_results``. The output is the same shape ``run_hdbscan`` produces, so everything downstream (``embed_clustering_results``, ``plot_clustering_report``, ``merge_clustering_passes``) consumes it unchanged.\nCHECKPOINTING. This step needs the fitted model, and a checkpointed clustering_results Dataset does not carry one: converting a result for Zarr drops the model and records only model_type and model_available. The clustering_model port is a plain object, so it falls back to pickle format, which the tiered store refuses to write to the shared survey tier. To checkpoint this step without pickle, set keep_model: false: the model port is then null, every output is Zarr or JSON, and a downstream plot_clustering_report simply skips the hierarchy panel. Otherwise keep this step adjacent to the run_hdbscan that feeds it, in the user tier, or set checkpoint: never and let it recompute.",
       "sink": false,
       "mapped": false,
@@ -495,21 +573,27 @@
           "type": "Dataset",
           "required": true,
           "description": "The normalized ML Dataset the clustering was run against, supplying the full feature matrix. Must be the same Dataset that fed run_hdbscan, or the sample indices will not line up and the step fails rather than silently mislabelling.",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_results",
           "type": "Dataset",
           "required": true,
           "description": "Result from run_hdbscan, holding the fitted labels and the sample indices they belong to.",
-          "value": "${run_hdbscan.clustering_results}"
+          "value": "${run_hdbscan.clustering_results}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "required": true,
           "description": "The fitted model from the same run_hdbscan step, fitted with prediction_data=True (run_hdbscan always does). Required: the step fails with a pointed message when it is null, since a checkpointed clustering_results cannot supply it.",
-          "value": "${run_hdbscan.clustering_model}"
+          "value": "${run_hdbscan.clustering_model}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -564,19 +648,25 @@
           "name": "clustering_results",
           "type": "Dataset",
           "description": "Clustering result covering every sample index in ds_normalized, in the same shape run_hdbscan produces. Carries n_fitted, n_predicted and label_source attrs recording how much of it was predicted rather than fit.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "description": "The input model, passed through so a later plotting step can take it.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cluster_labels",
           "type": "list",
           "description": "Sorted list of non-noise cluster labels present in the extended result.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -588,6 +678,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_clustering",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.embed_clustering_results",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a single result dict from run_hdbscan, or a collected list of result dicts when used with the collect pattern for ensemble runs. For a list, one cluster-label variable is embedded per collected result using deterministic names derived from ml_result_name.",
       "sink": false,
       "mapped": false,
@@ -602,14 +702,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Normalized ML Dataset to enrich with cluster-label variables",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_results",
           "type": "Dataset",
           "required": true,
           "description": "Clustering result dataset from run_hdbscan. When collect is used for ensemble runs, a list of result datasets is accepted (many: true).",
-          "value": "${label_all_points.clustering_results}"
+          "value": "${label_all_points.clustering_results}",
+          "many": true,
+          "semantic": null
         }
       ],
       "params": [
@@ -637,13 +741,17 @@
           "name": "ds_normalized",
           "type": "Dataset",
           "description": "Normalized ML Dataset enriched with cluster-label variables",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "gridded_results",
           "type": "DataArray",
           "description": "Gridded cluster labels as a DataArray for a single result, or a dict keyed by embedded result name for multi-result fan-in (many: true).",
-          "disposed": false
+          "disposed": false,
+          "many": true,
+          "semantic": null
         }
       ]
     },
@@ -655,6 +763,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.plot_clustering_report",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render a full clustering report for one or more clustering results. Produces the clustering echogram, per-cluster statistics report, and the HDBSCAN hierarchy plot when the clustering result includes a model and hierarchy plotting is applicable. This is a sink step: it produces figures with no data output.",
       "sink": true,
       "mapped": false,
@@ -669,28 +787,36 @@
           "type": "Dataset",
           "required": true,
           "description": "Embedded normalized ML Dataset containing stored cluster-label variables",
-          "value": "${embed_results.ds_normalized}"
+          "value": "${embed_results.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_results",
           "type": "Dataset",
           "required": false,
           "description": "Clustering result Dataset from run_hdbscan or assign_clusters_to_all_points. Legacy dict results and collected lists are also accepted (many: true). Optional: every panel but the HDBSCAN hierarchy reads the labels embed_clustering_results stored in ds_normalized, so a report can be drawn from that checkpointed dataset alone and the fit never has to be rerun for it. Leave it out to do that; the hierarchy panel is then skipped.",
-          "value": "${run_hdbscan.clustering_results}"
+          "value": "${run_hdbscan.clustering_results}",
+          "many": true,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "required": false,
           "description": "Optional fitted clustering model from run_hdbscan, used only for the HDBSCAN hierarchy plot. Other report panels use clustering_results.",
-          "value": "${run_hdbscan.clustering_model}"
+          "value": "${run_hdbscan.clustering_model}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv",
           "type": "Dataset",
           "required": false,
           "description": "Original Sv Dataset for echogram depth reference",
-          "value": "${inputs.mvbs}"
+          "value": "${inputs.mvbs}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1180,6 +1306,7 @@
     }
   ],
   "groups": [],
+  "includes": [],
   "context": {
     "upstream": [
       {

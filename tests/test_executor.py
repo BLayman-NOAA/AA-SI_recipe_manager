@@ -1496,7 +1496,8 @@ class TestCheckpointing:
             "multiply",
         ]
         assert any(
-            "resume frontier limited by uncheckpointed step(s): first" in log
+            "these steps are not saved, so later runs start before them: first"
+            in log
             for log in result.logs
         )
 

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-level-0",
   "title": "HB1603 level 0, NCEI catalogue and calibration mapping",
   "recipe": {
@@ -113,6 +113,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "data_retrieval",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.data_retrieval.query_ncei_data",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_0_user.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
       "sink": false,
       "mapped": false,
@@ -167,19 +177,25 @@
           "name": "ncei_results",
           "type": "list",
           "description": "List of NCEI file metadata records (dicts) matching the query",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "query_label",
           "type": "str",
           "description": "Readable, folder-safe slug derived from the query parameters. Intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "raw_urls",
           "type": "list",
           "description": "Public HTTPS URL of each record's .raw object, in record order. For steps that read a file in place rather than downloading it, such as read_raw_file_config with max_scan_bytes: map over this and each instance range-reads the leading bytes of one file, with nothing transferred whole and nothing left on disk.\nPlain strings, so a mapped instance is content-addressed by its URL and dedupes across runs the same way a raw file path does. Built rather than probed, so a record whose object is not stored as <key>.raw fails on read instead of costing a HEAD request per file.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -191,6 +207,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.read_raw_file_config",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "processing_lvl_0_user.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Read ONE raw file's channel configuration from its datagram headers.\nThe fan-out unit of the calibration raw scan. Map it over initial_setup.raw_file_paths with checkpoint: always and each file becomes its own cache entry, so a run interrupted at file 400 of 500 keeps the 399 already scanned. Pair it with record_raw_file_configs, which collects the results into the survey's raw_file_configs.yaml.",
       "sink": false,
       "mapped": true,
@@ -243,7 +269,9 @@
           "name": "file_config",
           "type": "dict",
           "description": "This file's channel configuration: filename, metadata_start_time, and one entry per channel. Null when the instrument type cannot be detected, and record_raw_file_configs drops those entries.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -255,6 +283,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.record_raw_file_configs",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "processing_lvl_0_user.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Collect per-file channel configurations into the survey's raw config file.\nThe fan-in half of the raw scan. Drops the files that could not be read, sorts the rest by metadata_start_time, and writes raw_file_configs/raw_file_configs.yaml under the calibration output directory. Declare it with collect on the scan step's file_config output.",
       "sink": false,
       "mapped": false,
@@ -269,7 +307,9 @@
           "type": "dict",
           "required": true,
           "description": "The collected per-file configurations, normally wired to the mapped read_raw_file_config step's file_config output. Null entries are dropped.",
-          "value": "${scan_raw_config.file_config}"
+          "value": "${scan_raw_config.file_config}",
+          "many": true,
+          "semantic": null
         }
       ],
       "params": [
@@ -297,19 +337,25 @@
           "name": "raw_file_configs",
           "type": "list",
           "description": "The saved configurations, sorted by metadata_start_time. Pass to build_calibration_mapping so it need not re-read them from disk.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "frequencies",
           "type": "list",
           "description": "Sorted unique channel frequencies in Hz. Sets the channel order for EK60 (.cal) calibration data, and is optional for EK80.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "raw_configs_path",
           "type": "path",
           "description": "Full path of the raw_file_configs.yaml that was written. Wire it into build_calibration_mapping for the ordering dependency.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -321,6 +367,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.standardize_calibration_files",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "processing_lvl_0_user.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Convert manufacturer calibration files to standardized single-channel files.\nParses the EK60 .cal or EK80 .xml files in the calibration input folder, validates them against the standardized schema, and writes one .yaml per channel into single_channel_calibration_files/ under the calibration output directory. These per-channel files are what NCEI archives.\nThe parse is skipped when standardization.fingerprint.json shows the same manufacturer files already produced the files that are there. That sidecar answers to the manufacturer folder, so deleting a single-channel file does not bring it back, which is what the mapping step's \"error\" conflict workflow relies on.",
       "sink": false,
       "mapped": false,
@@ -335,7 +391,9 @@
           "type": "list",
           "required": false,
           "description": "Unique channel frequencies in Hz, normally from record_raw_file_configs. Sets the channel order for EK60 (.cal) data and is optional for EK80. Recovered from the saved raw_file_configs.yaml when omitted.",
-          "value": "${record_raw_configs.frequencies}"
+          "value": "${record_raw_configs.frequencies}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -417,25 +475,33 @@
           "name": "single_channel_dir",
           "type": "path",
           "description": "Folder the single-channel files were written to. Wire it into build_calibration_mapping for the ordering dependency.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "channel_count",
           "type": "int",
           "description": "Number of single-channel calibration files in that folder.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "skipped",
           "type": "bool",
           "description": "True when the existing files were reused because the manufacturer files had not changed.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "single_channel_data",
           "type": "dict",
           "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, each carrying the _calibration_file_key that the mapping is built on. Produced on the fresh parse, the reuse path and an override alike, so a caller can review the channels without reading the folder. Plain JSON types only, so it checkpoints as JSON rather than a pickle and stays eligible for the shared survey cache.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -447,6 +513,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.build_calibration_mapping",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "processing_lvl_0_user.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Match each raw channel to its calibration data and save the mapping files.\nLoads the raw file configurations and the standardized single-channel files, runs the matching algorithm, moves aside any calibration file no raw channel matched, resolves conflicts, writes mapping_files/channel_mapping.yaml, calibration_configurations.yaml and calibration_provenance.yaml, and verifies the result.\nReads the single-channel files from disk rather than taking them as data. The mapping keys are those files' names, which only the on-disk loader attaches, and this step rewrites that folder.\nMark it regenerate: always in a recipe. Its real product is the files on disk, and a hand-deleted single-channel file cannot change a cache key computed before the run, so a cache hit would return the dictionaries without re-reading the folder. The step is cheap: a few small local YAML reads and the matcher.",
       "sink": false,
       "mapped": false,
@@ -461,7 +537,9 @@
           "type": "list",
           "required": false,
           "description": "The raw file configurations to map, normally from record_raw_file_configs. Read from the saved raw_file_configs.yaml under output_base when omitted.",
-          "value": "${record_raw_configs.raw_file_configs}"
+          "value": "${record_raw_configs.raw_file_configs}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -579,49 +657,65 @@
           "name": "mapping_dict",
           "type": "dict",
           "description": "Maps each raw file's channels to their calibration key, keyed by filename then channel_id. Feed to extract_standardized_cal_params.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_dict",
           "type": "dict",
           "description": "Parsed standardized calibration data keyed by calibration key. Holds the values themselves. Feed to extract_standardized_cal_params.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "missing_params",
           "type": "dict",
           "description": "Calibration keys mapped to the required parameters they are missing. An empty dict means every required parameter is present.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "unused_files",
           "type": "list",
           "description": "Names of single-channel calibration files the mapping does not reference, including the ones this run moved aside. An empty list means every calibration file matched a raw channel, so a non-empty one is the signal that a channel went unmapped. Under \"report\" no mapping exists to check against, so this carries only the files the run moved aside.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance",
           "type": "dict",
           "description": "Per-channel account of what calibration was applied over which stretch of the cruise, and why. Each channel carries segments, one per run of raw files that behaved the same way, with a time range, the raw and calibration settings behind it, and an outcome: the calibration was applied, it was applied only because a tolerance was widened, or nothing matched and the channel fell back or stopped the run. A cruise of thousands of files reports as a handful of segments per channel.\nJSON-safe, so a server can hand it to a client without reading the file off disk. The same content is written to mapping_files/calibration_provenance.yaml.\nComplete whatever happens downstream: the mapping stage sees every file in the catalogue, so this covers the whole cruise even when the per-file tier that consumes the mapping is still running or stopped early.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance_path",
           "type": "str",
           "description": "Where the provenance report was written as YAML, under mapping_files/ in output_base.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "conflicts",
           "type": "dict",
           "description": "Unresolved multiple-match conflicts, keyed by a stable conflict id. Each carries the candidate calibration keys, a summary of every candidate, the raw files and channel ids it affects, and distinguishing_fields naming what actually differs between the candidates. That list excludes the fields two calibration records differ in by construction, such as the source filename and the created timestamp, so it names only what a reviewer has to weigh. It is empty when the candidates match everywhere it matters. Only populated under conflict_resolution \"report\"; empty when the mapping completed. A non-empty value means no mapping file was written, so feed the choices back as calibration_choices and run the step again.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "single_channel_data",
           "type": "dict",
           "description": "{\"channels\": [...]}, the standardized channels the mapping was built from plus any record averaged from several of them, each carrying its _calibration_file_key. Every key in mapping_dict names one of them, so this, not the standardization step's payload, is what to hand to save_calibration_archive once an average has been chosen. JSON-safe.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1057,6 +1151,7 @@
       ]
     }
   ],
+  "includes": [],
   "context": {
     "upstream": [],
     "downstream": [

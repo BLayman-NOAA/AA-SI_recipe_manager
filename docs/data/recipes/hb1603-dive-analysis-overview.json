@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-dive-analysis-overview",
   "title": "HB1603 dive analysis",
   "overview": true,
@@ -305,5 +305,6 @@
       "type": "str"
     }
   ],
-  "groups": []
+  "groups": [],
+  "includes": []
 }

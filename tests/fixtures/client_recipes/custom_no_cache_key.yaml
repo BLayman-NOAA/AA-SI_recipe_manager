@@ -1,0 +1,33 @@
+# The two ways a custom step is fingerprinted: by callable, or by cache_key.
+recipe:
+  name: client_custom_no_cache_key
+  version: "1.0"
+  description: One custom step without a cache_key and one with.
+  schema_version: "1"
+
+steps:
+  - id: plain
+    op: custom
+    custom_spec:
+      description: Return the constant 7.
+      callable_path: _stage9_helpers.const7
+      outputs:
+        v: {type: int}
+      output_map: {v: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: keyed
+    op: custom
+    inputs:
+      x: ${plain.v}
+    custom_spec:
+      description: Add one.
+      callable_path: _stage9_helpers.inc
+      cache_key: keyed_v1
+      version: "1"
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

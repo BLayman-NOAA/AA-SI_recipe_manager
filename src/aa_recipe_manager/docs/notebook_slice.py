@@ -97,7 +97,7 @@ def _placeholder_paths(
         that feed path params, and each placeholder mapped to the text the
         notebook normally shows in its place.
     """
-    from aa_recipe_manager.docs.recipe_graph import step_spec
+    from aa_recipe_manager.graph import step_spec
     from aa_recipe_manager.storage import is_remote_url
 
     inputs: dict[str, str] = {}

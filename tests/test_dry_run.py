@@ -299,3 +299,27 @@ class TestDryRunPublicAPI:
             step for step in report.resolved_steps if step.step_id == "setup_files"
         )
         assert setup_step.params["raw_input_folder"] == override_dir.as_posix()
+
+    def test_api_dry_run_accepts_custom_step_without_dependency(self, tmp_path):
+        p = _write_recipe(
+            tmp_path,
+            """\
+            recipe: {name: no_dep, version: "1.0", schema_version: "1"}
+            steps:
+              - id: plain
+                op: custom
+                custom_spec:
+                  description: Return the constant 7.
+                  callable_path: _stage9_helpers.const7
+                  outputs:
+                    v: {type: int}
+                  output_map: {v: __return__}
+            """,
+        )
+        report = aa_recipe_manager.dry_run(p, check_versions=True)
+        assert report.is_valid, report.errors
+        (step,) = report.resolved_steps
+        assert step.package_name is None
+        assert step.version_status == "ok"
+        (line,) = [ln for ln in report.format_text().splitlines() if "plain" in ln]
+        assert line.endswith("custom [OK]")

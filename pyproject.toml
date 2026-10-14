@@ -50,6 +50,14 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
     "jsonschema>=4.0",
+    "httpx>=0.27",
+    # The client server tests import FastAPI.
+    "fastapi>=0.115",
+]
+# FastAPI server for the browser client (aa-recipe serve).
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 # Google Cloud Storage backend for checkpoint cache / exe_temp / outputs on
 # gs:// URLs. gcsfs registers the fsspec "gs" protocol; credentials come from
@@ -106,10 +114,14 @@ Changelog = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager/blob/main/CHAN
 include = [
     "/src",
     "/tests",
+    "/web",
 ]
+exclude = ["/web/node_modules"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aa_recipe_manager"]
+# The built web client is gitignored, so it is listed here to be packaged.
+artifacts = ["src/aa_recipe_manager/server/static/"]
 
 [tool.hatch.metadata]
 # Required so the `all-builtin-specs` extra can pull in dependencies hosted on

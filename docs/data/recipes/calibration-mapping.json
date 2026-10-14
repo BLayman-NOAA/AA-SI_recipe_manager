@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "calibration-mapping",
   "title": "Calibration phase 2, mapping",
   "recipe": {
@@ -74,6 +74,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.build_calibration_mapping",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "calibration_mapping.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Match each raw channel to its calibration data and save the mapping files.\nLoads the raw file configurations and the standardized single-channel files, runs the matching algorithm, moves aside any calibration file no raw channel matched, resolves conflicts, writes mapping_files/channel_mapping.yaml, calibration_configurations.yaml and calibration_provenance.yaml, and verifies the result.\nReads the single-channel files from disk rather than taking them as data. The mapping keys are those files' names, which only the on-disk loader attaches, and this step rewrites that folder.\nMark it regenerate: always in a recipe. Its real product is the files on disk, and a hand-deleted single-channel file cannot change a cache key computed before the run, so a cache hit would return the dictionaries without re-reading the folder. The step is cheap: a few small local YAML reads and the matcher.",
       "sink": false,
       "mapped": false,
@@ -88,7 +98,9 @@
           "type": "list",
           "required": false,
           "description": "The raw file configurations to map, normally from record_raw_file_configs. Read from the saved raw_file_configs.yaml under output_base when omitted.",
-          "value": "${record_raw_configs.raw_file_configs}"
+          "value": "${record_raw_configs.raw_file_configs}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -206,49 +218,65 @@
           "name": "mapping_dict",
           "type": "dict",
           "description": "Maps each raw file's channels to their calibration key, keyed by filename then channel_id. Feed to extract_standardized_cal_params.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_dict",
           "type": "dict",
           "description": "Parsed standardized calibration data keyed by calibration key. Holds the values themselves. Feed to extract_standardized_cal_params.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "missing_params",
           "type": "dict",
           "description": "Calibration keys mapped to the required parameters they are missing. An empty dict means every required parameter is present.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "unused_files",
           "type": "list",
           "description": "Names of single-channel calibration files the mapping does not reference, including the ones this run moved aside. An empty list means every calibration file matched a raw channel, so a non-empty one is the signal that a channel went unmapped. Under \"report\" no mapping exists to check against, so this carries only the files the run moved aside.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance",
           "type": "dict",
           "description": "Per-channel account of what calibration was applied over which stretch of the cruise, and why. Each channel carries segments, one per run of raw files that behaved the same way, with a time range, the raw and calibration settings behind it, and an outcome: the calibration was applied, it was applied only because a tolerance was widened, or nothing matched and the channel fell back or stopped the run. A cruise of thousands of files reports as a handful of segments per channel.\nJSON-safe, so a server can hand it to a client without reading the file off disk. The same content is written to mapping_files/calibration_provenance.yaml.\nComplete whatever happens downstream: the mapping stage sees every file in the catalogue, so this covers the whole cruise even when the per-file tier that consumes the mapping is still running or stopped early.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance_path",
           "type": "str",
           "description": "Where the provenance report was written as YAML, under mapping_files/ in output_base.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "conflicts",
           "type": "dict",
           "description": "Unresolved multiple-match conflicts, keyed by a stable conflict id. Each carries the candidate calibration keys, a summary of every candidate, the raw files and channel ids it affects, and distinguishing_fields naming what actually differs between the candidates. That list excludes the fields two calibration records differ in by construction, such as the source filename and the created timestamp, so it names only what a reviewer has to weigh. It is empty when the candidates match everywhere it matters. Only populated under conflict_resolution \"report\"; empty when the mapping completed. A non-empty value means no mapping file was written, so feed the choices back as calibration_choices and run the step again.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "single_channel_data",
           "type": "dict",
           "description": "{\"channels\": [...]}, the standardized channels the mapping was built from plus any record averaged from several of them, each carrying its _calibration_file_key. Every key in mapping_dict names one of them, so this, not the standardization step's payload, is what to hand to save_calibration_archive once an average has been chosen. JSON-safe.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -479,6 +507,7 @@
     }
   ],
   "groups": [],
+  "includes": [],
   "context": {
     "upstream": [
       {

@@ -8,10 +8,13 @@ import json
 
 import pytest
 
-from aa_recipe_manager.docs.recipe_graph import build_recipe_graph
 from aa_recipe_manager.exceptions import SpecNotFoundError
+from aa_recipe_manager.graph import build_recipe_graph
 from aa_recipe_manager.model.types import (
     CustomSpec,
+    Dependency,
+    Implementation,
+    IncludeBlock,
     InputDeclaration,
     OutputDeclaration,
     ParamDeclaration,
@@ -295,6 +298,8 @@ def test_step_node_lists_ports_and_params_as_written(registry):
         "required": True,
         "description": None,
         "value": None,
+        "many": False,
+        "semantic": None,
     }
     [param] = node["params"]
     assert (
@@ -368,3 +373,163 @@ def test_graph_is_json_safe_and_stable(registry):
     first = graph(recipe, registry)
     assert json.loads(json.dumps(first)) == first
     assert graph(recipe, registry) == first
+
+
+def test_schema_is_2_and_includes_is_a_list(registry):
+    g = graph(make_recipe(steps=[make_step(id="r", op="read")]), registry)
+    assert g["schema"] == 2
+    assert g["includes"] == []
+    node = nodes(g)["r"]
+    assert (node["include"], node["document"], node["editable"]) == (
+        None,
+        "t.yaml",
+        False,
+    )
+
+
+def test_include_tree_from_include_blocks(registry):
+    recipe = make_recipe(
+        steps=[
+            make_step(id="x", op="read"),
+            make_step(id="y", op="combine", inputs={"stores": "${x.stores}"}),
+            make_step(id="z", op="sv", inputs={"echodata": "${y.echodata}"}),
+        ],
+        include_blocks=[
+            IncludeBlock(source="b.yaml", path="sub/b.yaml", step_ids=["y"]),
+            IncludeBlock(
+                source="a.yaml",
+                path="sub/a.yaml",
+                step_ids=["x", "y"],
+                overrides={"k": 1},
+                bindings={"k": [{"step": "x", "slot": "params.k"}]},
+            ),
+        ],
+    )
+    g = graph(recipe, registry)
+    b, a = g["includes"]
+    assert a["bindings"] == {"k": [{"step": "x", "slot": "params.k"}]}
+    assert b["bindings"] == {}
+    assert (b["id"], b["parent"], b["position"]) == (
+        "inc:sub/b.yaml",
+        "inc:sub/a.yaml",
+        1,
+    )
+    assert (a["id"], a["parent"], a["position"]) == ("inc:sub/a.yaml", None, 0)
+    assert a["title"] == "a"
+    assert a["overrides"] == {"k": 1}
+    assert a["consumed"] == [{"step": "y", "output": "echodata", "by": ["z"]}]
+    assert b["consumed"] == [{"step": "y", "output": "echodata", "by": ["z"]}]
+    by_id = nodes(g)
+    assert (by_id["x"]["include"], by_id["x"]["document"]) == (
+        "inc:sub/a.yaml",
+        "sub/a.yaml",
+    )
+    assert (by_id["y"]["include"], by_id["y"]["document"]) == (
+        "inc:sub/b.yaml",
+        "sub/b.yaml",
+    )
+    assert (by_id["z"]["include"], by_id["z"]["document"]) == (None, "t.yaml")
+
+
+def test_wrapper_include_with_the_same_steps_is_the_parent(registry):
+    recipe = make_recipe(
+        steps=[make_step(id="x", op="read")],
+        include_blocks=[
+            IncludeBlock(source="leaf.yaml", path="leaf.yaml", step_ids=["x"]),
+            IncludeBlock(source="mid.yaml", path="mid.yaml", step_ids=["x"]),
+            IncludeBlock(source="top.yaml", path="top.yaml", step_ids=["x"]),
+        ],
+    )
+    g = graph(recipe, registry)
+    parents = {include["id"]: include["parent"] for include in g["includes"]}
+    assert parents == {
+        "inc:leaf.yaml": "inc:mid.yaml",
+        "inc:mid.yaml": "inc:top.yaml",
+        "inc:top.yaml": None,
+    }
+    assert nodes(g)["x"]["include"] == "inc:leaf.yaml"
+
+
+def test_unreferenced_declared_input_gets_a_node(registry):
+    recipe = make_recipe(
+        steps=[make_step(id="x", op="read")],
+        inputs={"unused": InputDeclaration(type="int", default=2)},
+    )
+    node = nodes(graph(recipe, registry))["in:unused"]
+    assert (node["kind"], node["declared"], node["default"]) == ("input", True, 2)
+
+
+def test_include_without_steps_in_the_recipe_is_dropped(registry):
+    recipe = make_recipe(
+        steps=[make_step(id="x", op="read")],
+        include_blocks=[IncludeBlock(source="gone.yaml", step_ids=["focused_out"])],
+    )
+    assert graph(recipe, registry)["includes"] == []
+
+
+def test_hashes_are_attached_when_given(registry):
+    recipe = make_recipe(
+        steps=[make_step(id="r", op="read"), make_step(id="s", op="sv")]
+    )
+    plain = nodes(graph(recipe, registry), "step")
+    assert [n["hash"] for n in plain.values()] == [None, None]
+    g = build_recipe_graph(
+        recipe, registry, slug="t", title="T", source="t.yaml", hashes={"r": "abc"}
+    )
+    steps = nodes(g, "step")
+    assert (steps["r"]["hash"], steps["s"]["hash"]) == ("abc", None)
+
+
+def test_ports_carry_many_and_semantic(registry):
+    recipe = make_recipe(
+        steps=[
+            make_step(id="s", op="sv"),
+            make_step(
+                id="m",
+                op="merge",
+                inputs={"datasets": "${s.ds_Sv}", "extra": "${s.log}"},
+            ),
+        ]
+    )
+    merge = nodes(graph(recipe, registry))["m"]
+    ports = {p["name"]: p for p in merge["inputs"]}
+    assert (ports["datasets"]["many"], ports["datasets"]["semantic"]) == (True, None)
+    assert (ports["extra"]["many"], ports["extra"]["semantic"]) == (False, None)
+    [out] = merge["outputs"]
+    assert (out["many"], out["semantic"]) == (False, None)
+
+
+def test_step_node_carries_category_and_implementation(registry):
+    registry.register_spec(make_spec(op="tagged", category="processing"))
+    registry.register_implementation(
+        Implementation(op="tagged", key="b", callable_path="pkg.b")
+    )
+    registry.register_implementation(
+        Implementation(
+            op="tagged",
+            key="a",
+            callable_path="pkg.a",
+            default=True,
+            dependency=Dependency(name="pkg", version=">=1", source="pypi"),
+        )
+    )
+    recipe = make_recipe(
+        steps=[
+            make_step(id="t", op="tagged"),
+            make_step(id="r", op="read"),
+            make_step(
+                id="c",
+                op="custom",
+                custom_spec=CustomSpec(description="Mine.", callable_path="pkg.c"),
+            ),
+        ]
+    )
+    by_id = nodes(graph(recipe, registry))
+    assert by_id["t"]["category"] == "processing"
+    assert by_id["t"]["implementation"] == {
+        "key": "a",
+        "callable_path": "pkg.a",
+        "dependency": "pkg",
+    }
+    assert by_id["r"]["implementation"] is None
+    assert by_id["c"]["implementation"] is None

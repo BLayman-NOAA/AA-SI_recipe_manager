@@ -528,6 +528,57 @@ class TestPathValidation:
         build_dag(recipe, reg)
         assert (existing / "marker.txt").read_text() == "keep me"
 
+    def _relative_path_recipe(self, constraints):
+        reg = Registry()
+        reg.register_spec(
+            Spec(
+                op="reads_folder",
+                description="Reads a folder",
+                params={
+                    "folder": ParamDeclaration(
+                        type="path", required=True, constraints=constraints
+                    )
+                },
+            )
+        )
+        recipe = Recipe(
+            name="relative",
+            version="1.0",
+            schema_version="1",
+            steps=[
+                Step(
+                    id="reader",
+                    op="reads_folder",
+                    params={"folder": "./Auxiliary/data"},
+                )
+            ],
+        )
+        return recipe, reg
+
+    def test_relative_path_is_checked_under_base_dir(self, tmp_path, monkeypatch):
+        base = tmp_path / "recipes"
+        (base / "Auxiliary" / "data").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        recipe, reg = self._relative_path_recipe({"must_exist": True})
+
+        with pytest.raises(RecipeValidationError, match="does not exist"):
+            build_dag(recipe, reg)
+        dag = build_dag(recipe, reg, base_dir=base)
+        assert dag.nodes["reader"].resolved_params["folder"] == "./Auxiliary/data"
+
+    def test_create_if_missing_creates_under_base_dir(self, tmp_path, monkeypatch):
+        base = tmp_path / "recipes"
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        recipe, reg = self._relative_path_recipe({"create_if_missing": True})
+
+        build_dag(recipe, reg, base_dir=base)
+        assert (base / "Auxiliary" / "data").is_dir()
+        assert not (elsewhere / "Auxiliary").exists()
+
 
 # ---------------------------------------------------------------------------
 # Validation — missing required param

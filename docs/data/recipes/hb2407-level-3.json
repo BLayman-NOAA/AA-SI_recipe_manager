@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb2407-level-3",
   "title": "HB2407 level 3, gridding and per-cell statistics",
   "recipe": {
@@ -70,6 +70,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.mask_sparse_bins",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Remove spatiotemporal bins with fewer valid samples than a threshold, reducing noise in MVBS computation.",
       "sink": false,
       "mapped": false,
@@ -84,7 +94,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to screen, normally the noise-removed Sv from remove_background_noise. Masking has already emptied parts of the grid, which is what leaves some bins with too few samples to average.",
-          "value": "${inputs.sv_clean_unmasked}"
+          "value": "${inputs.sv_clean_unmasked}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -130,7 +142,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset with samples in under-populated bins set to NaN. Feed this to compute_mvbs using the same bin sizes.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -142,6 +156,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.rechunk_dataset",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
       "sink": false,
       "mapped": false,
@@ -156,7 +180,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
-          "value": "${mask_sparse.ds_Sv}"
+          "value": "${mask_sparse.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -175,7 +201,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -187,6 +215,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "processing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.commongrid.compute_MVBS",
+        "dependency": "echopype"
+      },
+      "include": null,
+      "document": "processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute Mean Volume Backscattering Strength by averaging Sv over range and time bins. Returns a gridded MVBS Dataset.\nThis step is echopype.commongrid.compute_MVBS called directly, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
       "sink": false,
       "mapped": false,
@@ -201,7 +239,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins, so bins that failed the sparsity check are already NaN and do not pull the bin means toward the noise floor.",
-          "value": "${rechunk_before_mvbs.ds_Sv}"
+          "value": "${rechunk_before_mvbs.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -292,7 +332,9 @@
           "name": "ds_MVBS",
           "type": "Dataset",
           "description": "Gridded MVBS Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -304,6 +346,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.compute_per_cell_statistics",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute per-MVBS-cell statistics (e.g. coefficient of variation) from fine-resolution Sv data before masking or MVBS averaging. Results are stored as new DataArrays in the returned dataset at MVBS-bin resolution. Must be called with the same range_bin, ping_time_bin and range_var values used by mask_sparse_bins and compute_mvbs so that bin grids align exactly. Pass the returned dataset to add_auxiliary_features via the ds_sv input to absorb the statistics into the ML feature matrix.",
       "sink": false,
       "mapped": false,
@@ -318,7 +370,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv from remove_background_noise. Take it from before mask_sparse_bins: the within-cell spread is the signal here, and dropping sparse bins first would hide the cells whose variability is most informative.",
-          "value": "${inputs.sv_clean_unmasked}"
+          "value": "${inputs.sv_clean_unmasked}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -395,7 +449,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Input Dataset with per-cell statistic variables appended (e.g. cell_cv with dims channel x cell_ping_time x cell_echo_range)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -551,6 +607,7 @@
     }
   ],
   "groups": [],
+  "includes": [],
   "context": {
     "upstream": [
       {

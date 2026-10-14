@@ -10,7 +10,7 @@ to GitHub Pages by the `docs` GitHub Actions workflow on every push to `main`.
 | --- | --- |
 | Hand-written pages | `docs/**/*.md` |
 | Example recipes | `docs/recipes/`, listed in `docs/site_recipes.yaml` |
-| Flow diagrams, YAML and Notebook tabs, op data | `docs/data/`, written by `aa-recipe site-data` and committed |
+| Flow diagrams, YAML and Notebook tabs, op data | `docs/data/`, written by `aa-recipe site-data` and committed; diagrams are built by `aa_recipe_manager.graph` |
 | Op pages, the CLI page and the recipe JSON Schema | Generated during the build by `docs/gen_pages.py`, from `docs/data/ops.json` and the installed package |
 
 `aa-recipe site-data` needs the full scientific stack installed, because it

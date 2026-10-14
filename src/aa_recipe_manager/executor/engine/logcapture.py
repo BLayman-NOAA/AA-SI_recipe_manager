@@ -13,6 +13,10 @@ run. It dispatches each write to a **per-thread** sink, so every task binds its
 own buffer without touching what any other thread sees. Threads with nothing
 bound (Dask internals, library worker pools) fall through to the real stream,
 which is what they got before any of this existed.
+
+A thread may also bind a *tap*, which sees every write its sink sees, tagged
+with the stream name. The run uses it to turn captured output into live
+``log`` events without moving the text out of the run log.
 """
 
 from __future__ import annotations
@@ -33,33 +37,42 @@ class ThreadRoutedStream:
     rest is delegated to the wrapped default stream.
     """
 
-    def __init__(self, default: Any) -> None:
+    def __init__(self, default: Any, name: str = "stdout") -> None:
         self._default = default
+        self._name = name
         self._local = threading.local()
 
     # -- binding -------------------------------------------------------------
 
-    def bind(self, sink: Any) -> Any:
-        """Route this thread's writes to ``sink``; returns the previous sink."""
-        previous = getattr(self._local, "sink", None)
-        self._local.sink = sink
+    def bind(self, sink: Any, tap: Any = None) -> Any:
+        """Route this thread's writes to ``sink`` and ``tap``.
+
+        Returns the previous binding, for :meth:`unbind`.
+        """
+        previous = getattr(self._local, "binding", None)
+        self._local.binding = (sink, tap)
         return previous
 
     def unbind(self, previous: Any) -> None:
-        self._local.sink = previous
+        self._local.binding = previous
 
     @property
     def default(self) -> Any:
         return self._default
 
     def _target(self) -> Any:
-        return getattr(self._local, "sink", None) or self._default
+        binding = getattr(self._local, "binding", None)
+        return (binding[0] if binding else None) or self._default
 
     # -- stream surface ------------------------------------------------------
 
     def write(self, data: str) -> int:
-        target = self._target()
+        binding = getattr(self._local, "binding", None)
+        sink, tap = binding if binding else (None, None)
+        target = sink or self._default
         target.write(data)
+        if sink is not None and tap is not None:
+            tap.write(self._name, data)
         # Interleaved output is only useful if it arrives in order; a buffered
         # target would reorder it against the other threads' writes.
         try:
@@ -119,8 +132,8 @@ def install_router() -> Iterator[tuple[ThreadRoutedStream, ThreadRoutedStream]]:
         if _INSTALL_DEPTH == 0:
             _SAVED_STREAMS = (sys.stdout, sys.stderr)
             _ROUTERS = (
-                ThreadRoutedStream(sys.stdout),
-                ThreadRoutedStream(sys.stderr),
+                ThreadRoutedStream(sys.stdout, "stdout"),
+                ThreadRoutedStream(sys.stderr, "stderr"),
             )
             sys.stdout, sys.stderr = _ROUTERS
         _INSTALL_DEPTH += 1
@@ -139,23 +152,29 @@ def install_router() -> Iterator[tuple[ThreadRoutedStream, ThreadRoutedStream]]:
 
 
 @contextmanager
-def capture_output(sink: Any) -> Iterator[None]:
+def capture_output(sink: Any, *, tap: Any = None) -> Iterator[None]:
     """Send this thread's stdout/stderr to ``sink`` for the duration.
 
     Uses the installed router when there is one (concurrent runs). Without a
     router — an inline run, or a task in a dedicated worker *process* where the
     global streams are nobody else's business — it falls back to the plain
     global redirect, which is equivalent there.
+
+    ``tap`` (a :class:`~aa_recipe_manager.events.LogTap`) also receives every
+    write while the router is installed, and is flushed on exit. Without the
+    router it is ignored: a worker process has no live channel to the run.
     """
     out, err = sys.stdout, sys.stderr
     if isinstance(out, ThreadRoutedStream) and isinstance(err, ThreadRoutedStream):
-        prev_out = out.bind(sink)
-        prev_err = err.bind(sink)
+        prev_out = out.bind(sink, tap)
+        prev_err = err.bind(sink, tap)
         try:
             yield
         finally:
             out.unbind(prev_out)
             err.unbind(prev_err)
+            if tap is not None:
+                tap.flush()
         return
 
     from contextlib import redirect_stderr, redirect_stdout

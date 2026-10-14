@@ -56,10 +56,10 @@ class DryRunReport:
                     status_icon = ""
                 elif step.version_status == "ok":
                     status_icon = "OK"
-                    impl_str = f"{step.implementation_key} ({step.package_name}=={step.installed_version})"
+                    impl_str = _implementation_text(step)
                 elif step.version_status == "warning":
                     status_icon = "WARN"
-                    impl_str = f"{step.implementation_key} ({step.package_name}=={step.installed_version})"
+                    impl_str = _implementation_text(step)
                 else:
                     status_icon = "ERROR"
                     impl_str = f"{step.implementation_key or '?'} ({step.package_name or '?'})"
@@ -102,6 +102,15 @@ class DryRunReport:
             lines.append(f"\nDry-run failed. {len(self.errors)} error(s) found.")
 
         return "\n".join(lines)
+
+
+def _implementation_text(step: DryRunStepInfo) -> str:
+    """The implementation key, with its package and version when it has one."""
+    if step.package_name is None:
+        return str(step.implementation_key)
+    return (
+        f"{step.implementation_key} ({step.package_name}=={step.installed_version})"
+    )
 
 
 class DryRunEngine:
@@ -162,7 +171,7 @@ class DryRunEngine:
                 op=node.spec.op,
                 implementation_key=impl.key,
                 callable_path=impl.callable_path,
-                package_name=dep.name,
+                package_name=dep.name if dep is not None else None,
                 installed_version=installed_version,
                 version_status=version_status,
                 params=params,
@@ -189,13 +198,16 @@ class DryRunEngine:
     def _check_version(
         self,
         impl: Implementation,
-        dep: Dependency,
+        dep: Dependency | None,
         check_versions: bool,
         report_warnings: list[str],
         errors: list[str],
     ) -> tuple[str, str | None]:
-        """Return (version_status, installed_version) for an implementation dependency."""
-        if not check_versions:
+        """Return (version_status, installed_version) for an implementation dependency.
+
+        An implementation that declares no dependency has nothing to check.
+        """
+        if not check_versions or dep is None:
             return "ok", None
 
         try:

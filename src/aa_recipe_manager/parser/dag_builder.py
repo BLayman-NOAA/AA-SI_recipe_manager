@@ -55,6 +55,7 @@ def build_dag(
     registry: Registry,
     input_values: dict[str, Any] | None = None,
     check_versions: bool = True,
+    base_dir: str | Path | None = None,
 ) -> PipelineDAG:
     """Build and validate a PipelineDAG from a Recipe and Registry.
 
@@ -62,6 +63,9 @@ def build_dag(
     and performs a topological sort. Raises RecipeValidationError if any hard
     errors are found; non-blocking issues are emitted as Python warnings.
     When check_versions is False, dependency installation checks are skipped.
+    When base_dir is given, relative local path params are checked for
+    existence (and created when ``create_if_missing``) under it instead of the
+    working directory. The params themselves are left as written.
     """
     errors: list[str] = []
     warn_msgs: list[str] = []
@@ -98,7 +102,7 @@ def build_dag(
             continue
 
         resolved_params = resolve_input_refs(step.params, input_defaults)
-        _validate_params(step, spec, resolved_params, errors, warn_msgs)
+        _validate_params(step, spec, resolved_params, errors, warn_msgs, base_dir)
 
         nodes[step.id] = DAGNode(
             step=step,
@@ -319,6 +323,7 @@ def _validate_params(
     resolved_params: dict[str, Any],
     errors: list[str],
     warn_msgs: list[str],
+    base_dir: str | Path | None = None,
 ) -> None:
     """Check required params are present and emit type-mismatch warnings."""
     swept = set(step.sweep.param_lists) if step.sweep is not None else set()
@@ -347,7 +352,9 @@ def _validate_params(
             continue
 
         if param_decl.type == "path":
-            _validate_path_param(step, param_name, param_decl, value, errors)
+            _validate_path_param(
+                step, param_name, param_decl, value, errors, base_dir
+            )
             continue
 
         expected_py = _YAML_TYPE_MAP.get(param_decl.type) if param_decl.type else None
@@ -364,8 +371,12 @@ def _validate_path_param(
     param_decl: Any,
     value: Any,
     errors: list[str],
+    base_dir: str | Path | None = None,
 ) -> None:
-    """Check path existence for concrete path values unless the spec opts out."""
+    """Check path existence for concrete path values unless the spec opts out.
+
+    A relative path is looked up under ``base_dir`` when one is given.
+    """
     if not isinstance(value, (str, Path)):
         errors.append(
             f"Step '{step.id}': param '{param_name}' has type 'path' "
@@ -391,6 +402,8 @@ def _validate_path_param(
         create_if_missing = bool(param_decl.constraints.get("create_if_missing", False))
 
     path_obj = Path(value)
+    if base_dir is not None and not path_obj.is_absolute():
+        path_obj = Path(base_dir) / path_obj
 
     # `create_if_missing` is a user-friendly convenience: if the directory does
     # not yet exist, create it instead of failing validation. This lets a
@@ -572,7 +585,7 @@ def _validate_mapped_chain_refs(
 # Output types whose value is a small, self-contained object. Anything else
 # (Dataset, DataArray, EchoData, object) may be a lazy graph that still reads
 # from the files an earlier chain member disposes.
-_LIGHT_OUTPUT_TYPES = {"int", "float", "str", "bool", "path", "list", "dict"}
+LIGHT_OUTPUT_TYPES = {"int", "float", "str", "bool", "path", "list", "dict"}
 
 
 def _disposing_ports(node: DAGNode) -> list[str]:
@@ -627,7 +640,7 @@ def _validate_disposal_survives_fan_in(
                     continue
             exposed: dict[str, set[str]] = {}
             for name, port in node.spec.outputs.items():
-                if port.type in _LIGHT_OUTPUT_TYPES:
+                if port.type in LIGHT_OUTPUT_TYPES:
                     continue
                 readers = outside_readers.get((member_id, name), set()) - inside
                 if readers:

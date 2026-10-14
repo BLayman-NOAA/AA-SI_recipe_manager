@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
-"""Turn a recipe into the node and edge document the site's flow diagrams draw.
+"""Turn a recipe into the node and edge document flow diagrams draw.
 
+The documentation site and the recipe manager client both draw this document.
 Unlike :func:`aa_recipe_manager.parser.dag_builder.build_dag`, this accepts a
 sub-recipe on its own. References to steps the file does not declare become
 entry nodes at the top of the diagram instead of validation errors, and
@@ -12,11 +13,13 @@ level's sub-recipe shows the data flowing into it and out of it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aa_recipe_manager.docs.payload import clean_text, json_safe
 from aa_recipe_manager.exceptions import SpecNotFoundError
+from aa_recipe_manager.model.types import Spec
 from aa_recipe_manager.parser.dag_builder import resolve_custom_spec
+from aa_recipe_manager.plain_values import clean_text, json_safe
 from aa_recipe_manager.resolver.params import (
     contains_item_ref,
     input_ref_names,
@@ -25,11 +28,11 @@ from aa_recipe_manager.resolver.params import (
 )
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import Recipe, Spec, Step
+    from aa_recipe_manager.model.types import Recipe, Step
     from aa_recipe_manager.registry.registry import Registry
 
 #: Bumped when the graph document changes shape in a way the page must follow.
-GRAPH_SCHEMA = 1
+GRAPH_SCHEMA = 2
 
 
 @dataclass
@@ -51,6 +54,8 @@ def build_recipe_graph(
     level: int | None = None,
     cruise: str | None = None,
     ops_base: str = "ops/",
+    hashes: dict[str, str] | None = None,
+    allow_unknown_ops: bool = False,
 ) -> dict[str, Any]:
     """Build the flow-diagram document for one recipe or sub-recipe.
 
@@ -64,14 +69,21 @@ def build_recipe_graph(
         level: Processing level the recipe documents, if any.
         cruise: Survey the example comes from, if any.
         ops_base: URL prefix for op reference pages, relative to the site root.
+        hashes: Step hashes by step id, shown on step nodes when given.
+        allow_unknown_ops: Draw a step whose op has no spec as a step with no
+            ports, instead of raising.
 
     Returns:
         A dict containing only JSON-serializable values.
 
     Raises:
-        SpecNotFoundError: A step names an op the registry does not have.
+        SpecNotFoundError: A step names an op the registry does not have, and
+            ``allow_unknown_ops`` is false.
     """
-    return _GraphBuilder(recipe, registry, ops_base).build(
+    builder = _GraphBuilder(
+        recipe, registry, ops_base, source, hashes, allow_unknown_ops
+    )
+    return builder.build(
         {
             "name": recipe.name,
             "description": clean_text(recipe.description),
@@ -109,10 +121,22 @@ def _custom_spec(step: Step):
 class _GraphBuilder:
     """Accumulates nodes and edges for one recipe."""
 
-    def __init__(self, recipe: Recipe, registry: Registry, ops_base: str) -> None:
+    def __init__(
+        self,
+        recipe: Recipe,
+        registry: Registry,
+        ops_base: str,
+        source: str,
+        hashes: dict[str, str] | None,
+        allow_unknown_ops: bool = False,
+    ) -> None:
         self.recipe = recipe
+        self.registry = registry
         self.ops_base = ops_base
-        self.specs = {step.id: step_spec(step, registry) for step in recipe.steps}
+        self.root_document = Path(source).name
+        self.hashes = hashes
+        self.allow_unknown_ops = allow_unknown_ops
+        self.specs = {step.id: self._spec(step) for step in recipe.steps}
         self.step_ids = {step.id for step in recipe.steps}
         self.entries: dict[str, dict[str, Any]] = {}
         self.edges: list[dict[str, Any]] = []
@@ -120,6 +144,17 @@ class _GraphBuilder:
         self.consumed: set[tuple[str, str]] = set()
         self.groups: list[dict[str, Any]] = []
         self.group_of: dict[str, dict[str, Any]] = {}
+        self.includes = self._include_tree()
+        self.include_of = self._innermost_includes()
+
+    def _spec(self, step: Step) -> Spec:
+        """The step's spec, or an empty stand in for an op that cannot be found."""
+        try:
+            return step_spec(step, self.registry)
+        except SpecNotFoundError:
+            if not self.allow_unknown_ops:
+                raise
+            return Spec(op=step.op, description=f"Unknown op '{step.op}'.")
 
     def build(
         self, recipe_info: dict[str, Any], *, slug: str, title: str
@@ -129,10 +164,14 @@ class _GraphBuilder:
         for step in self.recipe.steps:
             steps.append(self._step_node(step))
             self._wire(step)
+        # Declared inputs no step reads still get a node, so they can be set.
+        for name in self.recipe.inputs:
+            self._input_entry(name, None, None)
         exits = self._exit_nodes()
         self._place_in_groups(exits)
         for group in self.groups:
             group.pop("edge", None)
+        self._consumed_by_includes()
         return {
             "schema": GRAPH_SCHEMA,
             "slug": slug,
@@ -141,7 +180,76 @@ class _GraphBuilder:
             "nodes": [*self.entries.values(), *steps, *exits],
             "edges": self.edges,
             "groups": self.groups,
+            "includes": self.includes,
         }
+
+    def _include_tree(self) -> list[dict[str, Any]]:
+        """One entry per include block with steps in this recipe.
+
+        A block's parent is the smallest other block containing its steps.
+        When two blocks hold the same steps, as when a sub-recipe only
+        includes another, the later one is the parent, because the loader
+        lists children before their parents.
+        """
+        position = {step.id: index for index, step in enumerate(self.recipe.steps)}
+        includes = []
+        for block in self.recipe.include_blocks:
+            steps = [step_id for step_id in block.step_ids if step_id in position]
+            if not steps:
+                continue
+            source = block.path or block.source
+            includes.append(
+                {
+                    "id": f"inc:{source}",
+                    "source": source,
+                    "name": block.name,
+                    "title": block.name or Path(block.source).stem,
+                    "description": clean_text(block.description),
+                    "parent": None,
+                    "position": min(position[step_id] for step_id in steps),
+                    "steps": steps,
+                    "overrides": json_safe(block.overrides),
+                    "map_over": block.map_over,
+                    "bindings": block.bindings,
+                    "consumed": [],
+                }
+            )
+        for index, include in enumerate(includes):
+            members = set(include["steps"])
+            parents = [
+                (len(other["steps"]), order, other["id"])
+                for order, other in enumerate(includes)
+                if members < set(other["steps"])
+                or (members == set(other["steps"]) and order > index)
+            ]
+            if parents:
+                include["parent"] = min(parents)[2]
+        return includes
+
+    def _innermost_includes(self) -> dict[str, dict[str, Any]]:
+        """The smallest include containing each step that is in one."""
+        include_of: dict[str, dict[str, Any]] = {}
+        for include in sorted(self.includes, key=lambda i: len(i["steps"])):
+            for step_id in include["steps"]:
+                include_of.setdefault(step_id, include)
+        return include_of
+
+    def _consumed_by_includes(self) -> None:
+        """List each include's outputs that steps outside it read."""
+        for include in self.includes:
+            members = set(include["steps"])
+            readers: dict[tuple[str, str], set[str]] = {}
+            for edge in self.edges:
+                if edge["kind"] in ("item", "depends", "exit"):
+                    continue
+                if edge["source"] not in members or edge["target"] in members:
+                    continue
+                key = (edge["source"], edge["source_output"])
+                readers.setdefault(key, set()).add(edge["target"])
+            include["consumed"] = [
+                {"step": step_id, "output": output, "by": sorted(by)}
+                for (step_id, output), by in readers.items()
+            ]
 
     def _place_in_groups(self, exits: list[dict[str, Any]]) -> None:
         """Put entry and exit points that belong to one mapped group inside it.
@@ -207,6 +315,8 @@ class _GraphBuilder:
                 "required": port.required,
                 "description": clean_text(port.description),
                 "value": json_safe(step.inputs.get(name)),
+                "many": port.many,
+                "semantic": None,
             }
             for name, port in spec.inputs.items()
         ]
@@ -217,6 +327,8 @@ class _GraphBuilder:
                 "required": False,
                 "description": None,
                 "value": json_safe(value),
+                "many": False,
+                "semantic": None,
             }
             for name, value in step.inputs.items()
             if name not in spec.inputs
@@ -255,11 +367,14 @@ class _GraphBuilder:
                 "type": port.type,
                 "description": clean_text(port.description),
                 "disposed": name in disposed or port.disposable,
+                "many": port.many,
+                "semantic": None,
             }
             for name, port in spec.outputs.items()
         ]
 
         group = self.group_of.get(step.id)
+        include = self.include_of.get(step.id)
         return {
             "id": step.id,
             "kind": "step",
@@ -268,6 +383,14 @@ class _GraphBuilder:
             "custom": custom is not None,
             "extends": custom.extends if custom else None,
             "callable_path": custom.callable_path if custom else None,
+            "category": spec.category,
+            "implementation": (
+                None if custom is not None else self._implementation(step.op)
+            ),
+            "include": include["id"] if include else None,
+            "document": include["source"] if include else self.root_document,
+            "hash": self.hashes.get(step.id) if self.hashes else None,
+            "editable": False,
             "description": clean_text(step.description) or clean_text(spec.description),
             "sink": spec.sink,
             "mapped": step.map_over is not None,
@@ -283,6 +406,21 @@ class _GraphBuilder:
             "inputs": inputs,
             "params": params,
             "outputs": outputs,
+        }
+
+    def _implementation(self, op: str) -> dict[str, Any] | None:
+        """The implementation a registered op runs by default, if it has one."""
+        impls = [
+            self.registry.get_implementation(op, key, check_versions=False)
+            for key in self.registry.list_implementations(op)
+        ]
+        if not impls:
+            return None
+        impl = next((i for i in impls if i.default), impls[0])
+        return {
+            "key": impl.key,
+            "callable_path": impl.callable_path,
+            "dependency": impl.dependency.name if impl.dependency else None,
         }
 
     def _wire(self, step: Step) -> None:
@@ -370,7 +508,7 @@ class _GraphBuilder:
             return self._input_entry(name, step, slot)
         return None
 
-    def _input_entry(self, name: str, step: Step, slot: str | None) -> _Ref:
+    def _input_entry(self, name: str, step: Step | None, slot: str | None) -> _Ref:
         decl = self.recipe.inputs.get(name)
         node_id = f"in:{name}"
         if node_id not in self.entries:

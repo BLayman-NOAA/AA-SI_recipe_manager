@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb2407-level-0-ncei-download",
   "title": "HB2407 level 0, NCEI download",
   "recipe": {
@@ -60,6 +60,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "data_retrieval",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.data_retrieval.query_ncei_data",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_0_ncei_download.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
       "sink": false,
       "mapped": false,
@@ -114,19 +124,25 @@
           "name": "ncei_results",
           "type": "list",
           "description": "List of NCEI file metadata records (dicts) matching the query",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "query_label",
           "type": "str",
           "description": "Readable, folder-safe slug derived from the query parameters. Intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "raw_urls",
           "type": "list",
           "description": "Public HTTPS URL of each record's .raw object, in record order. For steps that read a file in place rather than downloading it, such as read_raw_file_config with max_scan_bytes: map over this and each instance range-reads the leading bytes of one file, with nothing transferred whole and nothing left on disk.\nPlain strings, so a mapped instance is content-addressed by its URL and dedupes across runs the same way a raw file path does. Built rather than probed, so a record whose object is not stored as <key>.raw fails on read instead of costing a HEAD request per file.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -138,6 +154,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "data_retrieval",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.data_retrieval.download_ncei_data",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_0_ncei_download.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Download raw acoustic files identified by an NCEI query result, along with any specified companion file extensions (.bot, .idx, etc.).",
       "sink": false,
       "mapped": false,
@@ -152,14 +178,18 @@
           "type": "list",
           "required": true,
           "description": "NCEI file metadata records from query_ncei_data (ncei_results)",
-          "value": "${query_ncei.ncei_results}"
+          "value": "${query_ncei.ncei_results}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "query_label",
           "type": "str",
           "required": false,
           "description": "Readable slug from query_ncei_data, used as the per-query subfolder name unless overridden by the query_id param.",
-          "value": "${query_ncei.query_label}"
+          "value": "${query_ncei.query_label}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -199,13 +229,17 @@
           "name": "downloaded_paths",
           "type": "list",
           "description": "List of downloaded file paths, including extracted tar contents when applicable",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "download_dir",
           "type": "path",
           "description": "Per-query subfolder under output_dir where the files were written. Downstream steps should pass this as their raw_input_folder so each query's data stays isolated.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -326,5 +360,6 @@
       "type": "path"
     }
   ],
-  "groups": []
+  "groups": [],
+  "includes": []
 }

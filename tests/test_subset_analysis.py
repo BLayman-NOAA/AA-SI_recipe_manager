@@ -186,11 +186,17 @@ def test_an_empty_instance_passes_through_without_invoking_the_op(tmp_path, help
     assert result.outputs["total"]["n"] == 140
 
 
-def test_an_empty_instance_is_not_checkpointed(tmp_path, helpers):
+def test_an_empty_instance_is_checkpointed_as_nulls(tmp_path, helpers):
+    """An empty instance is saved as JSON nulls, so it is a cache hit later."""
     _run(tmp_path, _recipe())
 
     entries = list((tmp_path / "cache").rglob("derive/*/meta.json"))
-    assert len(entries) == 2, "two real instances, no pickled Nones"
+    assert len(entries) == 10
+    assert not list((tmp_path / "cache").rglob("derive/**/*.pkl"))
+    helpers.calls.clear()
+    _run(tmp_path, _recipe())
+    assert helpers.calls["window"] == 0
+    assert helpers.calls["derive"] == 0
 
 
 def test_a_new_window_reuses_the_expensive_member(tmp_path, helpers):
@@ -227,15 +233,13 @@ def test_the_client_does_not_reload_a_member_nothing_outside_reads(
 def test_a_member_something_outside_reads_is_still_loaded(tmp_path, helpers, load_counts):
     """derive feeds the collector, so the client must materialise it.
 
-    One derive instance is checkpointed and nine are empty, so the member is
-    not all-checkpointed and is not deferred: the client reloads the one real
-    instance to fold the fan-in list, exactly as it always did, and the empties
-    ride along inline.
+    Every derive instance is checkpointed, the nine empty ones as JSON nulls,
+    so the client reloads all ten to fold the fan-in list.
     """
     _run(tmp_path, _recipe())
     load_counts.clear()
 
     result = _run(tmp_path, _recipe(keep="[50]"))
 
-    assert load_counts["derive"] == 1
+    assert load_counts["derive"] == 10
     assert result.outputs["total"]["n"] == 100

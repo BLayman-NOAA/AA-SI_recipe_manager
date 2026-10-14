@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb2407-level-1",
   "title": "HB2407 level 1, raw ingest",
   "recipe": {
@@ -48,6 +48,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.read_raw_files_to_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_1_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
       "sink": false,
       "mapped": true,
@@ -64,7 +74,9 @@
           "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
           "value": [
             "${_item}"
-          ]
+          ],
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -110,7 +122,9 @@
           "name": "raw_stores",
           "type": "list",
           "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -122,6 +136,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.combine_raw_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_1_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
       "sink": false,
       "mapped": true,
@@ -136,7 +160,9 @@
           "type": "list",
           "required": true,
           "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
-          "value": "${read_raw.raw_stores}"
+          "value": "${read_raw.raw_stores}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -155,7 +181,9 @@
           "name": "echodata",
           "type": "EchoData",
           "description": "Combined echopype EchoData object",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -236,6 +264,7 @@
       ]
     }
   ],
+  "includes": [],
   "context": {
     "upstream": [
       {

@@ -10,6 +10,7 @@ mismatch invalidates a cached step entirely.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -20,9 +21,9 @@ import stat
 import time
 import uuid
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, MutableMapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -362,11 +363,35 @@ def _scrub_paths(
     }
 
 
+def _cached_path_fingerprint(
+    value: Any,
+    storage_options: dict[str, Any] | None,
+    mode: str,
+    cache: MutableMapping[tuple[str, str], Any] | None,
+) -> dict[str, Any] | None:
+    """:func:`_path_fingerprint`, memoized in ``cache`` when one is given.
+
+    A ``missing`` or ``remote-unverified`` result is returned but not kept: the
+    path may appear, or a transient remote error clear, before the next call.
+    """
+    if cache is None:
+        return _path_fingerprint(value, storage_options, mode=mode)
+    key = (str(value), mode)
+    if key in cache:
+        return cache[key]
+    fingerprint = _path_fingerprint(value, storage_options, mode=mode)
+    kind = fingerprint.get("kind") if isinstance(fingerprint, dict) else None
+    if kind not in ("missing", "remote-unverified"):
+        cache[key] = fingerprint
+    return fingerprint
+
+
 def _step_fingerprint(
     node: DAGNode,
     pipeline_inputs: dict[str, Any],
     input_declarations: dict[str, Any],
     storage_options: dict[str, Any] | None = None,
+    path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
 ) -> dict[str, Any]:
     """Content fingerprint of a single step's definition.
 
@@ -393,8 +418,8 @@ def _step_fingerprint(
         fp_mode = getattr(input_declarations.get(name), "fingerprint_mode", "off")
         if fp_mode != "off":
             value = resolved_inputs[name]
-            pipeline_input_paths[name] = _path_fingerprint(
-                value, storage_options, mode=fp_mode
+            pipeline_input_paths[name] = _cached_path_fingerprint(
+                value, storage_options, fp_mode, path_fingerprint_cache
             )
             if isinstance(value, (str, Path)):
                 fingerprinted_paths.add(str(value))
@@ -403,8 +428,8 @@ def _step_fingerprint(
         fp_mode = getattr(declaration, "fingerprint_mode", "off")
         if fp_mode != "off":
             value = node.resolved_params.get(name)
-            param_paths[name] = _path_fingerprint(
-                value, storage_options, mode=fp_mode
+            param_paths[name] = _cached_path_fingerprint(
+                value, storage_options, fp_mode, path_fingerprint_cache
             )
             if isinstance(value, (str, Path)):
                 fingerprinted_paths.add(str(value))
@@ -474,6 +499,7 @@ def compute_step_fingerprints(
     pipeline_inputs: dict[str, Any] | None = None,
     *,
     storage_options: dict[str, Any] | None = None,
+    path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
 ) -> StepFingerprints:
     """Per-step Merkle hashes + hashed payloads for content-addressed caching.
 
@@ -489,6 +515,11 @@ def compute_step_fingerprints(
     next run, instead of the whole recipe being treated as new. Bumping the
     cache epoch changes *every* hash — the deliberate invalidate-everything
     lever.
+
+    ``path_fingerprint_cache`` memoizes folder and file fingerprints by
+    ``(path, mode)`` across calls, so a session can avoid listing the same
+    remote folder again. The caller decides how long a cached listing is
+    trusted.
     """
     pipeline_inputs = pipeline_inputs or {}
     input_declarations = dag.recipe.inputs
@@ -500,7 +531,11 @@ def compute_step_fingerprints(
     for step_id in dag.topological_order:
         node = dag.nodes[step_id]
         fingerprint = _step_fingerprint(
-            node, pipeline_inputs, input_declarations, storage_options
+            node,
+            pipeline_inputs,
+            input_declarations,
+            storage_options,
+            path_fingerprint_cache,
         )
         parents = sorted(p for p in upstream.get(step_id, set()) if p in hashes)
         parent_hashes = [hashes[p] for p in parents]
@@ -519,6 +554,7 @@ def compute_step_hashes(
     pipeline_inputs: dict[str, Any] | None = None,
     *,
     storage_options: dict[str, Any] | None = None,
+    path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
 ) -> dict[str, str]:
     """Per-step Merkle hashes used for content-addressed checkpoint caching.
 
@@ -526,7 +562,10 @@ def compute_step_hashes(
     need the hashes (the fingerprint payloads are discarded).
     """
     return compute_step_fingerprints(
-        dag, pipeline_inputs, storage_options=storage_options
+        dag,
+        pipeline_inputs,
+        storage_options=storage_options,
+        path_fingerprint_cache=path_fingerprint_cache,
     ).hashes
 
 
@@ -537,6 +576,8 @@ class ExecutionPlan:
     ``blockers`` lists intermediate must-run steps that lack a checkpoint,
     limiting how far upstream the resume frontier can reach. Non-empty when
     a partial cache exists but some intermediate step cannot be skipped.
+    ``untargeted`` holds the steps outside the ancestry of ``targets`` when a
+    run is aimed at particular steps; it is empty for a whole recipe run.
     """
 
     must_run: set[str]
@@ -544,6 +585,38 @@ class ExecutionPlan:
     marker_hits: set[str]
     pruned: set[str]
     blockers: list[str]
+    untargeted: set[str] = field(default_factory=set)
+    targets: tuple[str, ...] = ()
+    #: Steps recomputed because they were forced or descend from a forced
+    #: step, among those that run.
+    forced: set[str] = field(default_factory=set)
+
+
+def resume_blockers(plan: ExecutionPlan, policy: Iterable[str]) -> list[str]:
+    """The plan's blockers that the run's checkpoint policy does not save.
+
+    A blocker the policy saves stops limiting the frontier after this run, so
+    only the rest are worth reporting.
+    """
+    policy = set(policy)
+    return [step_id for step_id in plan.blockers if step_id not in policy]
+
+
+def blockers_note(blockers: Iterable[str]) -> str:
+    """One line saying which unsaved steps later runs have to start before."""
+    return (
+        "these steps are not saved, so later runs start before them: "
+        + ", ".join(blockers)
+    )
+
+
+def _step_downstream(dag: PipelineDAG) -> dict[str, set[str]]:
+    """Map each step id to the step ids it feeds (data + ordering)."""
+    downstream: dict[str, set[str]] = {sid: set() for sid in dag.topological_order}
+    for step_id, parents in _step_upstream(dag).items():
+        for parent in parents:
+            downstream.setdefault(parent, set()).add(step_id)
+    return downstream
 
 
 #: Run-level artifact-regeneration modes (``--regenerate``). ``auto`` honors
@@ -636,6 +709,73 @@ def _should_regenerate(
     return False
 
 
+def check_step_ids(dag: PipelineDAG, step_ids: Iterable[str], what: str) -> None:
+    """Raise ``UnknownStepError`` naming any id in ``step_ids`` that is not a step.
+
+    Args:
+        dag: The pipeline.
+        step_ids: Ids a caller named.
+        what: What the ids were passed as, for the message.
+    """
+    from aa_recipe_manager.exceptions import UnknownStepError
+
+    unknown = sorted(set(step_ids) - set(dag.nodes))
+    if not unknown:
+        return
+    parts = []
+    suggested = False
+    for step_id in unknown:
+        close = difflib.get_close_matches(step_id, list(dag.nodes), n=3)
+        suggested = suggested or bool(close)
+        hint = f" (did you mean {' or '.join(repr(c) for c in close)}?)"
+        parts.append(f"{step_id!r}" + (hint if close else ""))
+    message = f"unknown step id(s) passed to {what}: {', '.join(parts)}"
+    if not suggested:
+        message += f"; valid ids: {sorted(dag.nodes)}"
+    raise UnknownStepError(message)
+
+
+def target_ancestry(dag: PipelineDAG, targets: Iterable[str]) -> set[str]:
+    """The targets plus every step they depend on, by data edge or ``depends_on``."""
+    upstream = _step_upstream(dag)
+    ancestry: set[str] = set()
+    stack = list(targets)
+    while stack:
+        step_id = stack.pop()
+        if step_id in ancestry:
+            continue
+        ancestry.add(step_id)
+        stack.extend(upstream.get(step_id, ()))
+    return ancestry
+
+
+def _check_run_only(
+    dag: PipelineDAG,
+    targets: tuple[str, ...],
+    must_run: set[str],
+    upstream: dict[str, set[str]],
+) -> None:
+    """Raise when a run only would compute a step besides its targets.
+
+    Mapped and swept steps are left out: their cache state is per instance and
+    is checked in the worker. Direct parents of the targets are named when any
+    of them is missing, since those are what the user has to run first.
+    """
+    from aa_recipe_manager.exceptions import UpstreamNotCachedError
+
+    offenders = {
+        step_id
+        for step_id in must_run
+        if step_id not in targets
+        and not (dag.nodes[step_id].is_mapped or dag.nodes[step_id].is_swept)
+    }
+    parents = {p for t in targets for p in upstream.get(t, ())}
+    if offenders & parents:
+        raise UpstreamNotCachedError(targets, offenders & parents)
+    if offenders:
+        raise UpstreamNotCachedError(targets, offenders, parents=False)
+
+
 def plan_execution(
     dag: PipelineDAG,
     checkpoints: CheckpointStore | CheckpointManager | None,
@@ -643,6 +783,9 @@ def plan_execution(
     force: bool = False,
     regenerate: str = "auto",
     outputs_loc: StorageLocation | None = None,
+    targets: Collection[str] | None = None,
+    force_steps: Collection[str] = (),
+    only: bool = False,
 ) -> ExecutionPlan:
     """Plan minimal correct execution for a DAG given current checkpoints.
 
@@ -655,21 +798,62 @@ def plan_execution(
     regeneration (see :func:`_should_regenerate`) re-runs instead of loading /
     marker-skipping, pulling its parents onto the frontier so its inputs load
     from cache.
+
+    Args:
+        dag: The pipeline to plan.
+        checkpoints: The checkpoint store, or ``None`` when checkpoints are off.
+        force: Re-run every needed step.
+        regenerate: Artifact regeneration mode, one of ``REGENERATE_MODES``.
+        outputs_loc: The outputs directory, for ``if-missing`` artifact checks.
+        targets: Steps to run to. The goals become these steps alone, and every
+            step outside their ancestry is untargeted: it is not run, loaded
+            or pruned. A cached target loads.
+        force_steps: Steps that recompute even when cached. They are goals of
+            the run and their parents join the frontier. Their descendants
+            that the run's goals need recompute as well, since a cached
+            descendant was computed from the old value. A forced step outside
+            the targets' ancestry stays untargeted.
+        only: Run the targets alone. Raises
+            :class:`~aa_recipe_manager.exceptions.UpstreamNotCachedError` when
+            a step other than a target would have to compute.
+
+    Returns:
+        The :class:`ExecutionPlan`.
     """
     if regenerate not in REGENERATE_MODES:
         raise ValueError(
             f"regenerate must be one of {REGENERATE_MODES}, got {regenerate!r}"
         )
+    targets = tuple(targets or ())
+    force_steps = set(force_steps)
+    check_step_ids(dag, targets, "run target")
+    check_step_ids(dag, force_steps, "force step")
+    if only and not targets:
+        raise ValueError("run only needs at least one target")
+
+    upstream = _step_upstream(dag)
+    if targets:
+        ancestry = target_ancestry(dag, targets)
+        order = [sid for sid in dag.topological_order if sid in ancestry]
+        untargeted = set(dag.topological_order) - ancestry
+    else:
+        order = list(dag.topological_order)
+        untargeted = set()
+
     if checkpoints is None:
+        must_run = set(order)
+        if only:
+            _check_run_only(dag, targets, must_run, upstream)
         return ExecutionPlan(
-            must_run=set(dag.topological_order),
+            must_run=must_run,
             loadable=set(),
             marker_hits=set(),
             pruned=set(),
             blockers=[],
+            untargeted=untargeted,
+            targets=targets,
         )
 
-    upstream = _step_upstream(dag)
     terminal, _intermediate = classify_steps(dag)
     recipe_output_steps = {
         output.step_id for output in (dag.recipe.outputs or {}).values()
@@ -681,7 +865,7 @@ def plan_execution(
     # (Skipped under ``force``, which re-runs everything regardless.)
     regen: dict[str, bool] = {}
     if not force:
-        for step_id in dag.topological_order:
+        for step_id in order:
             regen[step_id] = _should_regenerate(
                 dag.nodes[step_id],
                 step_id,
@@ -690,25 +874,40 @@ def plan_execution(
                 outputs_loc=outputs_loc,
             )
 
-    goal_steps: set[str] = {
-        step_id
-        for step_id in dag.topological_order
-        if (
-            step_id in terminal
-            or dag.nodes[step_id].spec.sink
-            or not dag.nodes[step_id].spec.outputs
-            or step_id in recipe_output_steps
-        )
-    }
+    if targets:
+        goal_steps = set(targets)
+    else:
+        goal_steps = {
+            step_id
+            for step_id in dag.topological_order
+            if (
+                step_id in terminal
+                or dag.nodes[step_id].spec.sink
+                or not dag.nodes[step_id].spec.outputs
+                or step_id in recipe_output_steps
+            )
+        }
     needed: set[str] = set(goal_steps)
     needed.update(step_id for step_id, do in regen.items() if do)
+    needed.update(force_steps & set(order))
+    # A forced step's descendants recompute too: a cached descendant holds a
+    # result computed from the old value. Only those the goals need run.
+    forced = set(force_steps)
+    downstream = _step_downstream(dag)
+    stack = list(force_steps)
+    while stack:
+        for child in downstream.get(stack.pop(), ()):
+            if child not in forced:
+                forced.add(child)
+                stack.append(child)
+    forced &= set(order)
 
     must_run: set[str] = set()
     loadable: set[str] = set()
     marker_hits: set[str] = set()
     pruned: set[str] = set()
 
-    for step_id in reversed(dag.topological_order):
+    for step_id in reversed(order):
         if step_id not in needed:
             pruned.add(step_id)
             continue
@@ -717,7 +916,7 @@ def plan_execution(
         is_side_effect = node.spec.sink or not node.spec.outputs
         parents = upstream.get(step_id, set())
 
-        if force:
+        if force or step_id in forced:
             must_run.add(step_id)
             needed.update(parents)
             continue
@@ -740,17 +939,21 @@ def plan_execution(
         must_run.add(step_id)
         needed.update(parents)
 
+    if only:
+        _check_run_only(dag, targets, must_run, upstream)
+
     # Compute which must-run intermediate steps are limiting the resume frontier.
     # These are steps that have no checkpoint but sit between a pruned/loadable
     # upstream and a goal step, meaning adding checkpoint:always to them would
-    # let future runs skip more work. Regen steps are excluded: they re-run by
-    # intent, not because a checkpoint is missing.
+    # let future runs skip more work. Regen and forced steps are excluded: they
+    # re-run by intent, not because a checkpoint is missing.
     blockers: list[str] = [
         step_id
-        for step_id in dag.topological_order
+        for step_id in order
         if (
             step_id in must_run
             and step_id not in goal_steps
+            and step_id not in forced
             and not regen.get(step_id)
             and not dag.nodes[step_id].spec.sink
             and dag.nodes[step_id].spec.outputs
@@ -763,8 +966,10 @@ def plan_execution(
         marker_hits=marker_hits,
         pruned=pruned,
         blockers=blockers,
+        untargeted=untargeted,
+        targets=targets,
+        forced=forced & must_run,
     )
-
 
 
 def classify_steps(dag: PipelineDAG) -> tuple[set[str], set[str]]:
@@ -804,6 +1009,47 @@ def explicit_checkpoint_steps(dag: PipelineDAG) -> set[str]:
     }
 
 
+def resolve_target_pins(
+    dag: PipelineDAG,
+    targets: Iterable[str],
+    checkpoint_steps: Iterable[str] | None = None,
+    *,
+    checkpoints_enabled: bool = True,
+) -> tuple[set[str], list[tuple[str | None, str]]]:
+    """Add a run's targets to its checkpoint pins.
+
+    A target is saved by the run that reaches it, so the next run can start
+    from it. Sinks and steps without outputs have nothing to save and are left
+    alone.
+
+    Args:
+        dag: The pipeline being run.
+        targets: The run's targets, already checked to be steps.
+        checkpoint_steps: Pins the caller asked for already.
+        checkpoints_enabled: False when the run has no cache or checkpoints
+            are disabled, in which case nothing can be saved.
+
+    Returns:
+        The combined pins, and ``(step_id or None, message)`` warnings for
+        targets that will not be saved.
+    """
+    pins = set(checkpoint_steps or ())
+    targets = list(targets)
+    if targets and not checkpoints_enabled:
+        return pins, [(None, "targets will not be saved: checkpoints are disabled")]
+    warnings_out = []
+    for step_id in targets:
+        node = dag.nodes[step_id]
+        if node.spec.sink or not node.spec.outputs:
+            continue
+        if node.step.checkpoint == "never":
+            message = f"target {step_id} has checkpoint: never and will not be saved"
+            warnings_out.append((step_id, message))
+        else:
+            pins.add(step_id)
+    return pins, warnings_out
+
+
 def resolve_checkpoint_policy(
     dag: PipelineDAG,
     *,
@@ -834,12 +1080,7 @@ def resolve_checkpoint_policy(
             "'eager', 'explicit', 'terminal', 'none'"
         )
     extras = set(extra_step_ids or ())
-    unknown = extras - set(dag.nodes)
-    if unknown:
-        raise ValueError(
-            "unknown step id(s) passed to checkpoint pin: "
-            f"{sorted(unknown)}; valid ids: {sorted(dag.nodes)}"
-        )
+    check_step_ids(dag, extras, "checkpoint pin")
     bad_pins = {
         sid
         for sid in extras
@@ -1774,6 +2015,17 @@ class CheckpointManager:
             return None
         return self._entry_dir(step_id, step_hash) / META_FILENAME
 
+    def entry_keys(self, step_id: str) -> set[str]:
+        """Hash key directory names held under the step's directory.
+
+        Read from a one level listing, which is how the instances of a fanned
+        out step are counted without a probe per instance. A key's presence
+        does not prove a committed entry: the sidecar is written last, so an
+        interrupted write also leaves its key behind.
+        """
+        step_dir = self.location / _sanitize_component(step_id)
+        return {loc.name for loc in step_dir.listdir()}
+
     def _iter_meta_paths(self) -> list[StorageLocation]:
         """All entry sidecars under this root (any recipe), sorted for determinism."""
         if not self.location.exists():
@@ -2102,3 +2354,4 @@ class CheckpointManager:
             if parent.is_local and parent.exists() and not any(parent.glob("*")):
                 parent.rm()
         return removed
+

@@ -1,0 +1,822 @@
+/* Client colors. Dark values follow the docs site's slate scheme and light
+   values its default scheme (docs/assets/recipe-flow.css). */
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --rc-bg: #1e2029;
+  --rc-panel: #272935;
+  --rc-raised: #30333f;
+  --rc-fg: #d5d8e3;
+  --rc-muted: #9196aa;
+  --rc-faint: #626678;
+  --rc-line: #3a3d4c;
+  --rc-accent: #7986cb;
+  --rc-accent-fg: #ffffff;
+  --rc-input: #81c784;
+  --rc-external: #ce93d8;
+  --rc-output: #ffb74d;
+  --rc-context: #f48fb1;
+  --rc-group: color-mix(in srgb, var(--rc-accent) 9%, transparent);
+  --rc-error: #ef6f6c;
+  --rc-warning: #f2c14e;
+  --rc-ok: #81c784;
+  --rc-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  /* YAML pane, Monokai */
+  --rc-yaml-bg: #272822;
+  --rc-yaml-fg: #f8f8f2;
+  --rc-yaml-gutter: #75715e;
+  --rc-yaml-key: #f92672;
+  --rc-yaml-string: #e6db74;
+  --rc-yaml-number: #ae81ff;
+  --rc-yaml-literal: #ae81ff;
+  --rc-yaml-ref: #66d9ef;
+  --rc-yaml-comment: #75715e;
+  --rc-yaml-punct: #f8f8f2;
+  --rc-yaml-highlight: #49483e;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --rc-bg: #ffffff;
+  --rc-panel: #f5f5f7;
+  --rc-raised: #ffffff;
+  --rc-fg: #212121;
+  --rc-muted: #6b6b76;
+  --rc-faint: #a3a3ad;
+  --rc-line: #dcdce3;
+  --rc-accent: #4051b5;
+  --rc-accent-fg: #ffffff;
+  --rc-input: #2e7d32;
+  --rc-external: #7b1fa2;
+  --rc-output: #c75b00;
+  --rc-context: #c2185b;
+  --rc-group: color-mix(in srgb, var(--rc-accent) 7%, transparent);
+  --rc-error: #c62828;
+  --rc-warning: #a66a00;
+  --rc-ok: #2e7d32;
+  --rc-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  /* YAML pane, Monokai hues darkened for a light background */
+  --rc-yaml-bg: #fafaf7;
+  --rc-yaml-fg: #272822;
+  --rc-yaml-gutter: #a6a28c;
+  --rc-yaml-key: #c4185b;
+  --rc-yaml-string: #8a6d00;
+  --rc-yaml-number: #7044c9;
+  --rc-yaml-literal: #7044c9;
+  --rc-yaml-ref: #00809b;
+  --rc-yaml-comment: #8a8670;
+  --rc-yaml-punct: #272822;
+  --rc-yaml-highlight: #ece9cf;
+}
+
+:root {
+  --rc-font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--rc-bg);
+  color: var(--rc-fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--rc-accent);
+}
+
+code,
+pre,
+.rc-mono {
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+}
+
+/* Shell frame */
+
+.rc-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.rc-dock-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.rc-dock-host > * {
+  position: absolute;
+  inset: 0;
+}
+
+/* Menu bar */
+
+.rc-menubar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 4px;
+  background: var(--rc-panel);
+  border-bottom: 1px solid var(--rc-line);
+  user-select: none;
+}
+
+.rc-menu {
+  position: relative;
+}
+
+.rc-menu-button {
+  padding: 4px 10px;
+  border: none;
+  background: none;
+  cursor: default;
+}
+
+.rc-menu-button:hover,
+.rc-menu-button[aria-expanded='true'] {
+  background: var(--rc-raised);
+}
+
+.rc-menu-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  min-width: 240px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--rc-raised);
+  border: 1px solid var(--rc-line);
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-menu-list .rc-menu-list {
+  top: -5px;
+  left: 100%;
+}
+
+.rc-menu-item {
+  position: relative;
+}
+
+.rc-menu-item > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: default;
+}
+
+.rc-menu-item > button:not([aria-disabled='true']):hover,
+.rc-menu-item > button:not([aria-disabled='true']):focus-visible {
+  background: var(--rc-accent);
+  color: var(--rc-accent-fg);
+  outline: none;
+}
+
+.rc-menu-item > button[aria-disabled='true'] {
+  color: var(--rc-faint);
+}
+
+.rc-menu-check {
+  width: 14px;
+  text-align: center;
+}
+
+.rc-menu-label {
+  flex: 1;
+}
+
+.rc-menu-shortcut {
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.rc-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--rc-line);
+}
+
+/* Toolbar */
+
+.rc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--rc-line);
+  background: var(--rc-bg);
+}
+
+.rc-toolbar-spacer {
+  flex: 1;
+}
+
+.rc-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--rc-line);
+}
+
+/* Buttons and form controls */
+
+.rc-button {
+  padding: 3px 10px;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: var(--rc-raised);
+  cursor: pointer;
+}
+
+.rc-button:hover:not(:disabled) {
+  border-color: var(--rc-accent);
+}
+
+.rc-button:disabled {
+  color: var(--rc-faint);
+  cursor: default;
+}
+
+.rc-button.rc-primary {
+  background: var(--rc-accent);
+  border-color: var(--rc-accent);
+  color: var(--rc-accent-fg);
+}
+
+.rc-button.rc-primary:disabled {
+  opacity: 0.5;
+}
+
+.rc-button.rc-small {
+  padding: 1px 6px;
+  font-size: 12px;
+}
+
+.rc-input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: var(--rc-bg);
+}
+
+.rc-input:focus {
+  outline: 1px solid var(--rc-accent);
+  border-color: var(--rc-accent);
+}
+
+.rc-input.rc-invalid {
+  border-color: var(--rc-error);
+}
+
+textarea.rc-input {
+  min-height: 60px;
+  resize: vertical;
+}
+
+/* Status bar */
+
+.rc-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 8px;
+  border-top: 1px solid var(--rc-line);
+  background: var(--rc-panel);
+  color: var(--rc-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.rc-spacer {
+  flex: 1;
+}
+
+.rc-status-error {
+  color: var(--rc-error);
+}
+
+.rc-status-warning {
+  color: var(--rc-warning);
+}
+
+.rc-status-ok {
+  color: var(--rc-ok);
+}
+
+/* Panes */
+
+.rc-pane {
+  height: 100%;
+  overflow: auto;
+  padding: 8px;
+  background: var(--rc-bg);
+}
+
+.rc-pane-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.rc-pane h3 {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--rc-muted);
+}
+
+.rc-pane h3:first-child {
+  margin-top: 0;
+}
+
+.rc-empty {
+  color: var(--rc-muted);
+  font-style: italic;
+}
+
+.rc-error-text {
+  color: var(--rc-error);
+}
+
+.rc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.rc-row:hover {
+  background: var(--rc-panel);
+}
+
+.rc-row.rc-selected {
+  background: color-mix(in srgb, var(--rc-accent) 22%, transparent);
+}
+
+.rc-row.rc-indented {
+  padding-left: 20px;
+}
+
+.rc-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rc-row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rc-row-sub {
+  color: var(--rc-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-row-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.rc-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--rc-line);
+  border-radius: 8px;
+  color: var(--rc-muted);
+  font-size: 11px;
+  font-weight: normal;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.rc-badge.rc-badge-session {
+  border-color: var(--rc-accent);
+  color: var(--rc-accent);
+}
+
+.rc-badge.rc-badge-config {
+  border-color: var(--rc-input);
+  color: var(--rc-input);
+}
+
+.rc-badge.rc-badge-error {
+  border-color: var(--rc-error);
+  color: var(--rc-error);
+}
+
+.rc-badge.rc-badge-warning {
+  border-color: var(--rc-warning);
+  color: var(--rc-warning);
+}
+
+.rc-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+  margin-top: 3px;
+}
+
+.rc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rc-table th,
+.rc-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--rc-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.rc-table th {
+  color: var(--rc-muted);
+  font-weight: 600;
+}
+
+.rc-field {
+  margin-bottom: 10px;
+}
+
+.rc-field-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.rc-field-name {
+  font-weight: 600;
+}
+
+.rc-field-help {
+  color: var(--rc-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.rc-field-error {
+  color: var(--rc-error);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.rc-problem {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rc-problem:hover:not(:disabled) {
+  background: var(--rc-panel);
+}
+
+.rc-problem:disabled {
+  cursor: default;
+}
+
+.rc-problem-error .rc-problem-icon {
+  color: var(--rc-error);
+}
+
+.rc-problem-warning .rc-problem-icon {
+  color: var(--rc-warning);
+}
+
+.rc-placeholder {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--rc-muted);
+  text-align: center;
+}
+
+/* Dialog */
+
+.rc-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.rc-dialog {
+  min-width: 360px;
+  max-width: min(640px, 90vw);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--rc-line);
+  border-radius: 6px;
+  background: var(--rc-raised);
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-dialog-head {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rc-line);
+  font-weight: 600;
+}
+
+.rc-dialog-body {
+  padding: 12px;
+}
+
+/* Dockview, themed from the client variables */
+
+.rc-dock.dockview-theme-dark,
+.rc-dock.dockview-theme-light {
+  --dv-group-view-background-color: var(--rc-bg);
+  --dv-tabs-and-actions-container-background-color: var(--rc-panel);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--rc-bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--rc-panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--rc-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--rc-panel);
+  --dv-tab-divider-color: var(--rc-line);
+  --dv-activegroup-visiblepanel-tab-color: var(--rc-fg);
+  --dv-activegroup-hiddenpanel-tab-color: var(--rc-muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--rc-muted);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--rc-faint);
+  --dv-separator-border: var(--rc-line);
+  --dv-paneview-header-border-color: var(--rc-line);
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-active-sash-color: var(--rc-accent);
+}
+
+/* Inspector */
+
+.rc-inspector-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rc-description {
+  margin: 4px 0 8px;
+  color: var(--rc-muted);
+}
+
+.rc-facts th {
+  width: 1%;
+  white-space: nowrap;
+  font-weight: normal;
+}
+
+.rc-table td.rc-wrap,
+.rc-wrap {
+  overflow-wrap: anywhere;
+}
+
+.rc-muted {
+  color: var(--rc-muted);
+}
+
+.rc-row-details {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.rc-row-details summary {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-row-details summary > * + * {
+  margin-left: 8px;
+}
+
+.rc-row-value {
+  color: var(--rc-input);
+}
+
+.rc-row-details[open] summary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.rc-row-details > :not(summary) {
+  margin: 4px 0 6px 14px;
+}
+
+.rc-link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--rc-accent);
+  cursor: pointer;
+}
+
+.rc-link-button:hover {
+  text-decoration: underline;
+}
+
+/* YAML pane */
+
+.rc-yaml-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--rc-bg);
+}
+
+.rc-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid var(--rc-line);
+  background: var(--rc-panel);
+}
+
+.rc-tab {
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: none;
+  color: var(--rc-muted);
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rc-tab[aria-selected='true'] {
+  border-color: var(--rc-line);
+  background: var(--rc-bg);
+  color: var(--rc-fg);
+}
+
+.rc-yaml-status {
+  padding: 8px;
+}
+
+.rc-yaml {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  background: var(--rc-yaml-bg);
+  color: var(--rc-yaml-fg);
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rc-yaml-line {
+  display: flex;
+  min-width: max-content;
+}
+
+.rc-yaml-number {
+  flex: none;
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  width: 4em;
+  padding-right: 12px;
+  color: var(--rc-yaml-gutter);
+  text-align: right;
+  user-select: none;
+}
+
+.rc-yaml-code {
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  padding-right: 12px;
+}
+
+.rc-yaml-highlight {
+  background: var(--rc-yaml-highlight);
+}
+
+.rc-tok-key {
+  color: var(--rc-yaml-key);
+}
+
+.rc-tok-string,
+.rc-tok-block {
+  color: var(--rc-yaml-string);
+}
+
+.rc-tok-number {
+  color: var(--rc-yaml-number);
+}
+
+.rc-tok-literal {
+  color: var(--rc-yaml-literal);
+}
+
+.rc-tok-ref {
+  color: var(--rc-yaml-ref);
+}
+
+.rc-tok-comment {
+  color: var(--rc-yaml-comment);
+  font-style: italic;
+}
+
+.rc-tok-punct {
+  color: var(--rc-yaml-punct);
+}
+
+/* Recipes pane */
+
+.rc-pane h3.rc-root {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.rc-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--rc-muted);
+  font-size: 12px;
+}
+
+.rc-banner {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rc-line);
+  background: color-mix(in srgb, var(--rc-warning) 12%, var(--rc-bg));
+  font-size: 12px;
+}
+
+.rc-description code,
+.rc-step-description code,
+.rc-row-sub code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--rc-line);
+}

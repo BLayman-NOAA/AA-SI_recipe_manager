@@ -16,13 +16,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.events import EventEmitter
 from aa_recipe_manager.executor.base import (
     ExecutionResult,
     NullProgressCallback,
     ProgressCallback,
 )
+from aa_recipe_manager.executor.checkpoint import (
+    check_step_ids,
+    plan_execution,
+    resolve_target_pins,
+)
 from aa_recipe_manager.executor.engine.backends.inline import InlineBackend
-from aa_recipe_manager.executor.engine.context import build_run_context
+from aa_recipe_manager.executor.engine.context import (
+    build_run_context,
+    publish_curated_provenance,
+)
 from aa_recipe_manager.executor.engine.logcapture import install_router
 from aa_recipe_manager.executor.engine.mplbackend import preserve_backend
 from aa_recipe_manager.executor.engine.runner import PipelineRunner
@@ -31,6 +40,7 @@ from aa_recipe_manager.fsutil import rmtree
 from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
+    from aa_recipe_manager.events import CancelToken, EventSink
     from aa_recipe_manager.executor.tiered import TieredCheckpointStore
     from aa_recipe_manager.model.types import (
         CheckpointFormat,
@@ -147,6 +157,13 @@ class SequentialExecutor:
         cache_write_tier: str = "user",
         progress: ProgressCallback | None = None,
         keep_temp: bool = False,
+        targets: Iterable[str] | None = None,
+        only: bool = False,
+        force_steps: Iterable[str] = (),
+        pin_targets: bool = True,
+        events: EventSink | None = None,
+        recipe_path: str | Path | None = None,
+        cancel: CancelToken | None = None,
     ) -> ExecutionResult:
         from aa_recipe_manager.provenance.recorder import (
             ProvenanceRecorder,
@@ -154,86 +171,144 @@ class SequentialExecutor:
             raw_file_list_step_ids,
         )
 
-        if log_destination not in _LOG_DESTINATIONS:
-            raise ValueError(
-                f"log_destination must be one of {_LOG_DESTINATIONS}, "
-                f"got {log_destination!r}"
-            )
-
         # Wall clock for the whole run, started before the cache/context setup so
         # the reported total is what the user actually waited for.
         run_start = time.perf_counter()
+        emitter = EventEmitter(events)
 
-        ctx = build_run_context(
-            dag,
-            inputs=inputs,
-            user_cache_dir=user_cache_dir,
-            force=force,
-            no_checkpoints=no_checkpoints,
-            skip_sinks=skip_sinks,
-            regenerate=regenerate,
-            outputs_dir=outputs_dir,
-            temp_dir=temp_dir,
-            checkpoint_mode=checkpoint_mode,
-            checkpoint_steps=checkpoint_steps,
-            checkpoint_format=checkpoint_format,
-            storage_options=storage_options,
-            survey_cache_dir=survey_cache_dir,
-            cache_write_tier=cache_write_tier,
-        )
-
-        pipeline_inputs = ctx.pipeline_inputs
-        runtime = RuntimeContext(store=ctx.checkpoints)
-        progress = progress or NullProgressCallback()
-
-        run_id = ctx.run_id
-        checkpoints = ctx.checkpoints
-        resolved_user_cache_dir = ctx.output_loc
-
-        result = ExecutionResult(
-            user_cache_dir=None
-            if resolved_user_cache_dir is None
-            else resolved_user_cache_dir.as_context_value()
-        )
-        result.run_id = run_id
-
-        # User-facing outputs (images, logs) live in a separate tree from the
-        # checkpoint cache. Figures are written to ``<outputs>/images`` (via the
-        # execution context's ``artifacts_dir``) and per-step stdout/stderr to
-        # ``<outputs>/logs/standard_out.txt``.
-        resolved_outputs_loc = ctx.outputs_loc
-        result.outputs_dir = (
-            None
-            if resolved_outputs_loc is None
-            else resolved_outputs_loc.as_context_value()
-        )
-        resolved_temp_loc = ctx.temp_loc
-
-        log_buffer = io.StringIO()
+        targets = tuple(targets or ())
+        force_steps = tuple(force_steps or ())
+        pin_warnings: list[tuple[str | None, str]] = []
         log_file_handle = None
-        # A local outputs dir streams to standard_out.txt during the run. Object
-        # stores cannot append, so a remote outputs dir instead uploads the full
-        # buffer once in the finally block (see below); the buffer always
-        # captures the text regardless of destination.
-        remote_log_loc: StorageLocation | None = None
-        want_log_file = (
-            resolved_outputs_loc is not None and log_destination in ("file", "both")
-        )
-        if want_log_file and resolved_outputs_loc.is_local:
-            logs_loc = resolved_outputs_loc / LOGS_DIR
-            logs_loc.mkdir()
-            log_loc = logs_loc / STANDARD_OUT_FILENAME
-            log_file_handle = open(log_loc.as_local_path(), "w", encoding="utf-8")
-            result.log_file = log_loc.as_context_value()
-        elif want_log_file:
-            remote_log_loc = (
-                resolved_outputs_loc / LOGS_DIR / STANDARD_OUT_FILENAME
+        # Everything that can fail before the run proper is checked here, so a
+        # typo in a target fails before a manifest, log or provenance file is
+        # written, and still ends the event stream with run_finished.
+        try:
+            if log_destination not in _LOG_DESTINATIONS:
+                raise ValueError(
+                    f"log_destination must be one of {_LOG_DESTINATIONS}, "
+                    f"got {log_destination!r}"
+                )
+            checkpoints_enabled = user_cache_dir is not None and not no_checkpoints
+            check_step_ids(dag, targets, "run target")
+            check_step_ids(dag, force_steps, "force step")
+            if only and not targets:
+                raise ValueError("run only needs at least one target")
+            if targets and pin_targets:
+                checkpoint_steps, pin_warnings = resolve_target_pins(
+                    dag,
+                    targets,
+                    checkpoint_steps,
+                    checkpoints_enabled=checkpoints_enabled,
+                )
+                checkpoint_steps = checkpoint_steps or None
+
+            ctx = build_run_context(
+                dag,
+                inputs=inputs,
+                user_cache_dir=user_cache_dir,
+                force=force,
+                no_checkpoints=no_checkpoints,
+                skip_sinks=skip_sinks,
+                regenerate=regenerate,
+                outputs_dir=outputs_dir,
+                temp_dir=temp_dir,
+                checkpoint_mode=checkpoint_mode,
+                checkpoint_steps=checkpoint_steps,
+                checkpoint_format=checkpoint_format,
+                storage_options=storage_options,
+                survey_cache_dir=survey_cache_dir,
+                cache_write_tier=cache_write_tier,
+                targets=targets,
+                force_steps=force_steps,
+                only=only,
+                publish_provenance=False,
             )
-            result.log_file = remote_log_loc
-        log_sink = _Tee(log_buffer, log_file_handle)
+            # Planned before anything is written, so a refused run (run only
+            # with a parent not cached) leaves no manifest, log or provenance.
+            plan = plan_execution(
+                dag,
+                ctx.checkpoints,
+                force=force,
+                regenerate=regenerate,
+                outputs_loc=ctx.outputs_loc,
+                targets=targets,
+                force_steps=force_steps,
+                only=only,
+            )
+            publish_curated_provenance(ctx)
+
+            pipeline_inputs = ctx.pipeline_inputs
+            runtime = RuntimeContext(store=ctx.checkpoints)
+            progress = progress or NullProgressCallback()
+
+            run_id = ctx.run_id
+            checkpoints = ctx.checkpoints
+            resolved_user_cache_dir = ctx.output_loc
+
+            result = ExecutionResult(
+                user_cache_dir=None
+                if resolved_user_cache_dir is None
+                else resolved_user_cache_dir.as_context_value()
+            )
+            result.run_id = run_id
+            result.targets = targets
+            result.mode = "only" if only else "to" if targets else "all"
+            emitter.run_id = run_id
+            for _step_id, message in pin_warnings:
+                result.logs.append(f"warning: {message}")
+
+            # User-facing outputs (images, logs) live in a separate tree from
+            # the checkpoint cache. Figures are written to ``<outputs>/images``
+            # (via the execution context's ``artifacts_dir``) and per-step
+            # stdout/stderr to ``<outputs>/logs/standard_out.txt``.
+            resolved_outputs_loc = ctx.outputs_loc
+            result.outputs_dir = (
+                None
+                if resolved_outputs_loc is None
+                else resolved_outputs_loc.as_context_value()
+            )
+            resolved_temp_loc = ctx.temp_loc
+
+            log_buffer = io.StringIO()
+            # A local outputs dir streams to standard_out.txt during the run.
+            # Object stores cannot append, so a remote outputs dir instead
+            # uploads the full buffer once in the finally block (see below);
+            # the buffer always captures the text regardless of destination.
+            remote_log_loc: StorageLocation | None = None
+            want_log_file = (
+                resolved_outputs_loc is not None
+                and log_destination in ("file", "both")
+            )
+            if want_log_file and resolved_outputs_loc.is_local:
+                logs_loc = resolved_outputs_loc / LOGS_DIR
+                logs_loc.mkdir()
+                log_loc = logs_loc / STANDARD_OUT_FILENAME
+                log_file_handle = open(
+                    log_loc.as_local_path(), "w", encoding="utf-8"
+                )
+                result.log_file = log_loc.as_context_value()
+            elif want_log_file:
+                remote_log_loc = (
+                    resolved_outputs_loc / LOGS_DIR / STANDARD_OUT_FILENAME
+                )
+                result.log_file = remote_log_loc
+            log_sink = _Tee(log_buffer, log_file_handle)
+        except BaseException as exc:
+            if log_file_handle is not None:
+                log_file_handle.close()
+            self._emit_run_finished(
+                emitter,
+                status="failed",
+                seconds=time.perf_counter() - run_start,
+                result=ExecutionResult(),
+                error=exc,
+            )
+            raise
 
         run_started_at = datetime.now(timezone.utc).isoformat()
         status = "completed"
+        error: BaseException | None = None
         try:
             # Thread-routed stdout/stderr for the whole run: concurrent tasks each
             # capture their own output instead of fighting over the global stream
@@ -248,14 +323,21 @@ class SequentialExecutor:
                     runtime=runtime,
                     progress=progress,
                     log_sink=log_sink,
+                    events=emitter,
+                    cancel=cancel,
+                    recipe_path=None if recipe_path is None else str(recipe_path),
+                    warnings=pin_warnings,
+                    plan=plan,
                 )
+            status = result.status
             # Warn-only: compare this environment to the curated provenance
             # of any survey-tier hits. Never blocks or downgrades a hit.
             self._check_curated_environment(
                 dag=dag, result=result, store=checkpoints
             )
-        except BaseException:
+        except BaseException as exc:
             status = "failed"
+            error = exc
             raise
         finally:
             # Scratch cleanup runs before the log is closed and uploaded so a
@@ -303,6 +385,16 @@ class SequentialExecutor:
                 status=status,
                 started_at=run_started_at,
                 write_tier=cache_write_tier,
+                force_steps=force_steps,
+            )
+            if emitter.failed is not None:
+                result.logs.append(f"warning: event sink failed: {emitter.failed}")
+            self._emit_run_finished(
+                emitter,
+                status=status,
+                seconds=result.elapsed_seconds,
+                result=result,
+                error=error,
             )
 
         result.console_log = log_buffer.getvalue()
@@ -330,6 +422,37 @@ class SequentialExecutor:
             dag, inputs=pipeline_inputs or None, raw_inputs=raw_record
         )
         return result
+
+    @staticmethod
+    def _emit_run_finished(
+        emitter: EventEmitter,
+        *,
+        status: str,
+        seconds: float,
+        result: ExecutionResult,
+        error: BaseException | None,
+    ) -> None:
+        """Emit the closing ``run_finished`` event."""
+        message = None
+        if error is not None:
+            try:
+                message = str(error)
+            except Exception:
+                message = f"<unprintable {type(error).__name__}>"
+        emitter.emit(
+            "run_finished",
+            status=status,
+            seconds=seconds,
+            manifest=None
+            if result.manifest_file is None
+            else str(result.manifest_file),
+            executed=list(result.executed_steps),
+            skipped=list(result.skipped_steps),
+            pruned=list(result.pruned_steps),
+            untargeted=list(result.untargeted_steps),
+            error_type=None if error is None else type(error).__name__,
+            message=message,
+        )
 
     @staticmethod
     def _check_curated_environment(
@@ -402,6 +525,7 @@ class SequentialExecutor:
         status: str,
         started_at: str,
         write_tier: str,
+        force_steps: Iterable[str] = (),
     ) -> None:
         """Write the per-run ``manifest.json`` into the outputs directory.
 
@@ -423,6 +547,9 @@ class SequentialExecutor:
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "elapsed_seconds": round(result.elapsed_seconds, 3),
             "status": status,
+            "mode": result.mode,
+            "targets": list(result.targets),
+            "force_steps": sorted(force_steps),
             "write_tier": write_tier if store is not None else None,
             "tiers": store.tier_roots() if store is not None else {},
             "steps": {

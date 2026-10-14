@@ -1,0 +1,33 @@
+# One step that adds a constant.
+recipe:
+  name: client_leaf
+  version: "1.0"
+  description: Add k to a value.
+  schema_version: "1"
+
+inputs:
+  value:
+    type: int
+    description: The value to add to.
+  k:
+    type: int
+    description: The constant to add.
+
+steps:
+  - id: leaf_add
+    op: custom
+    inputs:
+      x: ${inputs.value}
+    params:
+      k: ${inputs.k}
+    custom_spec:
+      description: Add k.
+      callable_path: _stage9_helpers.addk
+      inputs:
+        x: {type: int}
+      params:
+        k: {type: int, default: 0}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

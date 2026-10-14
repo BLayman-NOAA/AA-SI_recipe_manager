@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,12 @@ from ruamel.yaml import YAML
 from aa_recipe_manager.exceptions import RecipeParseError
 from aa_recipe_manager.model.types import Recipe
 
-_yaml = YAML()
-_yaml.preserve_quotes = True
+
+def _new_yaml() -> YAML:
+    """A round trip parser for one load; ruamel parsers are not thread safe."""
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    return yaml
 
 
 def _strip_ruamel_types(value: Any) -> Any:
@@ -55,7 +60,7 @@ def load_recipe(path: str | Path) -> Recipe:
     path = Path(path)
     try:
         with open(path, encoding="utf-8") as f:
-            raw = _strip_ruamel_types(_yaml.load(f))
+            raw = _strip_ruamel_types(_new_yaml().load(f))
     except FileNotFoundError:
         raise RecipeParseError(f"Recipe file not found: {path}")
     except Exception as exc:
@@ -121,6 +126,7 @@ def _resolve_includes(
                 (*stack, path),
                 visible_step_sources,
             )
+            bindings = _input_bindings(child_resolved.raw.get("steps") or [], overrides)
             child_raw = _apply_input_overrides(child_resolved.raw, overrides)
             child_steps = child_raw.get("steps") or []
             # map_over on an include entry fans the *whole* sub-workflow out
@@ -147,8 +153,19 @@ def _resolve_includes(
 
             merged_steps.extend(child_steps)
             include_blocks.extend(child_resolved.include_blocks)
+            root = stack[0] if stack else path
+            info = child_resolved.raw.get("recipe") or {}
             include_blocks.append(
-                {"source": include_path.name, "step_ids": child_ids}
+                {
+                    "source": include_path.name,
+                    "step_ids": child_ids,
+                    "path": _include_path_label(include_path, root),
+                    "name": info.get("name"),
+                    "description": info.get("description"),
+                    "overrides": dict(overrides),
+                    "map_over": map_over,
+                    "bindings": bindings,
+                }
             )
             _merge_child_inputs(raw, child_raw, overrides)
             continue
@@ -172,7 +189,7 @@ def _resolve_includes(
 def _load_raw_recipe(path: Path) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as f:
-            raw = _strip_ruamel_types(_yaml.load(f))
+            raw = _strip_ruamel_types(_new_yaml().load(f))
     except FileNotFoundError:
         raise RecipeParseError(f"Included recipe file not found: {path}")
     except Exception as exc:
@@ -200,6 +217,18 @@ def _resolve_include_path(include_value: Any, parent_path: Path) -> Path:
     if not include_path.is_absolute():
         include_path = parent_path.parent / include_path
     return include_path.resolve()
+
+
+def _include_path_label(include_path: Path, root: Path) -> str:
+    """Posix path of an included file relative to the root file's folder.
+
+    Falls back to the absolute path when no relative path exists, as for a
+    file on another Windows drive.
+    """
+    try:
+        return Path(os.path.relpath(include_path, root.parent)).as_posix()
+    except ValueError:
+        return include_path.as_posix()
 
 
 def _apply_input_overrides(
@@ -230,6 +259,53 @@ def _replace_input_refs(value: Any, overrides: dict[str, Any]) -> Any:
             for key, item in value.items()
         }
     return value
+
+
+def _input_bindings(
+    steps: list[Any],
+    overrides: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+    """Where each overridden input is substituted, as (step, slot) pairs.
+
+    The steps are the included recipe's, with its own includes already
+    resolved, so an input passed on through a nested include points at the
+    nested steps that finally read it. A slot is ``inputs.<port>``,
+    ``params.<name>`` or another step key such as ``map_over``.
+
+    Args:
+        steps: The included recipe's steps before the overrides are applied.
+        overrides: The include entry's ``input_overrides``.
+
+    Returns:
+        Each override name and the slots it was substituted into, in step
+        order.
+    """
+    bindings: dict[str, list[dict[str, str]]] = {name: [] for name in overrides}
+    for step in steps:
+        if not isinstance(step, dict) or "id" not in step:
+            continue
+        slots: list[tuple[str, Any]] = []
+        for key, value in step.items():
+            if key in ("inputs", "params") and isinstance(value, dict):
+                slots.extend((f"{key}.{name}", item) for name, item in value.items())
+            elif key != "id":
+                slots.append((key, value))
+        for slot, value in slots:
+            for name, replacement in overrides.items():
+                if _substitutes(value, f"${{inputs.{name}}}", replacement):
+                    bindings[name].append({"step": str(step["id"]), "slot": slot})
+    return bindings
+
+
+def _substitutes(value: Any, ref: str, replacement: Any) -> bool:
+    """Whether _replace_input_refs replaces ``ref`` somewhere in a value."""
+    if isinstance(value, str):
+        return value == ref or (ref in value and isinstance(replacement, str))
+    if isinstance(value, list):
+        return any(_substitutes(item, ref, replacement) for item in value)
+    if isinstance(value, dict):
+        return any(_substitutes(item, ref, replacement) for item in value.values())
+    return False
 
 
 def _collect_step_ids(steps: list[Any]) -> list[str]:

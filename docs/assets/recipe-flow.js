@@ -9,6 +9,7 @@
 // the page and remembered between visits, shows the steps of other recipes a
 // sub-recipe connects to. Without JavaScript, or if the data cannot be loaded,
 // the plain step list inside the div stays visible.
+// It reads graph schema 2 and ignores the keys only the client uses.
 
 (function () {
   "use strict";

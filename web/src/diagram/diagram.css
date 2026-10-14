@@ -1,0 +1,790 @@
+/* Flow diagram. Node anatomy follows the docs site (docs/assets/recipe-flow.css);
+   colors come from the client's --rc-* variables. */
+
+.rc-diagram {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--rc-bg);
+}
+
+.rc-diagram-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Bar: up button, breadcrumb, find, Connected chip */
+
+.rc-diagram-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rc-line);
+  background: var(--rc-panel);
+}
+
+.rc-breadcrumb {
+  display: flex;
+  flex: 1 1 320px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.rc-breadcrumb > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rc-breadcrumb-up {
+  flex: none;
+}
+
+.rc-breadcrumb-sep {
+  margin: 0 6px;
+  color: var(--rc-faint);
+}
+
+.rc-breadcrumb-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--rc-accent);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.rc-breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+.rc-breadcrumb-current {
+  font-weight: 600;
+}
+
+.rc-find {
+  width: 200px;
+}
+
+.rc-find-count {
+  color: var(--rc-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 10px;
+  border: 1px solid var(--rc-faint);
+  border-radius: 12px;
+  background: none;
+  color: var(--rc-muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rc-chip::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.rc-chip[aria-pressed='true'] {
+  border-color: var(--rc-accent);
+  background: var(--rc-group);
+  color: var(--rc-accent);
+}
+
+.rc-chip[aria-pressed='true']::before {
+  background: currentColor;
+}
+
+/* React Flow, themed */
+
+.rc-diagram .react-flow {
+  --xy-background-color: var(--rc-bg);
+  --xy-edge-stroke: var(--rc-faint);
+  --xy-edge-stroke-width: 1.4;
+  --xy-edge-label-background-color: var(--rc-bg);
+  --xy-edge-label-color: var(--rc-fg);
+  --xy-handle-background-color: var(--rc-faint);
+  --xy-handle-border-color: var(--rc-bg);
+  --xy-minimap-background-color: var(--rc-panel);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--rc-bg) 60%, transparent);
+  --xy-controls-button-background-color: var(--rc-raised);
+  --xy-controls-button-background-color-hover: var(--rc-panel);
+  --xy-controls-button-color: var(--rc-fg);
+  --xy-controls-button-color-hover: var(--rc-fg);
+  --xy-controls-button-border-color: var(--rc-line);
+  --xy-attribution-background-color: transparent;
+  background-color: var(--rc-bg);
+  background-image: radial-gradient(var(--rc-line) 1px, transparent 1.2px);
+  background-size: 16px 16px;
+}
+
+.rc-diagram .react-flow__node {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--rc-fg);
+  cursor: pointer;
+}
+
+.rc-diagram .react-flow__node.rc-unplaced {
+  visibility: hidden;
+}
+
+.rc-edge-label {
+  position: absolute;
+  padding: 0 4px;
+  background: var(--rc-bg);
+  color: var(--rc-fg);
+  font-family: var(--rc-font-mono);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: all;
+  cursor: default;
+}
+
+.rc-edge-label-in {
+  color: var(--rc-input);
+}
+
+.rc-edge-label-out {
+  color: var(--rc-output);
+}
+
+.rc-edge-label-muted {
+  color: var(--rc-muted);
+}
+
+.react-flow__edge.rc-edge-muted .react-flow__edge-path {
+  stroke: var(--rc-faint);
+  stroke-dasharray: 2 3;
+}
+
+.react-flow__edge.rc-edge-muted .rc-edge-arrow {
+  fill: var(--rc-faint);
+}
+
+.rc-edge-bus-in .react-flow__edge-path {
+  stroke: var(--rc-input);
+}
+
+.rc-edge-bus-out .react-flow__edge-path {
+  stroke: var(--rc-output);
+}
+
+.rc-edge-arrow {
+  fill: var(--rc-faint);
+}
+
+.rc-edge-map_over .rc-edge-arrow,
+.rc-edge-item .rc-edge-arrow,
+.rc-edge-collect .rc-edge-arrow {
+  fill: var(--rc-accent);
+}
+
+.rc-edge-exit .rc-edge-arrow,
+.rc-edge-bus-out .rc-edge-arrow {
+  fill: var(--rc-output);
+}
+
+.rc-edge-bus-in .rc-edge-arrow {
+  fill: var(--rc-input);
+}
+
+.rc-edge-param .react-flow__edge-path {
+  opacity: 0.75;
+}
+
+.rc-edge-map_over .react-flow__edge-path,
+.rc-edge-item .react-flow__edge-path,
+.rc-edge-collect .react-flow__edge-path {
+  stroke: var(--rc-accent);
+  stroke-dasharray: 5 3;
+}
+
+.rc-edge-depends .react-flow__edge-path {
+  stroke-dasharray: 2 3;
+}
+
+.rc-edge-exit .react-flow__edge-path {
+  stroke: var(--rc-output);
+}
+
+.react-flow__edge.rc-dimmed,
+.rc-edge-label.rc-dimmed {
+  opacity: 0.12;
+}
+
+.rc-handle.react-flow__handle {
+  width: 6px;
+  height: 6px;
+  min-width: 0;
+  min-height: 0;
+  border-width: 1px;
+}
+
+.rc-handle-generic.react-flow__handle {
+  opacity: 0;
+}
+
+/* Node state */
+
+.rc-node {
+  transition: opacity 0.15s;
+}
+
+.rc-dimmed {
+  opacity: 0.3;
+}
+
+.rc-node-selected {
+  outline: 2px solid var(--rc-accent);
+  outline-offset: 2px;
+}
+
+.rc-match {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-warning) 70%, transparent);
+}
+
+/* Steps */
+
+/* Nodes grow with their content between a least and most width (MIN_WIDTH and
+   MAX_WIDTH in layout.ts), and text wider than that wraps. */
+
+.rc-step {
+  width: max-content;
+  min-width: 170px;
+  max-width: 360px;
+  padding: 6px 10px 7px;
+  border: 1px solid var(--rc-faint);
+  border-left: 3px solid var(--rc-accent);
+  border-radius: 5px;
+  background: var(--rc-raised);
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-step:hover {
+  border-color: var(--rc-accent);
+}
+
+.rc-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.rc-step-id {
+  flex: 1;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rc-step-op {
+  color: var(--rc-accent);
+  font-family: var(--rc-font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.rc-step-params {
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.rc-step-params td {
+  padding: 0 8px 0 0;
+  line-height: 16px;
+  vertical-align: top;
+}
+
+.rc-step-params td:first-child {
+  color: var(--rc-muted);
+  white-space: nowrap;
+}
+
+.rc-step-params td + td {
+  color: var(--rc-accent);
+  font-family: var(--rc-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.rc-step-params .rc-step-param-set {
+  font-weight: 700;
+}
+
+.rc-step-description {
+  margin-top: 3px;
+  color: var(--rc-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.rc-node-badge {
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--rc-line);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.rc-node-badge-map {
+  background: var(--rc-group);
+  color: var(--rc-accent);
+}
+
+.rc-node-badge-sink {
+  color: var(--rc-output);
+}
+
+.rc-node-badge-custom {
+  color: var(--rc-external);
+}
+
+/* Include boxes */
+
+.rc-include {
+  width: max-content;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 7px 10px 8px;
+  border: 1px solid var(--rc-faint);
+  border-top: 3px solid var(--rc-accent);
+  border-radius: 6px;
+  background: var(--rc-raised);
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-include:hover {
+  border-color: var(--rc-accent);
+}
+
+.rc-include-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.rc-include-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rc-include-meta {
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-include-source {
+  color: var(--rc-faint);
+  font-family: var(--rc-font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.rc-include-ports {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--rc-line);
+}
+
+.rc-include-ports ul {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--rc-font-mono);
+  font-size: 10px;
+  color: var(--rc-muted);
+  overflow-wrap: anywhere;
+}
+
+.rc-include-toggle {
+  flex: none;
+}
+
+.rc-include-ports .rc-include-outs {
+  text-align: right;
+}
+
+.rc-node-tools {
+  display: flex;
+  gap: 2px;
+}
+
+.rc-node-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--rc-muted);
+  cursor: pointer;
+}
+
+.rc-node-tool:hover {
+  background: var(--rc-line);
+  color: var(--rc-fg);
+}
+
+.rc-node-tool svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.rc-node-tool.rc-box-toggle {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--rc-faint);
+  border-radius: 6px;
+  background: var(--rc-panel);
+  color: var(--rc-fg);
+}
+
+.rc-node-tool.rc-box-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.rc-node-tool.rc-box-toggle:hover {
+  border-color: var(--rc-accent);
+  background: var(--rc-accent);
+  color: var(--rc-accent-fg);
+}
+
+/* Containers */
+
+.rc-group {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.rc-map-group {
+  border: 1px dashed var(--rc-accent);
+  background: var(--rc-group);
+}
+
+.rc-map-group-label {
+  display: inline-block;
+  margin: 8px 10px;
+  padding: 1px 9px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--rc-accent) 14%, var(--rc-bg));
+  color: var(--rc-accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* External references */
+
+.rc-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px 12px;
+  border: 1.5px solid currentColor;
+  border-radius: 14px;
+  background: var(--rc-raised);
+  white-space: nowrap;
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-pill-label {
+  font-family: var(--rc-font-mono);
+  font-size: 11px;
+}
+
+.rc-pill-type {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.rc-pill-value {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--rc-muted);
+  font-family: var(--rc-font-mono);
+  font-size: 10px;
+}
+
+.rc-pill-external {
+  color: var(--rc-external);
+}
+
+/* Inputs and outputs boxes */
+
+.rc-box {
+  width: max-content;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 4px 6px 6px 10px;
+  border: 1.5px solid var(--rc-input);
+  border-radius: 10px;
+  background: var(--rc-raised);
+  box-shadow: var(--rc-shadow);
+}
+
+.rc-box-outputs {
+  min-width: 200px;
+  border-color: var(--rc-output);
+  border-style: dashed;
+}
+
+.rc-box-muted {
+  border-color: var(--rc-faint);
+  border-style: dotted;
+}
+
+.rc-box-muted .rc-box-title {
+  color: var(--rc-muted);
+}
+
+.rc-box-row-exit code {
+  color: var(--rc-output);
+  font-weight: 700;
+}
+
+.rc-box-row-final code {
+  color: var(--rc-output);
+}
+
+.rc-box-row-unused {
+  color: var(--rc-muted);
+}
+
+.rc-box-row-unused code {
+  font-weight: normal;
+}
+
+.rc-box-tag {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--rc-output) 18%, transparent);
+  color: var(--rc-output);
+  font-size: 10px;
+}
+
+.rc-box-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.rc-box-head > div {
+  min-width: 0;
+}
+
+.rc-box-count {
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-box-owner {
+  color: var(--rc-fg);
+  font-family: var(--rc-font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rc-box-title {
+  margin-bottom: 2px;
+  overflow: hidden;
+  color: var(--rc-input);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rc-box-outputs .rc-box-title {
+  color: var(--rc-output);
+}
+
+.rc-box-parent {
+  border-style: dashed;
+}
+
+.rc-box-rows {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rc-box-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.rc-box-rows li + li {
+  border-top: 1px solid var(--rc-line);
+}
+
+.rc-box-rows code {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rc-box-name,
+.rc-box-type,
+.rc-box-from {
+  color: var(--rc-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.rc-box-from {
+  flex-basis: 100%;
+}
+
+.rc-box-type {
+  font-family: var(--rc-font-mono);
+  font-size: 10px;
+}
+
+.rc-box-value {
+  flex-basis: 100%;
+  color: var(--rc-input);
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rc-box-value-set {
+  font-weight: 700;
+}
+
+.rc-box-empty {
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+/* Context: steps outside the drilled sub-recipe */
+
+.rc-ghost {
+  min-width: 130px;
+  padding: 5px 11px 6px;
+  border: 1.5px dashed var(--rc-context);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--rc-context) 9%, var(--rc-bg));
+  opacity: 0.85;
+}
+
+.rc-ghost-id {
+  color: var(--rc-context);
+  font-weight: 700;
+}
+
+.rc-ghost-op,
+.rc-ghost-where {
+  color: var(--rc-muted);
+  font-size: 10px;
+}
+
+.rc-ghost-op {
+  font-family: var(--rc-font-mono);
+}
+
+/* Legend */
+
+.rc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  max-width: 520px;
+  padding: 3px 8px;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--rc-panel) 90%, transparent);
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rc-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.rc-key-step {
+  border: 1px solid var(--rc-faint);
+  border-left: 3px solid var(--rc-accent);
+}
+
+.rc-key-include {
+  border: 1px solid var(--rc-faint);
+  border-top: 3px solid var(--rc-accent);
+}
+
+.rc-key-map {
+  border: 1px dashed var(--rc-accent);
+  background: var(--rc-group);
+}
+
+.rc-key-input {
+  border: 1.5px solid var(--rc-input);
+  border-radius: 5px;
+}
+
+.rc-key-external {
+  border: 1.5px solid var(--rc-external);
+  border-radius: 5px;
+}
+
+.rc-key-output {
+  border: 1.5px dashed var(--rc-output);
+  border-radius: 5px;
+}
+
+.rc-key-ghost {
+  border: 1.5px dashed var(--rc-context);
+}

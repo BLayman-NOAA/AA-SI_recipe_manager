@@ -20,7 +20,7 @@ def _write(path, data) -> "object":
 def _isolate_discovery(monkeypatch):
     """Neutralize the real environment: no env var, no ambient cwd/home config."""
     monkeypatch.delenv(config.ENV_VAR, raising=False)
-    monkeypatch.setattr(config, "default_config_search_paths", lambda: [])
+    monkeypatch.setattr(config, "default_config_search_paths", lambda cwd=None: [])
     yield
 
 
@@ -73,7 +73,7 @@ def test_autodiscovery_first_found_wins(monkeypatch, tmp_path):
     first = _write(tmp_path / "first.yaml", {"user_cache_dir": "first"})
     second = _write(tmp_path / "second.yaml", {"user_cache_dir": "second"})
     monkeypatch.setattr(
-        config, "default_config_search_paths", lambda: [first, second]
+        config, "default_config_search_paths", lambda cwd=None: [first, second]
     )
     assert config.load_run_config().user_cache_dir == "first"
 
@@ -82,7 +82,7 @@ def test_autodiscovery_skips_missing(monkeypatch, tmp_path):
     missing = tmp_path / "missing.yaml"
     present = _write(tmp_path / "present.yaml", {"user_cache_dir": "present"})
     monkeypatch.setattr(
-        config, "default_config_search_paths", lambda: [missing, present]
+        config, "default_config_search_paths", lambda cwd=None: [missing, present]
     )
     assert config.load_run_config().user_cache_dir == "present"
 
@@ -105,7 +105,9 @@ def test_per_recipe_discovery(tmp_path):
 
 def test_per_recipe_beats_generic_cwd(monkeypatch, tmp_path):
     generic = _write(tmp_path / "generic.yaml", {"user_cache_dir": "generic"})
-    monkeypatch.setattr(config, "default_config_search_paths", lambda: [generic])
+    monkeypatch.setattr(
+        config, "default_config_search_paths", lambda cwd=None: [generic]
+    )
 
     recipe = tmp_path / "survey_b.yaml"
     recipe.write_text("recipe: {}\n", encoding="utf-8")
@@ -151,6 +153,19 @@ def test_cwd_autodiscovery(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / config.CONFIG_FILENAME, {"user_cache_dir": "from-cwd"})
     assert config.load_run_config().user_cache_dir == "from-cwd"
+
+
+def test_cwd_argument_replaces_the_working_directory(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.delenv(config.ENV_VAR, raising=False)
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / config.CONFIG_FILENAME, {"user_cache_dir": "from-cwd"})
+    folder = tmp_path / "recipes"
+    folder.mkdir()
+    _write(folder / config.CONFIG_FILENAME, {"user_cache_dir": "from-folder"})
+    found = config.load_run_config(cwd=folder)
+    assert found.user_cache_dir == "from-folder"
+    assert found.source == folder / config.CONFIG_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +247,7 @@ class _FakeResult:
     console_log = ""
     elapsed_seconds = 0.0
     logs: list = []
+    status = "completed"
 
 
 def _stub_execute(monkeypatch) -> dict:

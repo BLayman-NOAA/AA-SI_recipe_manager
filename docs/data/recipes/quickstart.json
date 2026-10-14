@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "quickstart",
   "title": "Quickstart",
   "recipe": {
@@ -70,6 +70,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "data_retrieval",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.data_retrieval.query_ncei_data",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "quickstart.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
       "sink": false,
       "mapped": false,
@@ -124,19 +134,25 @@
           "name": "ncei_results",
           "type": "list",
           "description": "List of NCEI file metadata records (dicts) matching the query",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "query_label",
           "type": "str",
           "description": "Readable, folder-safe slug derived from the query parameters. Intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "raw_urls",
           "type": "list",
           "description": "Public HTTPS URL of each record's .raw object, in record order. For steps that read a file in place rather than downloading it, such as read_raw_file_config with max_scan_bytes: map over this and each instance range-reads the leading bytes of one file, with nothing transferred whole and nothing left on disk.\nPlain strings, so a mapped instance is content-addressed by its URL and dedupes across runs the same way a raw file path does. Built rather than probed, so a record whose object is not stored as <key>.raw fails on read instead of costing a HEAD request per file.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -148,6 +164,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.read_raw_files_to_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "quickstart.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
       "sink": false,
       "mapped": false,
@@ -162,7 +188,9 @@
           "type": "list",
           "required": true,
           "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
-          "value": "${query_ncei.raw_urls}"
+          "value": "${query_ncei.raw_urls}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -208,7 +236,9 @@
           "name": "raw_stores",
           "type": "list",
           "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -220,6 +250,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.combine_raw_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "quickstart.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
       "sink": false,
       "mapped": false,
@@ -234,7 +274,9 @@
           "type": "list",
           "required": true,
           "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
-          "value": "${read_raw.raw_stores}"
+          "value": "${read_raw.raw_stores}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -253,7 +295,9 @@
           "name": "echodata",
           "type": "EchoData",
           "description": "Combined echopype EchoData object",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -265,6 +309,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "level 2",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.calibrate.compute_Sv",
+        "dependency": "echopype"
+      },
+      "include": null,
+      "document": "quickstart.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
       "sink": false,
       "mapped": false,
@@ -279,21 +333,27 @@
           "type": "EchoData",
           "required": true,
           "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cal_params",
           "type": "dict",
           "required": false,
           "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "env_params",
           "type": "dict",
           "required": false,
           "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [],
@@ -302,7 +362,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -314,6 +376,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_visualization.echogram.plot_sv_echogram",
+        "dependency": "aa-si-visualization"
+      },
+      "include": null,
+      "document": "quickstart.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
       "sink": true,
       "mapped": false,
@@ -328,14 +400,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Primary Sv dataset to plot",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv_source",
           "type": "Dataset",
           "required": false,
           "description": "Reference Sv dataset whose coordinates set the axes",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -621,5 +697,6 @@
       "type": "str"
     }
   ],
-  "groups": []
+  "groups": [],
+  "includes": []
 }

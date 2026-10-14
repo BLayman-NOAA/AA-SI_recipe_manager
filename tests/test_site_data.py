@@ -16,13 +16,13 @@ from aa_recipe_manager.docs.notebook_slice import (
     restore_placeholders,
     slice_steps,
 )
-from aa_recipe_manager.docs.recipe_graph import build_recipe_graph
 from aa_recipe_manager.docs.site_data import (
     build_site_data,
     check_site_data,
     load_manifest,
 )
 from aa_recipe_manager.exceptions import SpecNotFoundError
+from aa_recipe_manager.graph import build_recipe_graph
 from aa_recipe_manager.parallel import group_mapped_chains
 from aa_recipe_manager.parser.dag_builder import build_dag
 from aa_recipe_manager.parser.yaml_reader import load_recipe
@@ -189,6 +189,32 @@ def test_docs_recipes_share_the_originals_cache(docs_path, original, shared, reg
         assert {k: docs[k] for k in shared} == {k: originals[k] for k in shared}
 
 
+@pytest.mark.parametrize(
+    "docs_path",
+    ["recipes/HB1603/dive_analysis.yaml", "recipes/HB2407/Herring_10-15_per_file.yaml"],
+)
+def test_reference_include_trees_match_the_files(docs_path):
+    from ruamel.yaml import YAML
+
+    path = DOCS / docs_path
+    written = YAML(typ="safe").load(path.read_text(encoding="utf-8"))["steps"]
+    included = [entry["include"] for entry in written if "include" in entry]
+    graph = api.recipe_graph(path)
+    includes = graph["includes"]
+    assert [include["source"] for include in includes] == included
+    assert [include["parent"] for include in includes] == [None] * len(included)
+    blocks = load_recipe(path).include_blocks
+    assert [len(include["steps"]) for include in includes] == [
+        len(block.step_ids) for block in blocks
+    ]
+    steps = {node["id"]: node for node in graph["nodes"] if node["kind"] == "step"}
+    for node in steps.values():
+        assert (path.parent / node["document"]).is_file(), node["id"]
+    if "HB2407" in docs_path:
+        assert steps["plot_sv_clean"]["include"] is None
+        assert steps["plot_sv_clean"]["document"] == path.name
+
+
 # ---------------------------------------------------------------------------
 # Notebook slicing
 # ---------------------------------------------------------------------------
@@ -345,7 +371,7 @@ def test_check_reports_a_stale_file(tmp_path):
 
 
 def test_custom_step_requires_a_custom_spec(registry):
-    from aa_recipe_manager.docs.recipe_graph import step_spec
+    from aa_recipe_manager.graph import step_spec
     from conftest import make_step
 
     with pytest.raises(SpecNotFoundError, match="no custom_spec"):

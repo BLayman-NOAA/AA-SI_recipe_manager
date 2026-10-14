@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-level-2",
   "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
   "recipe": {
@@ -195,6 +195,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.extract_standardized_calibration_parameters",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Extract calibration parameters (gain, sa-correction, EBA) and environmental parameters (sound speed, absorption) from standardized calibration files, cross-referenced against the EchoData object for channel alignment.",
       "sink": false,
       "mapped": true,
@@ -209,21 +219,27 @@
           "type": "dict",
           "required": true,
           "description": "Parsed standardized calibration data keyed by calibration key, from generate_standardized_cal_mapping. Holds the values themselves.",
-          "value": "${inputs.calibration_dict}"
+          "value": "${inputs.calibration_dict}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mapping_dict",
           "type": "dict",
           "required": true,
           "description": "Raw channel to calibration key mapping, from generate_standardized_cal_mapping. Says which entry of calibration_dict belongs to each channel of each file.",
-          "value": "${inputs.mapping_dict}"
+          "value": "${inputs.mapping_dict}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": true,
           "description": "EchoData whose channel labels the calibration values are aligned to, normally the combined object from combine_raw_files. The outputs are keyed by that object's channels, so they can be passed straight to compute_sv.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -260,19 +276,25 @@
           "name": "cal_params",
           "type": "dict",
           "description": "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "env_params",
           "type": "dict",
           "description": "Environmental parameters keyed by channel (sound_speed, sound_absorption)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "other_params",
           "type": "dict",
           "description": "Additional extracted calibration metadata keyed by channel and source file details. Its unmapped_channels entry names the channels that fell back to the raw file's own recorded values, and is empty when the mapping covered every channel.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -284,6 +306,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "level 2",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.calibrate.compute_Sv",
+        "dependency": "echopype"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
       "sink": false,
       "mapped": true,
@@ -298,21 +330,27 @@
           "type": "EchoData",
           "required": true,
           "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cal_params",
           "type": "dict",
           "required": false,
           "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
-          "value": "${extract_cal_params.cal_params}"
+          "value": "${extract_cal_params.cal_params}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "env_params",
           "type": "dict",
           "required": false,
           "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
-          "value": "${extract_cal_params.env_params}"
+          "value": "${extract_cal_params.env_params}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [],
@@ -321,7 +359,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -333,6 +373,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "consolidate",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.compute_transducer_depth",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute per-ping transducer depth in metres below the water surface from the EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.\nReads the Platform group directly rather than going through ``ep_add_depth(use_platform_vertical_offsets=true)``, which gets the sign wrong on both EK families for different reasons.\nOn an EK80 drop keel vessel the transducers ride on a retractable keel and ``drop_keel_offset`` records how far it was lowered, while the ``transducer_offset_z`` and ``water_level`` fields echopype's formula reads are left at zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.\nAn EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60 per-ping transducer depth into ``water_level``, whose value its formula then subtracts (``transducer_offset_z - (water_level + vertical_offset)``, with ``transducer_offset_z`` zero because the ER60 does not populate it). The transducer comes out above the water surface and every depth is short by twice the draft. This step reads ``water_level`` directly instead.\n``drop_keel_offset`` is preferred when both are present; the field actually used is recorded in the output's ``static_offset_field`` attr.\nThe static position is per file and heave is per ping, so the result is ``static offset + datum_correction_m + heave_sign * vertical_offset``. Heave is interpolated onto ds_Sv's ping_time here, which also means ``ep_add_depth`` passes the array straight through instead of resampling it again with nearest neighbour.\nThe output is small (one value per ping) and is the record of what vertical reference a run actually used, so checkpointing it is cheap and makes the reference auditable without recomputing Sv.",
       "sink": false,
       "mapped": true,
@@ -347,14 +397,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate.",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": true,
           "description": "Source EchoData supplying the Platform group.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -400,7 +454,9 @@
           "name": "transducer_depth",
           "type": "DataArray",
           "description": "Transducer depth in metres below the surface, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s ``depth_offset``. Provenance (the static offset and which Platform field it came from, the correction applied, the heave sign and coverage) is recorded in its attrs.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -412,6 +468,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "consolidate",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.consolidate.add_depth",
+        "dependency": "echopype"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step is echopype.consolidate.add_depth called directly, so the depth computation and its parameters are echopype's. The result preserves all existing variables (including ``echo_range``) and adds ``depth`` on ``(channel, ping_time, range_sample)`` in metres below surface.\nWhatever depth-computation technique is selected (constant ``depth_offset``, Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``) is fully captured in the values of the resulting ``depth`` array, so downstream consumers can treat the dataset as the single source of truth for vertical reference frame without knowing which technique was used.",
       "sink": false,
       "mapped": true,
@@ -426,14 +492,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset (typically from compute_sv).",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": false,
           "description": "Source EchoData. Required when any of ``use_platform_vertical_offsets``, ``use_platform_angles``, or ``use_beam_angles`` is true.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -497,7 +567,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Input Sv dataset with an added ``depth`` variable.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -509,6 +581,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.crop_range_samples",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Trim trailing range samples that carry no data. A raw file records to the sonar's configured range, so after seafloor masking the deep end of ``range_sample`` is entirely NaN. Those samples still cost memory and time in every downstream step, and they widen the binned cell grid that ``compute_mvbs`` and ``compute_per_cell_statistics`` build - the flox reduction behind the latter allocates dense bookkeeping sized by channels x ping bins x range bins, so an over-wide range axis is what pushes it into a MemoryError on a long survey.\nA standalone step rather than a parameter on ``apply_sv_mask``, for the same reason ``rechunk_dataset`` is standalone: masking is ping-local and runs correctly per file, but the crop point is a property of the whole survey. Cropping per file would leave the segments with different ``range_sample`` lengths, and the ping_time concatenation resolves that by padding the short ones back out with NaN - which undoes the crop and leaves NaN in ``echo_range``, where downstream range binning reads it. Place this after the fan-in instead.\nThree criteria are available and compose - whichever are active each produce a candidate cut and the shallowest wins:\n* ``outlier_sigma`` rejects anomalous pings and then crops to the deepest\n  **retained** ping. Prefer this survey-wide: a single glitch ping reaching\n  far past the seafloor otherwise holds the whole range axis open, which is\n  exactly what defeats the lossless mode. The threshold is deliberately\n  generous, so uncommon-but-real depths survive and only wild outliers go.\n* ``max_range_m`` is a hard ceiling, applied whether or not samples above it\n  hold data. Cheapest when the answer is already known (e.g. from the\n  deepest point in the survey's seabed lines).\n* ``drop_trailing_all_nan`` is the lossless fallback used when no outlier\n  test is requested.",
       "sink": false,
       "mapped": true,
@@ -523,7 +605,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to crop, normally after apply_sv_mask so the seafloor returns are already NaN. Place this after any per-file fan-in, since the crop point is a property of the whole survey.",
-          "value": "${ep_add_depth.ds_Sv}"
+          "value": "${ep_add_depth.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -587,7 +671,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset with the trailing empty range samples dropped, so every downstream step works on a narrower range axis.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -599,6 +685,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.select_ping_time_range",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Narrow a Dataset to a ping_time window. The user-facing entry point into a survey-wide Sv store: a survey-level recipe computes and checkpoints Sv once for the whole cruise, and a user recipe reuses that checkpoint and calls this to work on its own segment.\nCheap on a zarr-backed Dataset. ``sel`` narrows the dask graph to the chunks the window touches, so only those are read - measured on a 39570-ping store with 3305-ping chunks, a 4001-ping window read 4 of 24 partitions in 1.5 s and 1.4 GB against 16.5 s and 8.9 GB for the whole array. Chunk the survey store along ping_time (see ``rechunk_dataset``) at roughly the window size users ask for.\nPLACEMENT MATTERS. Step hashes are a Merkle chain: each step folds in its parents' hashes. Wiring a user's window into an upstream step's params - for example ``initial_setup``'s file_time_start - changes that step's hash and every hash below it, so no two windows ever share a cached Sv. Keep the window on this step, downstream of everything whose checkpoint you want shared, and give the survey-level steps a fixed survey-wide window instead.",
       "sink": false,
       "mapped": true,
@@ -613,7 +709,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Dataset carrying a ping_time coordinate, normally the merged survey Sv loaded from a shared checkpoint.",
-          "value": "${ep_add_depth.ds_Sv}"
+          "value": "${ep_add_depth.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -686,7 +784,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The ping_time slice of the input, lazy when the input is lazy. ``None`` when the window selects no pings and ``allow_empty`` is set.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -698,6 +798,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.create_surface_mask",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Build a surface-interference mask from baseline Sv using a selectable method.",
       "sink": false,
       "mapped": true,
@@ -712,7 +822,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset the mask is shaped to. Supplies the range variable each sample's depth is read from.",
-          "value": "${dive_sv.ds_Sv}"
+          "value": "${dive_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -731,7 +843,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Boolean mask DataArray; True means valid data",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -743,6 +857,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.create_frequency_mask",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Build a mask that excludes selected frequency channels. Implementation can be swapped to use different exclusion criteria.",
       "sink": false,
       "mapped": true,
@@ -757,7 +881,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset the mask is shaped to. Supplies the nominal channel frequencies matched against frequencies_to_mask.",
-          "value": "${dive_sv.ds_Sv}"
+          "value": "${dive_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -776,7 +902,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Boolean mask DataArray; True means valid data",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -788,6 +916,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "detection",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.read_seafloor_line_evl",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Read a seafloor line from an Echoview ``.evl`` line file and align it to the Sv dataset's pings, returning a 1-D (ping_time,) DataArray in metres. Use it when a hand-verified Echoview bottom line is more trustworthy than running detection over the Sv data.\nEchoview exports a survey as a series of part-day line files, so ``evl_path`` may be a folder: the files whose names span ``file_time_start`` to ``file_time_end`` are selected and concatenated into one line before interpolation. Give it the same window that selected the raw files.\nDrop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe step's ``inputs`` drop the ``echodata`` line (no detection is run) and the ``params`` block takes ``evl_path`` plus the alignment settings below instead of ``channel`` / ``min_valid_depth_m`` or ``method`` / ``method_params``.\nPings the line does not cover come back as NaN, and ``create_seafloor_mask`` rejects **every sample** of a ping whose seafloor is NaN (the metres-vs-metres comparison is False against NaN). The step therefore prints its ping coverage on every run; set ``min_coverage`` to turn a shortfall into a hard error, or widen ``edge_extend_s`` / ``max_gap_s`` if the gaps are benign.",
       "sink": false,
       "mapped": true,
@@ -802,7 +940,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate. Also supplies the vertical reference: pass a dataset that has been through ``ep_add_depth`` so the line can be matched to ``depth`` (metres below the surface), which is what an Echoview seabed line normally records.",
-          "value": "${dive_sv.ds_Sv}"
+          "value": "${dive_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -911,7 +1051,9 @@
           "name": "seafloor_depth",
           "type": "DataArray",
           "description": "Seafloor depth in metres, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Always 1-D (no channel dimension), matching the output of the ``detect_seafloor`` and ``ep_detect_seafloor`` ops so downstream masking steps are interchangeable. NaN wherever the line does not cover a ping.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -923,6 +1065,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.create_seafloor_mask",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Build a seafloor mask from baseline Sv and detected seafloor depth. The seafloor depth is passed as an explicit input, enabling swappable detection methods without modifying masking logic.",
       "sink": false,
       "mapped": true,
@@ -937,14 +1089,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset the mask is shaped to. Supplies the meter-valued range variable that each sample's depth is compared against.",
-          "value": "${dive_sv.ds_Sv}"
+          "value": "${dive_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "seafloor_depth",
           "type": "DataArray",
           "required": true,
           "description": "Seafloor depth per ping, shape (ping_time,), from detect_seafloor, ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN produce no valid samples, so an undetected stretch is masked out entirely rather than guessed at.",
-          "value": "${dive_seabed_line.seafloor_depth}"
+          "value": "${dive_seabed_line.seafloor_depth}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -972,7 +1128,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Boolean DataArray shaped like ds_Sv['Sv']; True means valid data (above seafloor)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -984,6 +1142,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.combine_masks",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Combine two or more mask datasets into one final mask. Accepts a list of mask inputs to support inserting additional custom mask-producing steps into the chain without changing core framework code.",
       "sink": false,
       "mapped": true,
@@ -1002,7 +1170,9 @@
             "${dive_surface_mask.mask}",
             "${dive_frequency_mask.mask}",
             "${dive_seabed_mask.mask}"
-          ]
+          ],
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1021,7 +1191,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Combined boolean mask DataArray",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1033,6 +1205,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.apply_mask_to_sv",
+        "dependency": "aa-si-utils"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.\nThin wrapper over echopype.mask.apply_mask, calling it against the Sv variable with NaN as the fill value. It adds nothing of its own, so the broadcasting and alignment rules are echopype's.",
       "sink": false,
       "mapped": true,
@@ -1047,14 +1229,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to mask, normally straight from compute_sv.",
-          "value": "${dive_sv.ds_Sv}"
+          "value": "${dive_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mask",
           "type": "DataArray",
           "required": true,
           "description": "Boolean mask broadcastable against ds_Sv[\"Sv\"], where True marks a sample to keep. Normally the single mask from combine_masks, so every exclusion rule the recipe built is applied in one pass.",
-          "value": "${dive_combine_masks.mask}"
+          "value": "${dive_combine_masks.mask}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [],
@@ -1063,7 +1249,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Sv Dataset with masked samples set to NaN",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1075,6 +1263,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "noise_removal",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.remove_noise",
+        "dependency": "aa-si-ml"
+      },
+      "include": null,
+      "document": "processing_lvl_2_combined.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Estimate and remove background noise from Sv using the De Robertis and Higginbottom method. Returns a cleaned Sv Dataset.\nThin wrapper over echopype.clean.remove_background_noise. Every parameter below is forwarded to it unchanged, so its behavior is echopype's. The one thing the wrapper adds is that the corrected values are copied over the Sv variable, so downstream steps reading Sv get the cleaned data without having to know about Sv_corrected. Both variables are present on the result.",
       "sink": false,
       "mapped": true,
@@ -1089,7 +1287,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to denoise, normally the masked Sv from apply_sv_mask so the seafloor and surface returns are not folded into the noise estimate.",
-          "value": "${dive_apply_mask.ds_Sv}"
+          "value": "${dive_apply_mask.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1135,7 +1335,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Noise-corrected Sv Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1566,6 +1768,7 @@
       ]
     }
   ],
+  "includes": [],
   "context": {
     "upstream": [
       {

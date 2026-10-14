@@ -18,12 +18,21 @@ old single-threaded ``SequentialExecutor``.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+import traceback
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.events import CancelToken, EventEmitter, LogTap
 from aa_recipe_manager.exceptions import PipelineExecutionError
 from aa_recipe_manager.executor.base import StepRecord
-from aa_recipe_manager.executor.checkpoint import plan_execution
+from aa_recipe_manager.executor.checkpoint import (
+    ExecutionPlan,
+    blockers_note,
+    entry_dir_parts,
+    plan_execution,
+    resume_blockers,
+    target_ancestry,
+)
 from aa_recipe_manager.executor.console import console_print
 from aa_recipe_manager.executor.disposal import dispose_value, requested_ports
 from aa_recipe_manager.executor.engine.hints import (
@@ -39,22 +48,33 @@ from aa_recipe_manager.executor.engine.schedule import (
 )
 from aa_recipe_manager.executor.engine.step import execute_step
 from aa_recipe_manager.executor.engine.tasks import (
+    TASK_INSTANCE_ATTR,
+    TASK_ITEM_ATTR,
     TASK_LOG_ATTR,
+    TASK_STEP_ATTR,
+    TASK_STREAMED_ATTR,
     ChainInstanceTask,
     CheckpointRef,
     StepTask,
     TaskClosure,
     ValueRef,
-    chain_external_readers,
+    instance_cache_readable,
+    member_instance_hash,
+    register_log_tap,
+    running_readers,
+    unregister_log_tap,
 )
 from aa_recipe_manager.executor.invocation import RuntimeContext
 from aa_recipe_manager.executor.lazy_outputs import LazyStepOutputs
 from aa_recipe_manager.executor.refs import FoldedCheckpointRef
 from aa_recipe_manager.executor.runtime_context import execution_context
 from aa_recipe_manager.parallel import expand_sweep
+from aa_recipe_manager.parser.dag_builder import LIGHT_OUTPUT_TYPES
 from aa_recipe_manager.resolver.params import extract_edge_refs, parse_ref
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from aa_recipe_manager.executor.base import ExecutionResult, ProgressCallback
     from aa_recipe_manager.executor.engine.backends.base import SchedulerBackend
     from aa_recipe_manager.executor.engine.context import RunContext
@@ -113,6 +133,11 @@ class PipelineRunner:
         runtime: RuntimeContext,
         progress: ProgressCallback,
         log_sink: Any,
+        events: EventEmitter | None = None,
+        cancel: CancelToken | None = None,
+        recipe_path: str | None = None,
+        warnings: Sequence[tuple[str | None, str]] = (),
+        plan: ExecutionPlan | None = None,
     ) -> None:
         dag = ctx.dag
         self._ctx = ctx
@@ -121,6 +146,9 @@ class PipelineRunner:
         self._runtime = runtime
         self._progress = progress
         self._log_sink = log_sink
+        self._events = events if events is not None else EventEmitter()
+        self._tap = LogTap(self._events)
+        self._cancel = cancel
         self._checkpoints = ctx.checkpoints
         self._policy = ctx.policy
         self._step_hashes = ctx.step_hashes
@@ -135,25 +163,40 @@ class PipelineRunner:
         self._durable: set[str] = set()
         self._chain_instance_hashes: dict[tuple[str, str], tuple[str, ...]] = {}
 
-        step_ids = list(dag.topological_order)
-        self._total = len(step_ids)
-        self._step_index = {sid: i for i, sid in enumerate(step_ids, start=1)}
-
-        self._plan = plan_execution(
+        self._emit_run_started(recipe_path)
+        self._plan = plan if plan is not None else plan_execution(
             dag,
             self._checkpoints,
             force=ctx.force,
             regenerate=ctx.regenerate,
             outputs_loc=ctx.outputs_loc,
+            targets=ctx.targets,
+            force_steps=ctx.force_steps,
+            only=ctx.only,
         )
-        blocking = [s for s in self._plan.blockers if s not in self._policy]
+        # Progress counts the targeted steps only, so a run to a target shows
+        # neither gaps nor steps it will never touch.
+        step_ids = [
+            sid for sid in dag.topological_order
+            if sid not in self._plan.untargeted
+        ]
+        self._total = len(step_ids)
+        self._step_index = {sid: i for i, sid in enumerate(step_ids, start=1)}
+        result.untargeted_steps = [
+            sid for sid in dag.topological_order if sid in self._plan.untargeted
+        ]
+        blocking = resume_blockers(self._plan, self._policy)
+        self._events.emit("plan", steps=self._planned_steps(), blockers=blocking)
+        for step_id, message in warnings:
+            self._events.emit("warning", step=step_id, message=message)
         if blocking:
-            result.logs.append(
-                "resume frontier limited by uncheckpointed step(s): "
-                f"{', '.join(blocking)}"
-            )
+            result.logs.append(blockers_note(blocking))
 
-        self._wctx = ctx.worker_context()
+        # Workers skip the cache for every forced step, including the forced
+        # step's descendants the plan recomputes.
+        self._wctx = replace(
+            ctx.worker_context(), force_steps=frozenset(self._plan.forced)
+        )
         # The inline backend shares the client's heap, so its worker must reuse
         # the *same* store object rather than rebuild one from URLs — that keeps
         # save/load state (and any test monkeypatch) consistent between worker
@@ -168,11 +211,168 @@ class PipelineRunner:
         self._eviction = self._plan_eviction(dag, graph)
 
         self._backend.start(self._wctx)
+        register_log_tap(ctx.run_id, self._tap)
         try:
             self._announce_backend()
             self._wavefront(graph)
         finally:
+            unregister_log_tap(ctx.run_id)
             self._backend.close()
+
+    def _emit_run_started(self, recipe_path: str | None) -> None:
+        """Emit the ``run_started`` event, the first of the run."""
+        ctx = self._ctx
+        dag = self._dag
+        store = self._checkpoints
+        self._events.emit(
+            "run_started",
+            recipe=dag.recipe.name,
+            version=dag.recipe.version,
+            recipe_path=recipe_path,
+            mode="only" if ctx.only else "to" if ctx.targets else "all",
+            targets=list(ctx.targets),
+            only=ctx.only,
+            force=ctx.force,
+            force_steps=sorted(ctx.force_steps),
+            executor=type(self._backend).__name__.replace("Backend", "").lower(),
+            step_count=len(target_ancestry(dag, ctx.targets))
+            if ctx.targets
+            else len(dag.topological_order),
+            total_steps=len(dag.topological_order),
+            tiers=store.tier_roots() if store is not None else {},
+            write_tier=store.write_tier if store is not None else None,
+            outputs_dir=None if ctx.outputs_loc is None else str(ctx.outputs_loc),
+            cache_dir=None if ctx.output_loc is None else str(ctx.output_loc),
+        )
+
+    def _planned_steps(self) -> dict[str, dict[str, Any]]:
+        """Every step's hash and planned disposition, for the ``plan`` event."""
+        plan = self._plan
+        steps: dict[str, dict[str, Any]] = {}
+        for step_id in self._dag.topological_order:
+            tier = None
+            if step_id in plan.untargeted:
+                planned = "untargeted"
+            elif step_id in plan.pruned:
+                planned = "pruned"
+            elif step_id in plan.marker_hits:
+                planned, tier = "marker", "user"
+            elif step_id in plan.loadable:
+                planned = "load"
+                tier = self._checkpoints.hit_tier(step_id)
+            else:
+                planned = "compute"
+            steps[step_id] = {
+                "hash": self._step_hashes.get(step_id),
+                "planned": planned,
+                "tier": tier,
+            }
+        return steps
+
+    # -- progress and events -------------------------------------------------
+
+    def _report_started(
+        self,
+        step_id: str,
+        *,
+        instances: int | None = None,
+        chain: list[str] | None = None,
+    ) -> None:
+        """Announce a step to the progress callback and as ``step_started``."""
+        index = self._step_index.get(step_id, 0)
+        self._progress.on_step_start(step_id, index, self._total)
+        self._events.emit(
+            "step_started",
+            step=step_id,
+            index=index,
+            total=self._total,
+            instances=instances,
+            chain=chain,
+        )
+
+    def _report_finished(
+        self,
+        step_id: str,
+        record: StepRecord,
+        *,
+        skipped: bool,
+        instance_stats: dict[str, int] | None = None,
+    ) -> None:
+        """Report a finished step to progress and as ``step_finished``.
+
+        ``instance_stats`` is given for a mapped or swept member.
+        """
+        index = self._step_index.get(step_id, 0)
+        self._progress.on_step_end(
+            step_id,
+            index,
+            self._total,
+            skipped=skipped,
+            elapsed=record.elapsed_seconds,
+            instance_seconds=record.instance_seconds,
+        )
+        self._events.emit(
+            "step_finished",
+            step=step_id,
+            disposition=record.disposition,
+            tier=record.tier,
+            seconds=record.elapsed_seconds,
+            save_seconds=record.save_seconds,
+            artifacts=dict(record.artifacts),
+            hash=record.step_hash,
+            index=index,
+            total=self._total,
+            instances=instance_stats,
+            instance_seconds=list(record.instance_seconds),
+        )
+
+    def _report_failed(
+        self,
+        step_id: str,
+        exc: BaseException,
+        elapsed: float,
+        chain: list[str] | None = None,
+    ) -> None:
+        """Report a failed step to progress and as ``step_failed``.
+
+        ``chain`` lists the members of a failed mapped chain, so a client can
+        close the members that started with it. ``instance`` and ``item`` name
+        the failing instance of a mapped step (its index and, for a file list,
+        the file) when the worker recorded them.
+        """
+        index = self._step_index.get(step_id, 0)
+        self._progress.on_step_end(
+            step_id, index, self._total, elapsed=elapsed, error=exc
+        )
+        self._events.emit(
+            "step_failed",
+            step=step_id,
+            index=index,
+            total=self._total,
+            seconds=elapsed,
+            error_type=type(exc).__name__,
+            message=_exception_text(exc),
+            traceback="".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ),
+            chain=chain,
+            instance=getattr(exc, TASK_INSTANCE_ATTR, None),
+            item=getattr(exc, TASK_ITEM_ATTR, None),
+        )
+
+    def _emit_buffered_log(
+        self, step_id: str, text: str, streamed: bool, instance: int | None
+    ) -> None:
+        """Emit output that a worker process could not stream live."""
+        if text and not streamed:
+            self._events.emit(
+                "log",
+                step=step_id,
+                stream="stdout",
+                text=text,
+                buffered=True,
+                instance=instance,
+            )
 
     def _plan_eviction(
         self, dag: PipelineDAG, graph: UnitGraph
@@ -196,7 +396,7 @@ class PipelineRunner:
         # this run's policy (self._plan.loadable: e.g. written by an earlier
         # run under a different checkpoint_mode). Policy membership alone
         # would miss the latter, real, case.
-        candidates = self._policy | self._plan.loadable
+        candidates = (self._policy | self._plan.loadable) - self._plan.untargeted
         producer_ports: dict[str, list[str]] = {}
         for step_id in candidates:
             node = dag.nodes.get(step_id)
@@ -373,8 +573,11 @@ class PipelineRunner:
             progressed = False
 
             # 1. Expand every newly ready unit: client-handle the cheap
-            #    dispositions immediately, or queue its data tasks.
+            #    dispositions immediately, or queue its data tasks. A cancelled
+            #    run expands nothing more.
             for unit in sched.ready():
+                if self._cancelled():
+                    break
                 sched.mark_dispatched(unit)
                 progressed = True
                 tasks = self._open_unit(unit, sched)
@@ -400,7 +603,12 @@ class PipelineRunner:
             #    actually submitted, not when it was expanded — otherwise every
             #    ready unit would report "started" before any of them ran, and
             #    a progress reporter could not pair starts with ends.
+            #    A cancel drops every task not yet submitted, so a mapped unit
+            #    stops before its next instance.
             while pending and len(in_flight) < backend.max_concurrency:
+                if self._cancelled():
+                    pending.clear()
+                    break
                 unit, task = pending.pop(0)
                 if unit.unit_id not in started:
                     started.add(unit.unit_id)
@@ -428,12 +636,28 @@ class PipelineRunner:
                     self._mark_done(sched, unit)
                 progressed = True
 
+            # 4. Once a cancelled run has drained its running tasks, stop.
+            #    Finished checkpoints stay valid; a mapped unit stopped part
+            #    way gets no record, and its finished instances are cache hits
+            #    for the next run.
+            if self._cancelled() and not in_flight and not sched.all_done():
+                message = f"cancelled: {sched.pending_count()} unit(s) not finished"
+                self._result.status = "cancelled"
+                self._result.logs.append(message)
+                self._log_sink.write(f"{message}\n")
+                self._log_sink.flush()
+                self._events.emit("warning", step=None, message=message)
+                return
+
             if not progressed and not sched.all_done():
                 raise PipelineExecutionError(
                     "<scheduler>",
                     "execution stalled with unresolved units "
                     f"({sched.pending_count()} pending)",
                 )
+
+    def _cancelled(self) -> bool:
+        return self._cancel is not None and self._cancel.is_set()
 
     # -- unit opening --------------------------------------------------------
 
@@ -456,6 +680,11 @@ class PipelineRunner:
         result = self._result
         plan = self._plan
 
+        if step_id in plan.untargeted:
+            self._record_untargeted(step_id)
+            self._mark_done(sched, unit)
+            return None
+
         if self._ctx.skip_sinks and node.spec.sink:
             result.logs.append(f"skip sink: {step_id}")
             self._runtime.record(step_id, {})
@@ -466,26 +695,22 @@ class PipelineRunner:
             self._mark_done(sched, unit)
             return None
 
-        index = self._step_index[step_id]
-        total = self._total
-
         if step_id in plan.pruned:
-            self._progress.on_step_start(step_id, index, total)
+            self._report_started(step_id)
             result.pruned_steps.append(step_id)
             result.logs.append(f"pruned: {step_id} (0.000s)")
-            result.step_dispositions[step_id] = StepRecord(
+            record = StepRecord(
                 disposition="pruned",
                 step_hash=self._step_hashes.get(step_id),
                 elapsed_seconds=0.0,
             )
-            self._progress.on_step_end(
-                step_id, index, total, skipped=True, elapsed=0.0
-            )
+            result.step_dispositions[step_id] = record
+            self._report_finished(step_id, record, skipped=True)
             self._mark_done(sched, unit)
             return None
 
         if step_id in plan.loadable:
-            self._progress.on_step_start(step_id, index, total)
+            self._report_started(step_id)
             start = time.perf_counter()
             outputs = self._checkpoints.load(step_id)
             tier = self._checkpoints.hit_tier(step_id) or "user"
@@ -495,34 +720,32 @@ class PipelineRunner:
             result.skipped_steps.append(step_id)
             elapsed = time.perf_counter() - start
             result.logs.append(f"cache hit: {step_id} [{tier}] ({elapsed:.3f}s)")
-            result.step_dispositions[step_id] = StepRecord(
+            record = StepRecord(
                 disposition=f"hit-{tier}-cache",
                 step_hash=self._step_hashes.get(step_id),
                 tier=tier,
                 elapsed_seconds=elapsed,
                 artifacts=self._checkpoints.artifact_urls(step_id),
             )
-            self._progress.on_step_end(
-                step_id, index, total, skipped=True, elapsed=elapsed
-            )
+            result.step_dispositions[step_id] = record
+            self._report_finished(step_id, record, skipped=True)
             self._mark_done(sched, unit)
             return None
 
         if step_id in plan.marker_hits:
-            self._progress.on_step_start(step_id, index, total)
+            self._report_started(step_id)
             self._runtime.record(step_id, {})
             result.outputs[step_id] = {}
             result.skipped_steps.append(step_id)
             result.logs.append(f"sink cache hit: {step_id} (0.000s)")
-            result.step_dispositions[step_id] = StepRecord(
+            record = StepRecord(
                 disposition="marker",
                 step_hash=self._step_hashes.get(step_id),
                 tier="user",
                 elapsed_seconds=0.0,
             )
-            self._progress.on_step_end(
-                step_id, index, total, skipped=True, elapsed=0.0
-            )
+            result.step_dispositions[step_id] = record
+            self._report_finished(step_id, record, skipped=True)
             self._mark_done(sched, unit)
             return None
 
@@ -554,26 +777,50 @@ class PipelineRunner:
             )
         ]
 
-    def _open_chain(self, unit: Unit, sched: WavefrontScheduler) -> list[Any] | None:
-        member_ids = list(unit.member_ids)
-        members = [self._dag.nodes[mid] for mid in member_ids]
-        result = self._result
-        total = self._total
+    def _record_untargeted(self, step_id: str) -> None:
+        """Record a step outside the run's target ancestry.
 
-        # Skip the chain only when every member is pruned. A later cached
-        # branch may prune one member while another is still needed elsewhere.
-        if all(mid in self._plan.pruned for mid in member_ids):
-            for mid in member_ids:
-                idx = self._step_index.get(mid, 0)
-                self._progress.on_step_start(mid, idx, total)
+        It is not announced to progress: it neither runs nor loads.
+        """
+        self._result.step_dispositions[step_id] = StepRecord(
+            disposition="untargeted",
+            step_hash=self._step_hashes.get(step_id),
+        )
+        self._result.logs.append(f"untargeted: {step_id}")
+
+    def _active_members(self, unit: Unit) -> list[str]:
+        """A unit's members that run this run, in order.
+
+        Untargeted members and members the plan pruned are left out, so the
+        chain's tasks carry only the members the run needs and every backend
+        runs just those. A pruned member is never a parent of a member that
+        runs, since the plan pulls the parents of every step it runs.
+        """
+        plan = self._plan
+        return [
+            m for m in unit.member_ids
+            if m not in plan.untargeted and m not in plan.pruned
+        ]
+
+    def _open_chain(self, unit: Unit, sched: WavefrontScheduler) -> list[Any] | None:
+        member_ids = self._active_members(unit)
+        result = self._result
+        for mid in unit.member_ids:
+            if mid in self._plan.untargeted:
+                self._record_untargeted(mid)
+            elif mid in self._plan.pruned:
+                self._report_started(mid)
                 result.pruned_steps.append(mid)
-                result.step_dispositions[mid] = StepRecord(
+                record = StepRecord(
                     disposition="pruned", step_hash=self._step_hashes.get(mid)
                 )
+                result.step_dispositions[mid] = record
                 result.logs.append(f"pruned: {mid} (mapped chain)")
-                self._progress.on_step_end(mid, idx, total, skipped=True, elapsed=0.0)
+                self._report_finished(mid, record, skipped=True)
+        if not member_ids:
             self._mark_done(sched, unit)
             return None
+        members = [self._dag.nodes[mid] for mid in member_ids]
 
         swept_members = [m for m in members if m.is_swept]
         if len(members) > 1 and swept_members:
@@ -620,6 +867,13 @@ class PipelineRunner:
         checkpoint_members = frozenset(
             mid for mid in member_ids if mid in self._policy
         )
+        read_outside = frozenset(
+            running_readers(member_ids, self._dag, self._plan.must_run)
+        )
+        if len(member_ids) < len(unit.member_ids):
+            self._check_truncated_disposal(
+                member_ids, checkpoint_members, read_outside
+            )
         closure = self._build_closure(member_ids)
 
         tasks: list[Any] = []
@@ -637,10 +891,85 @@ class PipelineRunner:
                         checkpoint_members=checkpoint_members,
                         write_token=self._write_token(),
                         raw_inputs=self._raw_inputs(),
+                        read_outside=read_outside,
                     )
                 )
                 flat += 1
-        return tasks
+        return self._with_cache_listing(member_ids, tasks)
+
+    def _check_truncated_disposal(
+        self,
+        member_ids: list[str],
+        checkpoint_members: frozenset[str],
+        read_outside: frozenset[str],
+    ) -> None:
+        """Refuse a truncated chain whose result would reach the run disposed.
+
+        Once an earlier member has disposed its outputs, a later member's value
+        may be a lazy graph over deleted files, so whatever the run receives
+        from the chain must arrive through a checkpoint, as the DAG builder
+        requires of a reader outside a chain. The run receives the members
+        that a step it runs reads and the members it targets.
+        """
+        disposer = next(
+            (m for m in member_ids if requested_ports(self._dag.nodes[m])), None
+        )
+        if disposer is None:
+            return
+        received = read_outside | set(self._plan.targets)
+        for mid in member_ids[member_ids.index(disposer):]:
+            node = self._dag.nodes[mid]
+            heavy = [
+                name
+                for name, port in node.spec.outputs.items()
+                if port.type not in LIGHT_OUTPUT_TYPES
+            ]
+            if not heavy or mid not in received or mid in checkpoint_members:
+                continue
+            raise PipelineExecutionError(
+                mid,
+                f"Step '{mid}' (output(s) {', '.join(sorted(heavy))}) ends a "
+                f"run that stops inside its mapped chain, but '{disposer}' "
+                "earlier in the chain disposes its outputs, so the value would "
+                "arrive as a lazy graph over files that no longer exist and "
+                "read back as fill values (NaN) with no error. Fix: keep the "
+                f"target pinned, or set 'checkpoint: always' on '{mid}'.",
+            )
+
+    def _with_cache_listing(
+        self, member_ids: list[str], tasks: list[ChainInstanceTask]
+    ) -> list[ChainInstanceTask]:
+        """Mark on each task the members whose instance key the cache lists.
+
+        One listing of each readable member's cache directory per tier, so an
+        instance whose key is absent is a certain miss the worker never
+        probes. On a cold remote cache that replaces a sidecar read per member
+        per instance.
+        """
+        store = self._checkpoints
+        if store is None or self._ctx.force or not tasks:
+            return tasks
+        readable = [
+            mid
+            for mid in member_ids
+            if mid not in self._plan.forced
+            and instance_cache_readable(
+                self._dag.nodes[mid], self._step_hashes.get(mid)
+            )
+        ]
+        keys = {mid: store.entry_keys(mid) for mid in readable}
+        listed = []
+        for task in tasks:
+            present = frozenset(
+                mid
+                for mid in readable
+                if entry_dir_parts(
+                    mid, member_instance_hash(task, self._wctx, store, mid)
+                )[1]
+                in keys[mid]
+            )
+            listed.append(replace(task, maybe_cached=present))
+        return listed
 
     def _start_unit(self, unit: Unit, n_tasks: int) -> None:
         """Announce a unit as it begins: progress callback + run-log header.
@@ -650,11 +979,15 @@ class PipelineRunner:
         every ready unit reporting "started" up front.
         """
         total = self._total
-        for mid in unit.member_ids:
-            self._progress.on_step_start(mid, self._step_index.get(mid, 0), total)
+        members = self._active_members(unit)
+        for mid in members:
+            if unit.is_chain:
+                self._report_started(mid, instances=n_tasks, chain=members)
+            else:
+                self._report_started(mid)
         if unit.is_chain:
             self._log_sink.write(
-                f"\n=== mapped chain {list(unit.member_ids)} x "
+                f"\n=== mapped chain {members} x "
                 f"{n_tasks} instance(s) ===\n"
             )
         else:
@@ -714,7 +1047,7 @@ class PipelineRunner:
         index = self._step_index[step_id]
         total = self._total
         result = self._result
-        self._progress.on_step_start(step_id, index, total)
+        self._report_started(step_id)
         start = time.perf_counter()
         self._log_sink.write(f"\n=== step {step_id} ({index}/{total}) ===\n")
         self._log_sink.flush()
@@ -736,14 +1069,11 @@ class PipelineRunner:
             temp_dir=self._ctx.temp_loc,
             storage_options=self._ctx.storage_options,
             artifact_sink=artifact_paths,
-        ), capture_output(self._log_sink):
+        ), capture_output(self._log_sink, tap=self._tap):
             try:
                 outputs = execute_step(node, self._runtime, self._pipeline_inputs)
             except PipelineExecutionError as exc:
-                elapsed = time.perf_counter() - start
-                self._progress.on_step_end(
-                    step_id, index, total, elapsed=elapsed, error=exc
-                )
+                self._report_failed(step_id, exc, time.perf_counter() - start)
                 raise
             except Exception as exc:
                 elapsed = time.perf_counter() - start
@@ -752,9 +1082,7 @@ class PipelineRunner:
                     f"step {step_id!r} failed during execution: {exc}",
                     original=exc,
                 )
-                self._progress.on_step_end(
-                    step_id, index, total, elapsed=elapsed, error=wrapped
-                )
+                self._report_failed(step_id, wrapped, elapsed)
                 raise wrapped from exc
 
             if (
@@ -782,7 +1110,7 @@ class PipelineRunner:
                 step_id, artifacts=artifact_paths, raw_inputs=self._raw_inputs()
             )
         elapsed = time.perf_counter() - start
-        result.step_dispositions[step_id] = StepRecord(
+        record = StepRecord(
             disposition="computed",
             step_hash=self._step_hashes.get(step_id),
             tier=self._checkpoints.write_tier if saved else None,
@@ -790,13 +1118,14 @@ class PipelineRunner:
             save_seconds=save_seconds,
             artifacts=self._checkpoints.artifact_urls(step_id) if saved else {},
         )
+        result.step_dispositions[step_id] = record
         result.logs.append(f"ran: {step_id} ({elapsed:.3f}s)")
         self._log_sink.write(
             f"--- {step_id}: done ({elapsed:.3f}s"
             f"{_save_note(save_seconds)}) ---\n"
         )
         self._log_sink.flush()
-        self._progress.on_step_end(step_id, index, total, elapsed=elapsed)
+        self._report_finished(step_id, record, skipped=False)
 
     # -- closure construction ------------------------------------------------
 
@@ -863,8 +1192,11 @@ class PipelineRunner:
         Without it the step that failed contributes nothing to
         ``standard_out.txt``, which is where "how far did it get" lives.
         """
-        step_id = getattr(exc, "step_id", None) or unit.first
-        index = self._step_index.get(step_id, 0)
+        step_id = (
+            getattr(exc, "step_id", None)
+            or getattr(exc, TASK_STEP_ATTR, None)
+            or unit.first
+        )
         state = (chain_state or {}).get(unit.unit_id) or {}
         start = state.get("start")
         elapsed = time.perf_counter() - start if start is not None else 0.0
@@ -876,9 +1208,14 @@ class PipelineRunner:
         self._log_sink.write(f"--- {step_id}: {type(exc).__name__}: {exc} ---\n")
         self._log_sink.flush()
 
-        self._progress.on_step_end(
-            step_id, index, self._total, elapsed=elapsed, error=exc
+        self._emit_buffered_log(
+            step_id,
+            log_text or "",
+            getattr(exc, TASK_STREAMED_ATTR, False),
+            getattr(exc, TASK_INSTANCE_ATTR, None),
         )
+        chain = self._active_members(unit) if unit.is_chain else None
+        self._report_failed(step_id, exc, elapsed, chain)
 
     # -- result collection ---------------------------------------------------
 
@@ -900,6 +1237,19 @@ class PipelineRunner:
                 self._log_sink.write(f"\n--- {label} ---\n")
             self._log_sink.write(task_result.log_text)
             self._log_sink.flush()
+        instance = getattr(task, "instance_index", 0) if unit.is_chain else None
+        self._emit_buffered_log(
+            unit.first, task_result.log_text, task_result.streamed, instance
+        )
+        if unit.is_chain:
+            self._events.emit(
+                "instance_finished",
+                step=unit.first,
+                members={m.step_id: m.disposition for m in task_result.members},
+                instance=instance,
+                count=state["n_tasks"],
+                seconds=sum(m.elapsed for m in task_result.members),
+            )
 
     def _finalize_unit(self, unit: Unit, state: dict) -> None:
         if unit.is_chain:
@@ -909,8 +1259,6 @@ class PipelineRunner:
 
     def _finalize_step(self, unit: Unit, state: dict) -> None:
         step_id = unit.first
-        index = self._step_index[step_id]
-        total = self._total
         result = self._result
         # A step unit produced exactly one member result.
         _order, member = state["results"][0]
@@ -921,7 +1269,7 @@ class PipelineRunner:
         saved = member.checkpointed
         if saved:
             self._durable.add(step_id)
-        result.step_dispositions[step_id] = StepRecord(
+        record = StepRecord(
             disposition="computed",
             step_hash=self._step_hashes.get(step_id),
             tier=member.tier if saved else None,
@@ -929,18 +1277,18 @@ class PipelineRunner:
             save_seconds=member.save_seconds,
             artifacts=self._checkpoints.artifact_urls(step_id) if saved else {},
         )
+        result.step_dispositions[step_id] = record
         result.logs.append(f"ran: {step_id} ({member.elapsed:.3f}s)")
         self._log_sink.write(
             f"--- {step_id}: done ({member.elapsed:.3f}s"
             f"{_save_note(member.save_seconds)}) ---\n"
         )
         self._log_sink.flush()
-        self._progress.on_step_end(step_id, index, total, elapsed=member.elapsed)
+        self._report_finished(step_id, record, skipped=False)
 
     def _finalize_chain(self, unit: Unit, state: dict) -> None:
         result = self._result
-        total = self._total
-        member_ids = list(unit.member_ids)
+        member_ids = self._active_members(unit)
 
         # Reassemble per-member, per-instance outputs in instance order.
         by_instance: dict[int, dict[str, MemberResult]] = {}
@@ -961,7 +1309,7 @@ class PipelineRunner:
         # bucket reads of crop_survey_range per analysis window, about half an
         # hour, for a value nobody looked at. It is recorded as that lazy ref
         # from the start instead.
-        external = chain_external_readers(member_ids, self._dag)
+        external = running_readers(member_ids, self._dag, self._plan.must_run)
         all_checkpointed = {
             mid: bool(instance_order)
             and all(by_instance[i][mid].checkpointed for i in instance_order)
@@ -1010,17 +1358,22 @@ class PipelineRunner:
             else:
                 result.skipped_steps.append(mid)
             if computed == 0 and hits:
-                tier = (
-                    self._checkpoints.hit_tier(mid) if self._checkpoints else None
-                ) or "user"
+                # One tier names the step: the user tier when it served any
+                # instance, else the tier that served them.
+                served = {
+                    by_instance[i][mid].tier
+                    for i in instance_order
+                    if by_instance[i][mid].disposition == "hit"
+                }
+                tier = "user" if "user" in served else min(served)
                 disposition = f"hit-{tier}-cache"
-                write_tier = None
+                record_tier = tier
             elif computed == 0 and skipped:
                 disposition = "skipped"
-                write_tier = None
+                record_tier = None
             else:
                 disposition = "computed"
-                write_tier = (
+                record_tier = (
                     self._checkpoints.write_tier
                     if (self._checkpoints and computed)
                     else None
@@ -1038,14 +1391,15 @@ class PipelineRunner:
                 by_instance[i][mid].elapsed for i in instance_order
             )
             member_elapsed = sum(instance_times)
-            result.step_dispositions[mid] = StepRecord(
+            record = StepRecord(
                 disposition=disposition,
                 step_hash=self._step_hashes.get(mid),
-                tier=write_tier,
+                tier=record_tier,
                 elapsed_seconds=member_elapsed,
                 save_seconds=save_total,
                 instance_seconds=instance_times,
             )
+            result.step_dispositions[mid] = record
             result.logs.append(
                 f"mapped {mid}: {computed + hits + skipped} instance(s) "
                 f"({computed} computed, {hits} cached, {skipped} skipped)"
@@ -1060,10 +1414,16 @@ class PipelineRunner:
                 f"{skipped} skipped) ---\n"
             )
             self._log_sink.flush()
-            self._progress.on_step_end(
-                mid, self._step_index.get(mid, 0), total,
-                skipped=(computed == 0), elapsed=member_elapsed,
-                instance_seconds=instance_times,
+            self._report_finished(
+                mid,
+                record,
+                skipped=(computed == 0),
+                instance_stats={
+                    "count": computed + hits + skipped,
+                    "computed": computed,
+                    "cached": hits,
+                    "skipped": skipped,
+                },
             )
 
         self._report_disposal(unit, state, len(instance_order))
@@ -1077,7 +1437,8 @@ class PipelineRunner:
         asked for disposal reports its total either way.
         """
         wanted = any(
-            requested_ports(self._dag.nodes[mid]) for mid in unit.member_ids
+            requested_ports(self._dag.nodes[mid])
+            for mid in self._active_members(unit)
         )
         if not wanted:
             return
@@ -1101,6 +1462,14 @@ class PipelineRunner:
                 member.step_id, instance_hash=member.instance_hash
             )
         return member.inline_outputs or {}
+
+
+def _exception_text(exc: BaseException) -> str:
+    """Return ``str(exc)``, or a placeholder when the exception cannot print."""
+    try:
+        return str(exc)
+    except Exception:
+        return f"<unprintable {type(exc).__name__}>"
 
 
 def _instance_note(instance_seconds: tuple[float, ...]) -> str:

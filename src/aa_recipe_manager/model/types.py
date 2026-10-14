@@ -269,10 +269,30 @@ class Step(BaseModel):
 
 
 class IncludeBlock(BaseModel):
-    """Metadata for steps contributed by an included recipe."""
+    """Metadata for steps contributed by an included recipe.
+
+    Attributes:
+        source: File name of the included recipe.
+        step_ids: Steps the include contributed, its nested includes' too.
+        path: POSIX path of the included file relative to the root recipe's
+            folder.
+        name: The included recipe's ``recipe.name``.
+        description: The included recipe's ``recipe.description``.
+        overrides: ``input_overrides`` as written on the include entry.
+        map_over: ``map_over`` on the include entry, if any.
+        bindings: For each override, the slots of the flattened steps it was
+            substituted into, as ``{"step": ..., "slot": ...}`` entries.
+            Metadata only; it is not part of any step's fingerprint.
+    """
 
     source: str
     step_ids: list[str]
+    path: str | None = None
+    name: str | None = None
+    description: str | None = None
+    overrides: dict[str, Any] = {}
+    map_over: str | None = None
+    bindings: dict[str, list[dict[str, str]]] = {}
 
 
 # ---------------------------------------------------------------------------

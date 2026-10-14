@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.docs import sources
+from aa_recipe_manager.plain_values import clean_text, json_safe
 from aa_recipe_manager.registry.loader import EXPERIMENTAL_SPECS_DIR
 
 if TYPE_CHECKING:
@@ -266,29 +267,3 @@ def _package_relative(resolved: Path | None) -> str | None:
     if resolved.is_relative_to(_PACKAGE_DIR):
         return resolved.relative_to(_PACKAGE_DIR).as_posix()
     return resolved.name
-
-
-def clean_text(text: str | None) -> str | None:
-    """Collapse the trailing newline a folded YAML block leaves behind."""
-    if text is None:
-        return None
-    return str(text).strip() or None
-
-
-def json_safe(value: Any) -> Any:
-    """Coerce a value (including ruamel scalar subclasses) to plain JSON types."""
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, float):
-        return float(value)
-    if isinstance(value, str):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(key): json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [json_safe(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
-    return str(value)

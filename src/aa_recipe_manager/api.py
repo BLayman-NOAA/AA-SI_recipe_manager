@@ -22,15 +22,24 @@ from aa_recipe_manager.exceptions import (
     RecipeParseError,
     RecipeValidationError,
     SpecNotFoundError,
+    UnknownStepError,  # noqa: F401  (re-exported)
+    UpstreamNotCachedError,  # noqa: F401  (re-exported)
 )
 from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
+from aa_recipe_manager.preview import (  # noqa: F401  (re-exported)
+    PlanPreview,
+    StepPreview,
+    survey_hits_lost,
+)
 from aa_recipe_manager.storage import StorageLocation
 from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from aa_recipe_manager.config import RunConfig
     from aa_recipe_manager.docs.site_data import SiteDataResult
+    from aa_recipe_manager.events import CancelToken, EventSink
     from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
 
 
@@ -77,6 +86,7 @@ def _load_dag(
     input_values: dict[str, Any] | None = None,
     implementation_override: str | None = None,
     check_versions: bool = False,
+    base_dir: str | Path | None = None,
 ) -> PipelineDAG:
     """Build a PipelineDAG from a recipe path or Recipe object."""
     from aa_recipe_manager.model.types import Recipe as RecipeModel
@@ -99,7 +109,13 @@ def _load_dag(
     )
 
     registry = load_builtin_registry()
-    return build_dag(loaded, registry, input_values=input_values, check_versions=check_versions)
+    return build_dag(
+        loaded,
+        registry,
+        input_values=input_values,
+        check_versions=check_versions,
+        base_dir=base_dir,
+    )
 
 
 def load(recipe_path: str | Path) -> PipelineDAG:
@@ -193,15 +209,22 @@ def dry_run(
     inputs: dict[str, Any] | None = None,
     visualize: bool = False,
     check_versions: bool = True,
+    base_dir: str | Path | None = None,
 ) -> DryRunReport:
     """Validate a recipe and return a structured DryRunReport.
 
     No files are written and no pipeline steps are executed. All package-level
     errors are caught and returned as errors inside the DryRunReport; this
-    function never raises.
+    function never raises. Relative local path params are checked under
+    ``base_dir`` when given, else under the working directory.
     """
     try:
-        dag = _load_dag(recipe, input_values=inputs, check_versions=check_versions)
+        dag = _load_dag(
+            recipe,
+            input_values=inputs,
+            check_versions=check_versions,
+            base_dir=base_dir,
+        )
     except (
         RecipeParseError,
         RecipeValidationError,
@@ -296,6 +319,96 @@ def export_dependencies(
         return output
 
     return content
+
+
+def recipe_graph(
+    recipe: str | Path | Recipe,
+    *,
+    title: str | None = None,
+    ops_base: str = "ops/",
+    hashes: dict[str, str] | None = None,
+    allow_unknown_ops: bool = False,
+) -> dict[str, Any]:
+    """Build the flow diagram document for a recipe file or Recipe.
+
+    Args:
+        recipe: Recipe path or a loaded Recipe. Includes are flattened, and
+            each include becomes an entry of the document's ``includes``.
+        title: Title for the document. Defaults to the recipe's name.
+        ops_base: URL prefix for op reference pages.
+        hashes: Step hashes by step id, attached to the step nodes.
+        allow_unknown_ops: Draw a step whose op is not registered without
+            ports instead of raising, so the rest of the recipe can be shown.
+
+    Returns:
+        The graph document (schema 2), JSON serializable.
+
+    Raises:
+        RecipeParseError: The file is not a valid recipe.
+        SpecNotFoundError: An op is unknown and ``allow_unknown_ops`` is false.
+    """
+    from aa_recipe_manager.graph import build_recipe_graph
+    from aa_recipe_manager.parser.yaml_reader import load_recipe
+    from aa_recipe_manager.registry.loader import load_builtin_registry
+
+    if isinstance(recipe, (str, Path)):
+        path = Path(recipe)
+        loaded = load_recipe(path)
+        slug, source = path.stem, path.name
+    else:
+        loaded = recipe
+        slug = source = loaded.name
+    return build_recipe_graph(
+        loaded,
+        load_builtin_registry(),
+        slug=slug,
+        title=title or loaded.name,
+        source=source,
+        ops_base=ops_base,
+        hashes=hashes,
+        allow_unknown_ops=allow_unknown_ops,
+    )
+
+
+def op_catalog(*, resolve_sources: bool = False) -> dict[str, Any]:
+    """Return the op registry as the document the site's ``ops.json`` holds.
+
+    Args:
+        resolve_sources: Import each implementation's package to attach a
+            source link, signature, and docstring. Slow, so off by default.
+
+    Returns:
+        The op payload: ``schema``, ``counts``, ``categories`` and ``ops``.
+    """
+    from aa_recipe_manager.docs.payload import build_payload
+
+    return build_payload(resolve_sources=resolve_sources)
+
+
+def run_config(
+    recipe_path: str | Path | None = None,
+    explicit: str | Path | None = None,
+    cwd: str | Path | None = None,
+) -> RunConfig:
+    """Discover the run configuration the CLI would use for a recipe.
+
+    Args:
+        recipe_path: Recipe whose ``<stem>.config.yaml`` is looked for.
+        explicit: A config file named outright, as ``--config`` does.
+        cwd: Folder searched for ``aa-recipe.config.yaml`` in place of the
+            working directory, as if the CLI were run from it.
+
+    Returns:
+        The parsed RunConfig, empty when no file is found.
+
+    Raises:
+        FileNotFoundError: The explicit file, or the one ``AA_RECIPE_CONFIG``
+            names, does not exist.
+        ValueError: The config file is malformed.
+    """
+    from aa_recipe_manager.config import load_run_config
+
+    return load_run_config(explicit, recipe_path=recipe_path, cwd=cwd)
 
 
 def export_schema() -> dict[str, Any]:
@@ -722,6 +835,12 @@ def execute(
     progress: Any = None,
     executor_options: dict[str, Any] | None = None,
     keep_temp: bool = False,
+    targets: Sequence[str] | None = None,
+    only: bool = False,
+    force_steps: Sequence[str] = (),
+    pin_targets: bool = True,
+    events: EventSink | None = None,
+    cancel: CancelToken | None = None,
 ) -> Any:
     """Execute a recipe's pipeline directly in the current process.
 
@@ -812,11 +931,46 @@ def execute(
         If provided, write the captured provenance as YAML at this path. When
         ``user_cache_dir`` is set and this is None, a default sidecar named
         ``provenance.yaml`` is written under ``user_cache_dir/other``.
+    targets:
+        Step ids to run to. Only the targets and their ancestors are planned;
+        every other step is ``untargeted`` (neither run, loaded nor pruned).
+        A cached target loads rather than recomputes; use ``force_steps`` to
+        recompute it.
+    only:
+        Run the targets alone, loading their parents from the cache. Raises
+        :class:`UpstreamNotCachedError` naming the parents that are not
+        cached. Mapped parents are checked per instance as the run reaches
+        them. Requires ``targets``.
+    force_steps:
+        Step ids that recompute even when cached. Their descendants that the
+        run needs recompute too, since a cached descendant holds a result
+        computed from the old value. No hash changes.
+    pin_targets:
+        Checkpoint the targets in the write tier whatever the checkpoint mode,
+        so the next run can start from them. Targets with ``checkpoint:
+        never`` and runs without checkpoints save nothing and log a warning.
+        Pinning never changes a hash.
+    events:
+        An :class:`~aa_recipe_manager.events.EventSink` that receives the
+        run's events (``run_started``, ``plan``, step events, captured
+        ``log`` text and ``run_finished``), in ``seq`` order. See
+        :mod:`aa_recipe_manager.events`. ``progress`` keeps working
+        alongside it.
+    cancel:
+        A :class:`~aa_recipe_manager.events.CancelToken`. Once set, the run
+        starts nothing new: it is checked between units and between the
+        instances of a mapped step, and the tasks already running are allowed
+        to finish. Checkpoints written before the stop stay valid. The run
+        then returns normally with ``status == "cancelled"`` on the result
+        and in the manifest, holding the outputs that finished; the CLI exits
+        with code 2.
 
     Returns the :class:`ExecutionResult`.
     """
     from aa_recipe_manager.executor import resolve_executor
 
+    if only and not targets:
+        raise ValueError("only=True needs at least one target")
     if no_checkpoints and (checkpoint_mode or checkpoint_steps):
         raise ValueError(
             "no_checkpoints=True cannot be combined with checkpoint_mode or "
@@ -869,6 +1023,13 @@ def execute(
         cache_write_tier=cache_write_tier,
         progress=progress,
         keep_temp=keep_temp,
+        targets=list(targets or ()),
+        only=only,
+        force_steps=list(force_steps),
+        pin_targets=pin_targets,
+        events=events,
+        recipe_path=recipe if isinstance(recipe, (str, Path)) else None,
+        cancel=cancel,
     )
 
     sidecar_loc: StorageLocation | None = None
@@ -1006,6 +1167,91 @@ def explain_cache(
     )
 
 
+def plan_preview(
+    recipe: str | Path | Recipe,
+    *,
+    inputs: dict[str, Any] | None = None,
+    targets: Sequence[str] | None = None,
+    only: bool = False,
+    force_steps: Sequence[str] = (),
+    force: bool = False,
+    regenerate: str = "auto",
+    user_cache_dir: str | Path | None = None,
+    survey_cache_dir: str | Path | None = None,
+    outputs_dir: str | Path | None = None,
+    checkpoint_mode: CheckpointMode | str | None = None,
+    checkpoint_steps: Sequence[str] | None = None,
+    pin_targets: bool = True,
+    storage_options: dict[str, Any] | None = None,
+    fingerprint_cache: dict[tuple[str, str], Any] | None = None,
+    instance_probe_limit: int = 32,
+    base_dir: str | Path | None = None,
+) -> PlanPreview:
+    """Predict, per step, what :func:`execute` with these arguments would do.
+
+    Computes the step hashes, asks each cache tier which steps it holds, and
+    plans the run as :func:`execute` would, for the user write tier. What is
+    read: the checkpoint sidecars (``meta.json``) of every step, one listing
+    of a fanned out step's cache directory per tier when it has more than
+    ``instance_probe_limit`` instances, and the cached ``map_over`` source of
+    a fanned out step when that source is a JSON list. Nothing is written.
+    Remote tiers are probed from 8 threads at once.
+
+    Args:
+        recipe: Recipe file path or pre-loaded Recipe object.
+        inputs: Pipeline input values.
+        targets: Steps to run to (see :func:`execute`).
+        only: Run the targets alone. Raises :class:`UpstreamNotCachedError`
+            when a parent is not cached, as the run would.
+        force_steps: Steps that recompute even when cached.
+        force: Recompute every step.
+        regenerate: Artifact regeneration mode.
+        user_cache_dir: The user cache tier root. Without it every step is
+            predicted to compute.
+        survey_cache_dir: The survey cache tier root.
+        outputs_dir: The outputs directory, for artifact presence checks.
+        checkpoint_mode: Checkpoint mode override.
+        checkpoint_steps: Extra steps to checkpoint.
+        pin_targets: Checkpoint the targets, as a run does by default.
+        storage_options: fsspec options for remote tiers and inputs.
+        fingerprint_cache: A dict kept between calls that holds file and
+            folder fingerprints, so remote folders are listed once.
+        instance_probe_limit: Above this many instances a fanned out step is
+            counted from a directory listing instead of probed per instance.
+        base_dir: Directory that relative paths in the recipe resolve
+            against, when ``recipe`` is not a file.
+
+    Returns:
+        A :class:`PlanPreview` with one :class:`StepPreview` per step, in
+        topological order.
+    """
+    from aa_recipe_manager.preview import plan_preview as _plan_preview
+
+    if only and not targets:
+        raise ValueError("only=True needs at least one target")
+    dag = _load_dag(
+        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+    )
+    return _plan_preview(
+        dag,
+        inputs=inputs,
+        targets=targets,
+        only=only,
+        force_steps=force_steps,
+        force=force,
+        regenerate=regenerate,
+        user_cache_dir=user_cache_dir,
+        survey_cache_dir=survey_cache_dir,
+        outputs_dir=outputs_dir,
+        checkpoint_mode=checkpoint_mode,
+        checkpoint_steps=checkpoint_steps,
+        pin_targets=pin_targets,
+        storage_options=storage_options,
+        fingerprint_cache=fingerprint_cache,
+        instance_probe_limit=instance_probe_limit,
+    )
+
+
 @dataclass
 class StepHash:
     """A step's cache identity under a recipe's current parameters.
@@ -1027,12 +1273,15 @@ def step_hashes(
     *,
     inputs: dict[str, Any] | None = None,
     storage_options: dict[str, Any] | None = None,
+    fingerprint_cache: dict[tuple[str, str], Any] | None = None,
 ) -> dict[str, StepHash]:
     """Compute every step's cache identity without running anything.
 
     The same fingerprints a run computes, so a step's ``step_hash`` names the
     checkpoint a run with these parameters writes or reuses. Inputs that are
     files are fingerprinted, which reads them (or their remote metadata).
+    ``fingerprint_cache`` is a dict the caller keeps between calls; it holds
+    those file and folder fingerprints by path so they are read once.
 
     Returns a mapping of step id to :class:`StepHash`, in topological order.
     """
@@ -1040,7 +1289,10 @@ def step_hashes(
 
     dag = _load_dag(recipe, input_values=inputs, check_versions=False)
     fingerprints = compute_step_fingerprints(
-        dag, inputs or {}, storage_options=storage_options
+        dag,
+        inputs or {},
+        storage_options=storage_options,
+        path_fingerprint_cache=fingerprint_cache,
     )
     found: dict[str, StepHash] = {}
     for step_id in dag.topological_order:

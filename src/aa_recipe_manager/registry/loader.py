@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,11 @@ from ruamel.yaml import YAML
 from aa_recipe_manager.model.types import Implementation, Spec
 from aa_recipe_manager.registry.registry import Registry
 
-_yaml = YAML()
 _BUILTIN_SPECS_DIR = Path(__file__).parent / "builtin" / "specs"
 EXPERIMENTAL_SPECS_DIR = _BUILTIN_SPECS_DIR / "experimental"
+
+#: Parsed spec files by path, with the (mtime, size) they were parsed at.
+_parsed_specs: dict[Path, tuple[tuple[int, int], Any]] = {}
 
 
 def load_builtin_registry() -> Registry:
@@ -43,7 +46,7 @@ def experimental_ops() -> set[str]:
     names: set[str] = set()
     for path in EXPERIMENTAL_SPECS_DIR.glob("*.yaml"):
         with open(path, encoding="utf-8") as f:
-            raw = _yaml.load(f) or {}
+            raw = YAML().load(f) or {}
         names.add(raw.get("op", path.stem))
     return names
 
@@ -58,8 +61,7 @@ def load_registry_file(path: str | Path, registry: Registry) -> None:
 
 def _load_spec_file(path: Path, registry: Registry) -> None:
     """Parse one spec YAML file and register its spec and implementations."""
-    with open(path, encoding="utf-8") as f:
-        raw: dict[str, Any] = _yaml.load(f)
+    raw: dict[str, Any] = _read_spec_file(path)
 
     if not isinstance(raw, dict):
         raise ValueError(f"Spec file '{path}' must be a YAML mapping.")
@@ -85,3 +87,20 @@ def _load_spec_file(path: Path, registry: Registry) -> None:
             ) from exc
         registry.register_implementation(impl)
 
+
+def _read_spec_file(path: Path) -> Any:
+    """Parse a spec file, reusing the last parse while the file is unchanged.
+
+    Parsing dominates building the registry, which happens for every recipe
+    load, so a long running process such as the client server parses each
+    file once. Each caller gets its own copy. Every parse uses its own YAML
+    instance, because a ruamel parser is not safe to share between threads.
+    """
+    stat = path.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _parsed_specs.get(path)
+    if cached is None or cached[0] != stamp:
+        with open(path, encoding="utf-8") as f:
+            cached = (stamp, YAML().load(f))
+        _parsed_specs[path] = cached
+    return copy.deepcopy(cached[1])

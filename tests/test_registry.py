@@ -521,3 +521,12 @@ class TestBuiltinLoader:
             "ds_normalized": "['ds_normalized']",
             "gridded_results": "['gridded_results']",
         }
+
+
+def test_builtin_registry_reuses_parses_but_not_objects():
+    from aa_recipe_manager.registry.loader import load_builtin_registry
+
+    first, second = load_builtin_registry(), load_builtin_registry()
+    assert first.list_ops() == second.list_ops()
+    assert first.get_spec("compute_sv") == second.get_spec("compute_sv")
+    assert first.get_spec("compute_sv") is not second.get_spec("compute_sv")

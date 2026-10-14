@@ -1,0 +1,378 @@
+{
+  "schema": 2,
+  "slug": "with_sub",
+  "title": "client_with_sub",
+  "recipe": {
+    "name": "client_with_sub",
+    "description": "A seed list, a nested sub-recipe mapped over it, and a sum.",
+    "version": "1.0",
+    "source": "with_sub.yaml",
+    "parent": null,
+    "level": null,
+    "cruise": null
+  },
+  "nodes": [
+    {
+      "id": "in:n",
+      "kind": "input",
+      "label": "inputs.n",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 3,
+      "description": "Length of the seed list."
+    },
+    {
+      "id": "seed",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.make_list",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "with_sub.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Make a list of n numbers.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [],
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "units": null,
+          "description": null,
+          "default": 3,
+          "set": true,
+          "value": "${inputs.n}"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "items",
+          "type": "list",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "chain_inc",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.inc",
+      "category": null,
+      "implementation": null,
+      "include": "inc:sub/chain.yaml",
+      "document": "sub/chain.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Add one to the item.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "x",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${_item}",
+          "many": false,
+          "semantic": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "out",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "leaf_add",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.addk",
+      "category": null,
+      "implementation": null,
+      "include": "inc:sub/leaf.yaml",
+      "document": "sub/leaf.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Add k.",
+      "sink": false,
+      "mapped": true,
+      "group": "group:0",
+      "collector": false,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "x",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${chain_inc.out}",
+          "many": false,
+          "semantic": null
+        }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "int",
+          "units": null,
+          "description": null,
+          "default": 0,
+          "set": true,
+          "value": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "total",
+      "kind": "step",
+      "op": "custom",
+      "op_url": null,
+      "custom": true,
+      "extends": null,
+      "callable_path": "_stage9_helpers.collect_sum",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "with_sub.yaml",
+      "hash": null,
+      "editable": false,
+      "description": "Sum the per item results.",
+      "sink": false,
+      "mapped": false,
+      "group": null,
+      "collector": true,
+      "sweep": null,
+      "checkpoint": null,
+      "regenerate": null,
+      "inputs": [
+        {
+          "name": "values",
+          "type": "int",
+          "required": true,
+          "description": null,
+          "value": "${leaf_add.out}",
+          "many": true,
+          "semantic": null
+        }
+      ],
+      "params": [],
+      "outputs": [
+        {
+          "name": "total",
+          "type": "int",
+          "description": null,
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        }
+      ]
+    },
+    {
+      "id": "out:total.total",
+      "kind": "output",
+      "label": "total.total",
+      "type": "int",
+      "declared": false,
+      "from": {
+        "step": "total",
+        "output": "total"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "in:n",
+      "target": "seed",
+      "kind": "param",
+      "source_output": "n",
+      "target_input": "n",
+      "label": "n",
+      "type": "int"
+    },
+    {
+      "source": "seed",
+      "target": "chain_inc",
+      "kind": "map_over",
+      "source_output": "items",
+      "target_input": "x",
+      "label": "items -> _item -> x",
+      "type": "list",
+      "group": "group:0",
+      "item_inputs": [
+        "x"
+      ]
+    },
+    {
+      "source": "chain_inc",
+      "target": "leaf_add",
+      "kind": "data",
+      "source_output": "out",
+      "target_input": "x",
+      "label": "out -> x",
+      "type": "int"
+    },
+    {
+      "source": "leaf_add",
+      "target": "total",
+      "kind": "collect",
+      "source_output": "out",
+      "target_input": "values",
+      "label": "out -> values",
+      "type": "int"
+    },
+    {
+      "source": "total",
+      "target": "out:total.total",
+      "kind": "exit",
+      "source_output": "total",
+      "target_input": null,
+      "label": "total",
+      "type": "int"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group:0",
+      "kind": "map",
+      "map_over": "${seed.items}",
+      "label": "Runs once per item of seed.items",
+      "source": "seed",
+      "members": [
+        "chain_inc",
+        "leaf_add"
+      ]
+    }
+  ],
+  "includes": [
+    {
+      "id": "inc:sub/leaf.yaml",
+      "source": "sub/leaf.yaml",
+      "name": "client_leaf",
+      "title": "client_leaf",
+      "description": "Add k to a value.",
+      "parent": "inc:sub/chain.yaml",
+      "position": 2,
+      "steps": [
+        "leaf_add"
+      ],
+      "overrides": {
+        "value": "${chain_inc.out}",
+        "k": "${inputs.k}"
+      },
+      "map_over": "${inputs.source}",
+      "bindings": {
+        "value": [
+          {
+            "step": "leaf_add",
+            "slot": "inputs.x"
+          }
+        ],
+        "k": [
+          {
+            "step": "leaf_add",
+            "slot": "params.k"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "leaf_add",
+          "output": "out",
+          "by": [
+            "total"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inc:sub/chain.yaml",
+      "source": "sub/chain.yaml",
+      "name": "client_chain",
+      "title": "client_chain",
+      "description": "Per item increment followed by the leaf sub-recipe.",
+      "parent": null,
+      "position": 1,
+      "steps": [
+        "chain_inc",
+        "leaf_add"
+      ],
+      "overrides": {
+        "source": "${seed.items}",
+        "k": 5
+      },
+      "map_over": null,
+      "bindings": {
+        "source": [
+          {
+            "step": "chain_inc",
+            "slot": "map_over"
+          },
+          {
+            "step": "leaf_add",
+            "slot": "map_over"
+          }
+        ],
+        "k": [
+          {
+            "step": "leaf_add",
+            "slot": "params.k"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "leaf_add",
+          "output": "out",
+          "by": [
+            "total"
+          ]
+        }
+      ]
+    }
+  ]
+}

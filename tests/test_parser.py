@@ -234,6 +234,52 @@ class TestRecipeIncludes:
         assert params["netcdf_output_folder"] == "${inputs.my_raw_folder}/netcdf"
         assert "raw_folder" not in recipe.inputs
 
+    def test_include_bindings_record_where_overrides_land(self, tmp_path):
+        child = tmp_path / "child.yaml"
+        child.write_text(textwrap.dedent("""            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              raw_folder:
+                type: path
+              count:
+                type: int
+              unused:
+                type: int
+            steps:
+              - id: preprocess
+                op: initial_setup
+                inputs:
+                  source: ${inputs.raw_folder}
+                params:
+                  netcdf_output_folder: ${inputs.raw_folder}/netcdf
+                  limit: ${inputs.count}
+                  label: run ${inputs.count}
+            """))
+        parent = _write_recipe(tmp_path, """            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+                input_overrides:
+                  raw_folder: /data/raw
+                  count: 3
+                  unused: 1
+            """)
+
+        [block] = load_recipe(parent).include_blocks
+        assert block.bindings == {
+            "raw_folder": [
+                {"step": "preprocess", "slot": "inputs.source"},
+                {"step": "preprocess", "slot": "params.netcdf_output_folder"},
+            ],
+            # A number is substituted only where it is the whole value.
+            "count": [{"step": "preprocess", "slot": "params.limit"}],
+            "unused": [],
+        }
+
     def test_include_merges_unoverridden_child_inputs(self, tmp_path):
         child = tmp_path / "child.yaml"
         child.write_text(textwrap.dedent("""\

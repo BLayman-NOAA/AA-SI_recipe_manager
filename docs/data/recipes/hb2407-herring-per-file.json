@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb2407-herring-per-file",
   "title": "HB2407 herring, per file",
   "recipe": {
@@ -244,6 +244,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "utility",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.initial_setup_and_validation",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_0_calibration.yaml",
+      "document": "sub_recipes/processing_lvl_0_calibration.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
       "sink": false,
       "mapped": false,
@@ -314,13 +324,17 @@
           "name": "raw_file_paths",
           "type": "list",
           "description": "Ordered list of absolute paths to raw acoustic files",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_output_dir",
           "type": "path",
           "description": "Resolved full path to the calibration outputs directory. Pass this to generate_standardized_cal_mapping as output_base.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -332,6 +346,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.generate_standardized_cal_mapping",
+        "dependency": "aa-si-calibration"
+      },
+      "include": "inc:sub_recipes/processing_lvl_0_calibration.yaml",
+      "document": "sub_recipes/processing_lvl_0_calibration.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Read manufacturer calibration files, convert them to per-channel standardized files, match each raw channel to its calibration data, and return a mapping dict and a calibration dict.",
       "sink": false,
       "mapped": false,
@@ -447,13 +471,17 @@
           "name": "mapping_dict",
           "type": "dict",
           "description": "Maps each raw channel to its standardized calibration file path",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "calibration_dict",
           "type": "dict",
           "description": "Parsed standardized calibration data keyed by channel",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -465,6 +493,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.read_raw_files_to_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_1_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_1_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Open raw echosounder files with echopype and write each file as an intermediate per-file store. Returns a list of store-path strings for file-backed formats, or a list of in-memory EchoData objects when intermediate_format is \"none\". This is the future map_over target for parallel per-file processing. NOTE: use intermediate_format \"netcdf\" (default) or \"none\". The \"zarr\" option is not recommended; see the intermediate_format parameter description below.\nThe per-file conversion is echopype.open_raw, and sonar_model, include_bot, and use_swap are forwarded to it. Around that call this step adds remote file staging, .bot companion handling, and writing each result to an intermediate store.",
       "sink": false,
       "mapped": true,
@@ -481,7 +519,9 @@
           "description": "Paths to .raw files to open. Entries may be local paths or remote fsspec URLs (e.g. gs://bucket/survey/file.raw). Each remote file is downloaded to a local scratch directory, converted, and the local copy deleted before the next file is fetched, so the machine only ever holds ~1 raw file at a time. Bucket objects are never modified or deleted.",
           "value": [
             "${_item}"
-          ]
+          ],
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -527,7 +567,9 @@
           "name": "raw_stores",
           "type": "list",
           "description": "Store path strings (zarr/netcdf) written to exe_temp/data, or in-memory EchoData objects when intermediate_format is \"none\".",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -539,6 +581,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "io",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.combine_raw_stores",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_1_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_1_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Lazily open per-file intermediate stores (zarr or netcdf paths) produced by read_raw_files, or combine in-memory EchoData objects (none mode), into a single combined EchoData object. Mark this step checkpoint: always in your recipe so the checkpoint system writes the combined output once and reuses it on subsequent runs.\nThe reading and the combine itself are echopype.open_converted and echopype.combine_echodata. Around them this step adds store-path handling, input ordering, and the ping_time chunking of the combined result.",
       "sink": false,
       "mapped": true,
@@ -553,7 +605,9 @@
           "type": "list",
           "required": true,
           "description": "Store paths (zarr/netcdf strings) or in-memory EchoData objects",
-          "value": "${read_raw.raw_stores}"
+          "value": "${read_raw.raw_stores}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -572,7 +626,9 @@
           "name": "echodata",
           "type": "EchoData",
           "description": "Combined echopype EchoData object",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -584,6 +640,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.calibration.extract_standardized_calibration_parameters",
+        "dependency": "aa-si-calibration"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Extract calibration parameters (gain, sa-correction, EBA) and environmental parameters (sound speed, absorption) from standardized calibration files, cross-referenced against the EchoData object for channel alignment.",
       "sink": false,
       "mapped": true,
@@ -598,21 +664,27 @@
           "type": "dict",
           "required": true,
           "description": "Parsed standardized calibration data keyed by calibration key, from generate_standardized_cal_mapping. Holds the values themselves.",
-          "value": "${gen_cal_mapping.calibration_dict}"
+          "value": "${gen_cal_mapping.calibration_dict}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mapping_dict",
           "type": "dict",
           "required": true,
           "description": "Raw channel to calibration key mapping, from generate_standardized_cal_mapping. Says which entry of calibration_dict belongs to each channel of each file.",
-          "value": "${gen_cal_mapping.mapping_dict}"
+          "value": "${gen_cal_mapping.mapping_dict}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": true,
           "description": "EchoData whose channel labels the calibration values are aligned to, normally the combined object from combine_raw_files. The outputs are keyed by that object's channels, so they can be passed straight to compute_sv.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -649,19 +721,25 @@
           "name": "cal_params",
           "type": "dict",
           "description": "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "env_params",
           "type": "dict",
           "description": "Environmental parameters keyed by channel (sound_speed, sound_absorption)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "other_params",
           "type": "dict",
           "description": "Additional extracted calibration metadata keyed by channel and source file details. Its unmapped_channels entry names the channels that fell back to the raw file's own recorded values, and is empty when the mapping covered every channel.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -673,6 +751,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "level 2",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.calibrate.compute_Sv",
+        "dependency": "echopype"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute volume backscattering strength (Sv) from raw EchoData. When cal_params and env_params are supplied they are applied to the computation. When omitted, echopype uses default environmental and calibration values embedded in the raw file.\nThis step is echopype.calibrate.compute_Sv called directly, so the calibration model and its defaults are echopype's.",
       "sink": false,
       "mapped": true,
@@ -687,35 +775,45 @@
           "type": "EchoData",
           "required": true,
           "description": "Raw EchoData to calibrate, normally the single survey-wide object from combine_raw_files.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cal_params",
           "type": "dict",
           "required": false,
           "description": "Optional calibration parameter overrides. When null, echopype uses values from the raw file.",
-          "value": "${extract_cal_params.cal_params}"
+          "value": "${extract_cal_params.cal_params}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "env_params",
           "type": "dict",
           "required": false,
           "description": "Optional environmental parameter overrides. When null, echopype uses values from the raw file.",
-          "value": "${extract_cal_params.env_params}"
+          "value": "${extract_cal_params.env_params}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "waveform_mode",
           "type": null,
           "required": false,
           "description": null,
-          "value": "CW"
+          "value": "CW",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "encode_mode",
           "type": null,
           "required": false,
           "description": null,
-          "value": "power"
+          "value": "power",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [],
@@ -724,7 +822,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "xarray Dataset containing Sv variable and ping_time, range_sample coordinates",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -736,6 +836,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "consolidate",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.compute_transducer_depth",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute per-ping transducer depth in metres below the water surface from the EK Platform group, for feeding ``ep_add_depth`` as its ``depth_offset``.\nReads the Platform group directly rather than going through ``ep_add_depth(use_platform_vertical_offsets=true)``, which gets the sign wrong on both EK families for different reasons.\nOn an EK80 drop keel vessel the transducers ride on a retractable keel and ``drop_keel_offset`` records how far it was lowered, while the ``transducer_offset_z`` and ``water_level`` fields echopype's formula reads are left at zero. echopype carries ``drop_keel_offset`` for provenance and never reads it.\nAn EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60 per-ping transducer depth into ``water_level``, whose value its formula then subtracts (``transducer_offset_z - (water_level + vertical_offset)``, with ``transducer_offset_z`` zero because the ER60 does not populate it). The transducer comes out above the water surface and every depth is short by twice the draft. This step reads ``water_level`` directly instead.\n``drop_keel_offset`` is preferred when both are present; the field actually used is recorded in the output's ``static_offset_field`` attr.\nThe static position is per file and heave is per ping, so the result is ``static offset + datum_correction_m + heave_sign * vertical_offset``. Heave is interpolated onto ds_Sv's ping_time here, which also means ``ep_add_depth`` passes the array straight through instead of resampling it again with nearest neighbour.\nThe output is small (one value per ping) and is the record of what vertical reference a run actually used, so checkpointing it is cheap and makes the reference auditable without recomputing Sv.",
       "sink": false,
       "mapped": true,
@@ -750,14 +860,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate.",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": true,
           "description": "Source EchoData supplying the Platform group.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -803,7 +917,9 @@
           "name": "transducer_depth",
           "type": "DataArray",
           "description": "Transducer depth in metres below the surface, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Wire it into ``ep_add_depth``'s ``depth_offset``. Provenance (the static offset and which Platform field it came from, the correction applied, the heave sign and coverage) is recorded in its attrs.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -815,6 +931,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "consolidate",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.consolidate.add_depth",
+        "dependency": "echopype"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step is echopype.consolidate.add_depth called directly, so the depth computation and its parameters are echopype's. The result preserves all existing variables (including ``echo_range``) and adds ``depth`` on ``(channel, ping_time, range_sample)`` in metres below surface.\nWhatever depth-computation technique is selected (constant ``depth_offset``, Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``) is fully captured in the values of the resulting ``depth`` array, so downstream consumers can treat the dataset as the single source of truth for vertical reference frame without knowing which technique was used.",
       "sink": false,
       "mapped": true,
@@ -829,14 +955,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset (typically from compute_sv).",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": false,
           "description": "Source EchoData. Required when any of ``use_platform_vertical_offsets``, ``use_platform_angles``, or ``use_beam_angles`` is true.",
-          "value": "${combine_raw.echodata}"
+          "value": "${combine_raw.echodata}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -900,7 +1030,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Input Sv dataset with an added ``depth`` variable.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -912,6 +1044,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "detection",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.read_seafloor_line_evl",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Read a seafloor line from an Echoview ``.evl`` line file and align it to the Sv dataset's pings, returning a 1-D (ping_time,) DataArray in metres. Use it when a hand-verified Echoview bottom line is more trustworthy than running detection over the Sv data.\nEchoview exports a survey as a series of part-day line files, so ``evl_path`` may be a folder: the files whose names span ``file_time_start`` to ``file_time_end`` are selected and concatenated into one line before interpolation. Give it the same window that selected the raw files.\nDrop-in swap with the ``detect_seafloor`` and ``ep_detect_seafloor`` ops: the output port name (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream steps such as ``create_seafloor_mask`` work unchanged. The recipe step's ``inputs`` drop the ``echodata`` line (no detection is run) and the ``params`` block takes ``evl_path`` plus the alignment settings below instead of ``channel`` / ``min_valid_depth_m`` or ``method`` / ``method_params``.\nPings the line does not cover come back as NaN, and ``create_seafloor_mask`` rejects **every sample** of a ping whose seafloor is NaN (the metres-vs-metres comparison is False against NaN). The step therefore prints its ping coverage on every run; set ``min_coverage`` to turn a shortfall into a hard error, or widen ``edge_extend_s`` / ``max_gap_s`` if the gaps are benign.",
       "sink": false,
       "mapped": true,
@@ -926,7 +1068,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Calibrated Sv dataset supplying the target ``ping_time`` coordinate. Also supplies the vertical reference: pass a dataset that has been through ``ep_add_depth`` so the line can be matched to ``depth`` (metres below the surface), which is what an Echoview seabed line normally records.",
-          "value": "${ep_add_depth.ds_Sv}"
+          "value": "${ep_add_depth.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1035,7 +1179,9 @@
           "name": "seafloor_depth",
           "type": "DataArray",
           "description": "Seafloor depth in metres, shape (ping_time,), on ds_Sv's exact ping_time coordinate. Always 1-D (no channel dimension), matching the output of the ``detect_seafloor`` and ``ep_detect_seafloor`` ops so downstream masking steps are interchangeable. NaN wherever the line does not cover a ping.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1047,6 +1193,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.create_seafloor_mask",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Build a seafloor mask from baseline Sv and detected seafloor depth. The seafloor depth is passed as an explicit input, enabling swappable detection methods without modifying masking logic.",
       "sink": false,
       "mapped": true,
@@ -1061,14 +1217,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset the mask is shaped to. Supplies the meter-valued range variable that each sample's depth is compared against.",
-          "value": "${ep_add_depth.ds_Sv}"
+          "value": "${ep_add_depth.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "seafloor_depth",
           "type": "DataArray",
           "required": true,
           "description": "Seafloor depth per ping, shape (ping_time,), from detect_seafloor, ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN produce no valid samples, so an undetected stretch is masked out entirely rather than guessed at.",
-          "value": "${detect_seafloor.seafloor_depth}"
+          "value": "${detect_seafloor.seafloor_depth}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1096,7 +1256,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Boolean DataArray shaped like ds_Sv['Sv']; True means valid data (above seafloor)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1108,6 +1270,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.create_surface_mask",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Build a surface-interference mask from baseline Sv using a selectable method.",
       "sink": false,
       "mapped": true,
@@ -1122,7 +1294,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset the mask is shaped to. Supplies the range variable each sample's depth is read from.",
-          "value": "${compute_sv.ds_Sv}"
+          "value": "${compute_sv.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1141,7 +1315,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Boolean mask DataArray; True means valid data",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1153,6 +1329,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.combine_masks",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Combine two or more mask datasets into one final mask. Accepts a list of mask inputs to support inserting additional custom mask-producing steps into the chain without changing core framework code.",
       "sink": false,
       "mapped": true,
@@ -1170,7 +1356,9 @@
           "value": [
             "${create_seafloor_mask.mask}",
             "${create_surface_mask.mask}"
-          ]
+          ],
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1189,7 +1377,9 @@
           "name": "mask",
           "type": "DataArray",
           "description": "Combined boolean mask DataArray",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1201,6 +1391,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "masking",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.apply_mask_to_sv",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Apply a boolean mask to an Sv Dataset, setting masked samples to NaN.\nThin wrapper over echopype.mask.apply_mask, calling it against the Sv variable with NaN as the fill value. It adds nothing of its own, so the broadcasting and alignment rules are echopype's.",
       "sink": false,
       "mapped": true,
@@ -1215,14 +1415,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to mask, normally straight from compute_sv.",
-          "value": "${ep_add_depth.ds_Sv}"
+          "value": "${ep_add_depth.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mask",
           "type": "DataArray",
           "required": true,
           "description": "Boolean mask broadcastable against ds_Sv[\"Sv\"], where True marks a sample to keep. Normally the single mask from combine_masks, so every exclusion rule the recipe built is applied in one pass.",
-          "value": "${combine_masks.mask}"
+          "value": "${combine_masks.mask}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [],
@@ -1231,7 +1435,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Sv Dataset with masked samples set to NaN",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1243,6 +1449,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "processing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.concat_datasets",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Reconsolidate a collected list of xarray Datasets into a single Dataset by concatenating along a dimension. This is the recipe system's fan-in (collect) target for segment-parallel work: a mapped step that produces one Dataset per data segment (e.g. per-file MVBS) is gathered via ``collect`` and merged back into one Dataset along ``dim`` (default ``ping_time``). A single Dataset passes through unchanged (single-item transparency).",
       "sink": false,
       "mapped": false,
@@ -1257,7 +1473,9 @@
           "type": "Dataset | DataArray",
           "required": true,
           "description": "Collected list of Datasets (one per mapped/swept instance), supplied by a ``collect: ${mapped_step.output}`` directive on the recipe step.",
-          "value": "${apply_mask.ds_Sv}"
+          "value": "${apply_mask.ds_Sv}",
+          "many": true,
+          "semantic": null
         }
       ],
       "params": [
@@ -1285,7 +1503,9 @@
           "name": "merged",
           "type": "Dataset | DataArray",
           "description": "Single concatenated result, matching the collected element type: a Dataset for collected Datasets, a DataArray for collected DataArrays (e.g. a per-file detect_seafloor line collected into a survey-wide one).",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1297,6 +1517,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.crop_range_samples",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Trim trailing range samples that carry no data. A raw file records to the sonar's configured range, so after seafloor masking the deep end of ``range_sample`` is entirely NaN. Those samples still cost memory and time in every downstream step, and they widen the binned cell grid that ``compute_mvbs`` and ``compute_per_cell_statistics`` build - the flox reduction behind the latter allocates dense bookkeeping sized by channels x ping bins x range bins, so an over-wide range axis is what pushes it into a MemoryError on a long survey.\nA standalone step rather than a parameter on ``apply_sv_mask``, for the same reason ``rechunk_dataset`` is standalone: masking is ping-local and runs correctly per file, but the crop point is a property of the whole survey. Cropping per file would leave the segments with different ``range_sample`` lengths, and the ping_time concatenation resolves that by padding the short ones back out with NaN - which undoes the crop and leaves NaN in ``echo_range``, where downstream range binning reads it. Place this after the fan-in instead.\nThree criteria are available and compose - whichever are active each produce a candidate cut and the shallowest wins:\n* ``outlier_sigma`` rejects anomalous pings and then crops to the deepest\n  **retained** ping. Prefer this survey-wide: a single glitch ping reaching\n  far past the seafloor otherwise holds the whole range axis open, which is\n  exactly what defeats the lossless mode. The threshold is deliberately\n  generous, so uncommon-but-real depths survive and only wild outliers go.\n* ``max_range_m`` is a hard ceiling, applied whether or not samples above it\n  hold data. Cheapest when the answer is already known (e.g. from the\n  deepest point in the survey's seabed lines).\n* ``drop_trailing_all_nan`` is the lossless fallback used when no outlier\n  test is requested.",
       "sink": false,
       "mapped": false,
@@ -1311,7 +1541,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to crop, normally after apply_sv_mask so the seafloor returns are already NaN. Place this after any per-file fan-in, since the crop point is a property of the whole survey.",
-          "value": "${merge_sv.merged}"
+          "value": "${merge_sv.merged}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1375,7 +1607,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset with the trailing empty range samples dropped, so every downstream step works on a narrower range axis.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1387,6 +1621,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.rechunk_dataset",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
       "sink": false,
       "mapped": false,
@@ -1401,7 +1645,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
-          "value": "${crop_range.ds_Sv}"
+          "value": "${crop_range.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1420,7 +1666,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1432,6 +1680,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "noise_removal",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.remove_noise",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "document": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Estimate and remove background noise from Sv using the De Robertis and Higginbottom method. Returns a cleaned Sv Dataset.\nThin wrapper over echopype.clean.remove_background_noise. Every parameter below is forwarded to it unchanged, so its behavior is echopype's. The one thing the wrapper adds is that the corrected values are copied over the Sv variable, so downstream steps reading Sv get the cleaned data without having to know about Sv_corrected. Both variables are present on the result.",
       "sink": false,
       "mapped": false,
@@ -1446,7 +1704,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to denoise, normally the masked Sv from apply_sv_mask so the seafloor and surface returns are not folded into the noise estimate.",
-          "value": "${rechunk_before_noise.ds_Sv}"
+          "value": "${rechunk_before_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1492,7 +1752,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Noise-corrected Sv Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1504,6 +1766,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_visualization.echogram.plot_sv_echogram",
+        "dependency": "aa-si-visualization"
+      },
+      "include": null,
+      "document": "Herring_10-15_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
       "sink": true,
       "mapped": false,
@@ -1518,14 +1790,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Primary Sv dataset to plot",
-          "value": "${remove_noise.ds_Sv}"
+          "value": "${remove_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv_source",
           "type": "Dataset",
           "required": false,
           "description": "Reference Sv dataset whose coordinates set the axes",
-          "value": null
+          "value": null,
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1675,6 +1951,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.mask_sparse_bins",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_3.yaml",
+      "document": "sub_recipes/processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Remove spatiotemporal bins with fewer valid samples than a threshold, reducing noise in MVBS computation.",
       "sink": false,
       "mapped": false,
@@ -1689,7 +1975,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Sv Dataset to screen, normally the noise-removed Sv from remove_background_noise. Masking has already emptied parts of the grid, which is what leaves some bins with too few samples to average.",
-          "value": "${remove_noise.ds_Sv}"
+          "value": "${remove_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1735,7 +2023,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset with samples in under-populated bins set to NaN. Feed this to compute_mvbs using the same bin sizes.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1747,6 +2037,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_utils.utils.rechunk_dataset",
+        "dependency": "aa-si-utils"
+      },
+      "include": "inc:sub_recipes/processing_lvl_3.yaml",
+      "document": "sub_recipes/processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Rechunk a Dataset along ping_time. A standalone step rather than a parameter on any particular masking or reduction op, so a recipe can insert (or remove) chunking wherever a downstream op should run dask-parallel, independent of which step happens to run immediately before it.",
       "sink": false,
       "mapped": false,
@@ -1761,7 +2061,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Dataset to rechunk. Any Sv-like Dataset is accepted, whatever step produced it.",
-          "value": "${mask_sparse.ds_Sv}"
+          "value": "${mask_sparse.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1780,7 +2082,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "The same Dataset backed by dask arrays chunked along ping_time, so the steps wired after it can run chunk-parallel.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1792,6 +2096,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "processing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "echopype.commongrid.compute_MVBS",
+        "dependency": "echopype"
+      },
+      "include": "inc:sub_recipes/processing_lvl_3.yaml",
+      "document": "sub_recipes/processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute Mean Volume Backscattering Strength by averaging Sv over range and time bins. Returns a gridded MVBS Dataset.\nThis step is echopype.commongrid.compute_MVBS called directly, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
       "sink": false,
       "mapped": false,
@@ -1806,7 +2120,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins, so bins that failed the sparsity check are already NaN and do not pull the bin means toward the noise floor.",
-          "value": "${rechunk_before_mvbs.ds_Sv}"
+          "value": "${rechunk_before_mvbs.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -1897,7 +2213,9 @@
           "name": "ds_MVBS",
           "type": "Dataset",
           "description": "Gridded MVBS Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -1909,6 +2227,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.compute_per_cell_statistics",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_3.yaml",
+      "document": "sub_recipes/processing_lvl_3.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Compute per-MVBS-cell statistics (e.g. coefficient of variation) from fine-resolution Sv data before masking or MVBS averaging. Results are stored as new DataArrays in the returned dataset at MVBS-bin resolution. Must be called with the same range_bin, ping_time_bin and range_var values used by mask_sparse_bins and compute_mvbs so that bin grids align exactly. Pass the returned dataset to add_auxiliary_features via the ds_sv input to absorb the statistics into the ML feature matrix.",
       "sink": false,
       "mapped": false,
@@ -1923,7 +2251,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv from remove_background_noise. Take it from before mask_sparse_bins: the within-cell spread is the signal here, and dropping sparse bins first would hide the cells whose variability is most informative.",
-          "value": "${remove_noise.ds_Sv}"
+          "value": "${remove_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2000,7 +2330,9 @@
           "name": "ds_Sv",
           "type": "Dataset",
           "description": "Input Dataset with per-cell statistic variables appended (e.g. cell_cv with dims channel x cell_ping_time x cell_echo_range)",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -2012,6 +2344,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_visualization.echogram.plot_sv_echogram",
+        "dependency": "aa-si-visualization"
+      },
+      "include": null,
+      "document": "Herring_10-15_per_file.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render an Sv echogram. Supports two call patterns: (1) single dataset, plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes from ds_Sv_source (useful for MVBS overlaid on the original Sv grid). This is a sink step: it produces a side-effect (figure) with no data output.",
       "sink": true,
       "mapped": false,
@@ -2026,14 +2368,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Primary Sv dataset to plot",
-          "value": "${compute_mvbs.ds_MVBS}"
+          "value": "${compute_mvbs.ds_MVBS}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv_source",
           "type": "Dataset",
           "required": false,
           "description": "Reference Sv dataset whose coordinates set the axes",
-          "value": "${mask_sparse.ds_Sv}"
+          "value": "${mask_sparse.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2183,6 +2529,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.reshape_data_for_ml",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Reshape an MVBS Dataset into a flat, ML-ready xarray Dataset where each observation corresponds to one spatial or temporal bin.",
       "sink": false,
       "mapped": false,
@@ -2197,7 +2553,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Gridded MVBS Dataset to flatten, from compute_mvbs, or from add_line_overlay when a line variable should travel with it. One MVBS cell becomes one ML sample, with the channels of that cell as its features.",
-          "value": "${compute_mvbs.ds_MVBS}"
+          "value": "${compute_mvbs.ds_MVBS}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2243,7 +2601,9 @@
           "name": "ds_ml_ready",
           "type": "Dataset",
           "description": "Flattened ML-ready Dataset",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -2255,6 +2615,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.add_auxiliary_features",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Append auxiliary coordinate-derived features (e.g. depth, ping_time_seconds) to the flattened ML-ready Dataset. Optional step; omit when no auxiliary features are needed.",
       "sink": false,
       "mapped": false,
@@ -2269,28 +2639,36 @@
           "type": "Dataset",
           "required": true,
           "description": "Flattened ML Dataset from reshape_for_ml. The new features are appended as extra columns on its feature matrix.",
-          "value": "${reshape_ml.ds_ml_ready}"
+          "value": "${reshape_ml.ds_ml_ready}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "echodata",
           "type": "EchoData",
           "required": false,
           "description": "Raw EchoData supplying the echosounder's own bottom pick, used for the 'seafloor_depth' and 'altitude' features when the seafloor_depth input is not wired. Ignored when it is.",
-          "value": "${inputs.echodata}"
+          "value": "${inputs.echodata}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_sv",
           "type": "Dataset",
           "required": false,
           "description": "Dataset returned by compute_per_cell_statistics, carrying per-MVBS-cell statistic variables (e.g. cell_cv). Required when 'cell_cv' is listed in features.",
-          "value": "${compute_cell_stats.ds_Sv}"
+          "value": "${compute_cell_stats.ds_Sv}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "seafloor_depth",
           "type": "DataArray",
           "required": false,
           "description": "Pre-detected seafloor line, 1-D over ping_time, typically wired from a detect_seafloor step. Takes precedence over echodata for the 'seafloor_depth' and 'altitude' features, so the ML features use the same line the masking stack used instead of a channel mean recomputed internally. Either this or echodata is required for those features.\nIn a per-file map_over pipeline, collect the per-file lines into one survey-wide line and wire that, e.g. a merge_datasets step with collect: ${detect_seafloor.seafloor_depth}. This input does accept the raw list of per-file lines and concatenates it along ping_time in segment order, but a recipe cannot reference a mapped step from outside its chain and still resume: the runner prunes a mapped chain as a whole once the downstream fan-in is a cache hit, so the direct reference resolves on a cold run and fails on a resumed one.\nVertical reference: 'altitude' is a difference (seafloor minus sample), so a constant offset shared by both terms cancels and the frame does not matter as long as they agree. They normally do: detect_seafloor promotes its line to surface-referenced only when its ds_Sv carries depth, the same condition under which depth reaches the ML dataset, and 'altitude' prefers depth over echo_range to pair with it.",
-          "value": "${inputs.seafloor_depth}"
+          "value": "${inputs.seafloor_depth}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2320,7 +2698,9 @@
           "name": "ds_ml_ready",
           "type": "Dataset",
           "description": "ML-ready Dataset with auxiliary features appended",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -2332,6 +2712,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_preprocessing",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.normalize_data",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Normalize ML features in the flattened Dataset. Supports per-feature normalization methods via per_group_methods.",
       "sink": false,
       "mapped": false,
@@ -2346,7 +2736,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Flattened ML Dataset to normalize, from reshape_for_ml, or from add_auxiliary_features when auxiliary columns were appended. Those columns are on unrelated scales (metres, seconds, a coefficient of variation), which is what per_group_methods exists to handle.",
-          "value": "${add_aux_features.ds_ml_ready}"
+          "value": "${add_aux_features.ds_ml_ready}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2410,7 +2802,9 @@
           "name": "ds_normalized",
           "type": "Dataset",
           "description": "Dataset with normalized feature values",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -2422,6 +2816,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_visualization.echogram.plot_flattened_data_echogram",
+        "dependency": "aa-si-visualization"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render a normalized ML feature echogram for inspection. This is a sink step: it produces a side-effect (figure) with no data output.",
       "sink": true,
       "mapped": false,
@@ -2436,14 +2840,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Normalized ML Dataset from normalize_ml_data. Its flattened features are folded back onto the ping and range grid for display, which is the quickest way to see what the clustering will actually be given.",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv",
           "type": "Dataset",
           "required": true,
           "description": "Original Sv Dataset supplying the depth and ping coordinates the axes are drawn against. Use the same Sv the MVBS grid was built from, so this plot lines up with the Sv echograms next to it.",
-          "value": "${remove_noise.ds_Sv}"
+          "value": "${remove_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2593,6 +3001,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_clustering",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.run_hdbscan",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Run HDBSCAN unsupervised clustering on normalized feature data. Pure-compute step: accepts normalized features and returns a clustering result dict without modifying any Dataset. Designed to be a sweep target for hyperparameter comparison.",
       "sink": false,
       "mapped": false,
@@ -2607,7 +3025,9 @@
           "type": "Dataset",
           "required": true,
           "description": "Normalized ML Dataset from normalize_ml_data, or the single-cluster subset from filter_normalized_by_cluster for a second-pass run. Only the feature matrix is read; the Dataset is not modified.",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -2725,25 +3145,33 @@
           "name": "clustering_results",
           "type": "Dataset",
           "description": "Checkpoint-friendly xarray Dataset containing cluster labels, sample indices, and scalar metadata. Saved as Zarr by default.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "description": "Optional fitted clustering model used for HDBSCAN hierarchy plots. This output is intentionally separate from clustering_results so the label data can checkpoint as Zarr while the model falls back to pickle.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "background_label",
           "type": "int",
           "description": "Cluster label identified as background. Only populated when find_background_cluster is true; null otherwise.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "cluster_labels",
           "type": "list",
           "description": "Sorted list of non-noise cluster labels found in this result (all labels >= 0). Provided as scaffolding for a future map_over fan-out: map_over: ${this_step.cluster_labels} will fan filter_normalized_by_cluster across every discovered cluster without any changes to the op or its spec.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -2755,6 +3183,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "ml_clustering",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.embed_clustering_results",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a single result dict from run_hdbscan, or a collected list of result dicts when used with the collect pattern for ensemble runs. For a list, one cluster-label variable is embedded per collected result using deterministic names derived from ml_result_name.",
       "sink": false,
       "mapped": false,
@@ -2769,14 +3207,18 @@
           "type": "Dataset",
           "required": true,
           "description": "Normalized ML Dataset to enrich with cluster-label variables",
-          "value": "${normalize_ml.ds_normalized}"
+          "value": "${normalize_ml.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_results",
           "type": "Dataset",
           "required": true,
           "description": "Clustering result dataset from run_hdbscan. When collect is used for ensemble runs, a list of result datasets is accepted (many: true).",
-          "value": "${run_hdbscan.clustering_results}"
+          "value": "${run_hdbscan.clustering_results}",
+          "many": true,
+          "semantic": null
         }
       ],
       "params": [
@@ -2804,13 +3246,17 @@
           "name": "ds_normalized",
           "type": "Dataset",
           "description": "Normalized ML Dataset enriched with cluster-label variables",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "gridded_results",
           "type": "DataArray",
           "description": "Gridded cluster labels as a DataArray for a single result, or a dict keyed by embedded result name for multi-result fan-in (many: true).",
-          "disposed": false
+          "disposed": false,
+          "many": true,
+          "semantic": null
         }
       ]
     },
@@ -2822,6 +3268,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "visualization",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_ml.ml.plot_clustering_report",
+        "dependency": "aa-si-ml"
+      },
+      "include": "inc:sub_recipes/processing_lvl_4.yaml",
+      "document": "sub_recipes/processing_lvl_4.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Render a full clustering report for one or more clustering results. Produces the clustering echogram, per-cluster statistics report, and the HDBSCAN hierarchy plot when the clustering result includes a model and hierarchy plotting is applicable. This is a sink step: it produces figures with no data output.",
       "sink": true,
       "mapped": false,
@@ -2836,28 +3292,36 @@
           "type": "Dataset",
           "required": true,
           "description": "Embedded normalized ML Dataset containing stored cluster-label variables",
-          "value": "${embed_results.ds_normalized}"
+          "value": "${embed_results.ds_normalized}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "clustering_results",
           "type": "Dataset",
           "required": false,
           "description": "Clustering result Dataset from run_hdbscan or assign_clusters_to_all_points. Legacy dict results and collected lists are also accepted (many: true). Optional: every panel but the HDBSCAN hierarchy reads the labels embed_clustering_results stored in ds_normalized, so a report can be drawn from that checkpointed dataset alone and the fit never has to be rerun for it. Leave it out to do that; the hierarchy panel is then skipped.",
-          "value": "${run_hdbscan.clustering_results}"
+          "value": "${run_hdbscan.clustering_results}",
+          "many": true,
+          "semantic": null
         },
         {
           "name": "clustering_model",
           "type": "object",
           "required": false,
           "description": "Optional fitted clustering model from run_hdbscan, used only for the HDBSCAN hierarchy plot. Other report panels use clustering_results.",
-          "value": "${run_hdbscan.clustering_model}"
+          "value": "${run_hdbscan.clustering_model}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "ds_Sv",
           "type": "Dataset",
           "required": false,
           "description": "Original Sv Dataset for echogram depth reference",
-          "value": "${remove_noise.ds_Sv}"
+          "value": "${remove_noise.ds_Sv}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -4022,6 +4486,534 @@
         "combine_masks",
         "apply_mask"
       ]
+    }
+  ],
+  "includes": [
+    {
+      "id": "inc:sub_recipes/processing_lvl_0_calibration.yaml",
+      "source": "sub_recipes/processing_lvl_0_calibration.yaml",
+      "name": "processing_lvl_0_calibration",
+      "title": "processing_lvl_0_calibration",
+      "description": "Raw file selection and the survey's calibration mapping (gs:// inputs).",
+      "parent": null,
+      "position": 0,
+      "steps": [
+        "initial_setup",
+        "gen_cal_mapping"
+      ],
+      "overrides": {
+        "raw_input_folder": "${inputs.raw_input_folder}",
+        "cal_input_folder": "${inputs.cal_input_folder}",
+        "file_time_start": "${inputs.file_time_start}",
+        "file_time_end": "${inputs.file_time_end}",
+        "cruise_id": "HB2407",
+        "record_author": "<Your Name>"
+      },
+      "map_over": null,
+      "bindings": {
+        "raw_input_folder": [
+          {
+            "step": "initial_setup",
+            "slot": "params.raw_input_folder"
+          },
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.raw_input_folder"
+          }
+        ],
+        "cal_input_folder": [
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.cal_input_folder"
+          }
+        ],
+        "file_time_start": [
+          {
+            "step": "initial_setup",
+            "slot": "params.file_time_start"
+          },
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.file_time_start"
+          }
+        ],
+        "file_time_end": [
+          {
+            "step": "initial_setup",
+            "slot": "params.file_time_end"
+          },
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.file_time_end"
+          }
+        ],
+        "cruise_id": [
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.cruise_id"
+          }
+        ],
+        "record_author": [
+          {
+            "step": "gen_cal_mapping",
+            "slot": "params.record_author"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "initial_setup",
+          "output": "raw_file_paths",
+          "by": [
+            "read_raw"
+          ]
+        },
+        {
+          "step": "gen_cal_mapping",
+          "output": "calibration_dict",
+          "by": [
+            "extract_cal_params"
+          ]
+        },
+        {
+          "step": "gen_cal_mapping",
+          "output": "mapping_dict",
+          "by": [
+            "extract_cal_params"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inc:sub_recipes/processing_lvl_1_per_file.yaml",
+      "source": "sub_recipes/processing_lvl_1_per_file.yaml",
+      "name": "processing_lvl_1_per_file",
+      "title": "processing_lvl_1_per_file",
+      "description": "Per-file raw ingest (gs:// inputs).",
+      "parent": null,
+      "position": 2,
+      "steps": [
+        "read_raw",
+        "combine_raw"
+      ],
+      "overrides": {
+        "sonar_model": "EK80"
+      },
+      "map_over": null,
+      "bindings": {
+        "sonar_model": [
+          {
+            "step": "read_raw",
+            "slot": "params.sonar_model"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "combine_raw",
+          "output": "echodata",
+          "by": [
+            "compute_sv",
+            "compute_transducer_depth",
+            "ep_add_depth",
+            "extract_cal_params"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inc:sub_recipes/processing_lvl_2_per_file.yaml",
+      "source": "sub_recipes/processing_lvl_2_per_file.yaml",
+      "name": "processing_lvl_2_per_file",
+      "title": "processing_lvl_2_per_file",
+      "description": "Per-file Sv and masking, fan-in to survey Sv, then noise removal.",
+      "parent": null,
+      "position": 4,
+      "steps": [
+        "extract_cal_params",
+        "compute_sv",
+        "compute_transducer_depth",
+        "ep_add_depth",
+        "detect_seafloor",
+        "create_seafloor_mask",
+        "create_surface_mask",
+        "combine_masks",
+        "apply_mask",
+        "merge_sv",
+        "crop_range",
+        "rechunk_before_noise",
+        "remove_noise"
+      ],
+      "overrides": {
+        "echodata": "${combine_raw.echodata}",
+        "calibration_dict": "${gen_cal_mapping.calibration_dict}",
+        "mapping_dict": "${gen_cal_mapping.mapping_dict}",
+        "datum_correction_m": -1.0,
+        "use_heave": true,
+        "heave_sign": 1.0,
+        "surface_mask_depth": 5.0,
+        "seafloor_buffer_m": 1,
+        "crop_outlier_sigma": 3.0,
+        "crop_outlier_margin": 1.5,
+        "noise_ping_num": 5,
+        "noise_range_sample_num": 10,
+        "seabed_line_folder": "${inputs.seabed_line_folder}",
+        "file_time_start": "${inputs.file_time_start}",
+        "file_time_end": "${inputs.file_time_end}"
+      },
+      "map_over": null,
+      "bindings": {
+        "echodata": [
+          {
+            "step": "extract_cal_params",
+            "slot": "inputs.echodata"
+          },
+          {
+            "step": "compute_sv",
+            "slot": "inputs.echodata"
+          },
+          {
+            "step": "compute_transducer_depth",
+            "slot": "inputs.echodata"
+          },
+          {
+            "step": "ep_add_depth",
+            "slot": "inputs.echodata"
+          }
+        ],
+        "calibration_dict": [
+          {
+            "step": "extract_cal_params",
+            "slot": "inputs.calibration_dict"
+          }
+        ],
+        "mapping_dict": [
+          {
+            "step": "extract_cal_params",
+            "slot": "inputs.mapping_dict"
+          }
+        ],
+        "datum_correction_m": [
+          {
+            "step": "compute_transducer_depth",
+            "slot": "params.datum_correction_m"
+          }
+        ],
+        "use_heave": [
+          {
+            "step": "compute_transducer_depth",
+            "slot": "params.use_heave"
+          }
+        ],
+        "heave_sign": [
+          {
+            "step": "compute_transducer_depth",
+            "slot": "params.heave_sign"
+          }
+        ],
+        "surface_mask_depth": [
+          {
+            "step": "create_surface_mask",
+            "slot": "params.surface_depth_m"
+          }
+        ],
+        "seafloor_buffer_m": [
+          {
+            "step": "create_seafloor_mask",
+            "slot": "params.seafloor_buffer_m"
+          }
+        ],
+        "crop_outlier_sigma": [
+          {
+            "step": "crop_range",
+            "slot": "params.outlier_sigma"
+          }
+        ],
+        "crop_outlier_margin": [
+          {
+            "step": "crop_range",
+            "slot": "params.outlier_margin"
+          }
+        ],
+        "noise_ping_num": [
+          {
+            "step": "remove_noise",
+            "slot": "params.ping_num"
+          }
+        ],
+        "noise_range_sample_num": [
+          {
+            "step": "remove_noise",
+            "slot": "params.range_sample_num"
+          }
+        ],
+        "seabed_line_folder": [
+          {
+            "step": "detect_seafloor",
+            "slot": "params.evl_path"
+          }
+        ],
+        "file_time_start": [
+          {
+            "step": "detect_seafloor",
+            "slot": "params.file_time_start"
+          }
+        ],
+        "file_time_end": [
+          {
+            "step": "detect_seafloor",
+            "slot": "params.file_time_end"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "remove_noise",
+          "output": "ds_Sv",
+          "by": [
+            "compute_cell_stats",
+            "mask_sparse",
+            "plot_clustering_report",
+            "plot_normalized_ml",
+            "plot_sv_clean"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inc:sub_recipes/processing_lvl_3.yaml",
+      "source": "sub_recipes/processing_lvl_3.yaml",
+      "name": "processing_lvl_3",
+      "title": "processing_lvl_3",
+      "description": "Sparse masking, MVBS generation, and per-cell statistics.",
+      "parent": null,
+      "position": 18,
+      "steps": [
+        "mask_sparse",
+        "rechunk_before_mvbs",
+        "compute_mvbs",
+        "compute_cell_stats"
+      ],
+      "overrides": {
+        "sv_clean_unmasked": "${remove_noise.ds_Sv}",
+        "range_bin": "4m",
+        "ping_time_bin": "4s",
+        "nan_threshold": 0.95
+      },
+      "map_over": null,
+      "bindings": {
+        "sv_clean_unmasked": [
+          {
+            "step": "mask_sparse",
+            "slot": "inputs.ds_Sv"
+          },
+          {
+            "step": "compute_cell_stats",
+            "slot": "inputs.ds_Sv"
+          }
+        ],
+        "range_bin": [
+          {
+            "step": "mask_sparse",
+            "slot": "params.range_bin"
+          },
+          {
+            "step": "compute_mvbs",
+            "slot": "params.range_bin"
+          },
+          {
+            "step": "compute_cell_stats",
+            "slot": "params.range_bin"
+          }
+        ],
+        "ping_time_bin": [
+          {
+            "step": "mask_sparse",
+            "slot": "params.ping_time_bin"
+          },
+          {
+            "step": "compute_mvbs",
+            "slot": "params.ping_time_bin"
+          },
+          {
+            "step": "compute_cell_stats",
+            "slot": "params.ping_time_bin"
+          }
+        ],
+        "nan_threshold": [
+          {
+            "step": "mask_sparse",
+            "slot": "params.nan_threshold"
+          }
+        ]
+      },
+      "consumed": [
+        {
+          "step": "compute_mvbs",
+          "output": "ds_MVBS",
+          "by": [
+            "plot_mvbs",
+            "reshape_ml"
+          ]
+        },
+        {
+          "step": "mask_sparse",
+          "output": "ds_Sv",
+          "by": [
+            "plot_mvbs"
+          ]
+        },
+        {
+          "step": "compute_cell_stats",
+          "output": "ds_Sv",
+          "by": [
+            "add_aux_features"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inc:sub_recipes/processing_lvl_4.yaml",
+      "source": "sub_recipes/processing_lvl_4.yaml",
+      "name": "processing_lvl_4",
+      "title": "processing_lvl_4",
+      "description": "ML reshape, normalization, clustering, and reporting.",
+      "parent": null,
+      "position": 23,
+      "steps": [
+        "reshape_ml",
+        "add_aux_features",
+        "normalize_ml",
+        "plot_normalized_ml",
+        "run_hdbscan",
+        "embed_results",
+        "plot_clustering_report"
+      ],
+      "overrides": {
+        "mvbs": "${compute_mvbs.ds_MVBS}",
+        "overlay_line_var": "sw_dive_profile",
+        "sv_clean_unmasked": "${remove_noise.ds_Sv}",
+        "cell_stats_sv": "${compute_cell_stats.ds_Sv}",
+        "min_depth": "${inputs.min_depth}",
+        "max_depth": "${inputs.max_depth}",
+        "time_min": "${inputs.time_min}",
+        "time_max": "${inputs.time_max}",
+        "x_axis_units": "${inputs.x_axis_units}",
+        "y_axis_units": "${inputs.y_axis_units}",
+        "hdbscan_min_cluster_size_fraction": 0.001,
+        "hdbscan_min_samples": 7,
+        "hdbscan_cluster_selection_method": "eom"
+      },
+      "map_over": null,
+      "bindings": {
+        "mvbs": [
+          {
+            "step": "reshape_ml",
+            "slot": "inputs.ds_MVBS"
+          }
+        ],
+        "overlay_line_var": [
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.overlay_line_var"
+          }
+        ],
+        "sv_clean_unmasked": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "inputs.ds_Sv"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "inputs.ds_Sv"
+          }
+        ],
+        "cell_stats_sv": [
+          {
+            "step": "add_aux_features",
+            "slot": "inputs.ds_sv"
+          }
+        ],
+        "min_depth": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.min_depth"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.plot_window"
+          }
+        ],
+        "max_depth": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.max_depth"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.plot_window"
+          }
+        ],
+        "time_min": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.time_min"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.time_min"
+          }
+        ],
+        "time_max": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.time_max"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.time_max"
+          }
+        ],
+        "x_axis_units": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.x_axis_units"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.x_axis_units"
+          }
+        ],
+        "y_axis_units": [
+          {
+            "step": "plot_normalized_ml",
+            "slot": "params.y_axis_units"
+          },
+          {
+            "step": "plot_clustering_report",
+            "slot": "params.y_axis_units"
+          }
+        ],
+        "hdbscan_min_cluster_size_fraction": [
+          {
+            "step": "run_hdbscan",
+            "slot": "params.min_cluster_size_fraction"
+          }
+        ],
+        "hdbscan_min_samples": [
+          {
+            "step": "run_hdbscan",
+            "slot": "params.min_samples"
+          }
+        ],
+        "hdbscan_cluster_selection_method": [
+          {
+            "step": "run_hdbscan",
+            "slot": "params.cluster_selection_method"
+          }
+        ]
+      },
+      "consumed": []
     }
   ]
 }

@@ -127,9 +127,58 @@ class TieredCheckpointStore:
         """Tier name -> cache root URL, for the run manifest."""
         return {name: str(mgr.location) for name, mgr in self._managers.items()}
 
-    def hit_tier(self, step_id: str) -> str | None:
-        """Which tier served (or received) this step, once known."""
-        return self._hit_tier.get(step_id)
+    def hit_tier(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> str | None:
+        """Which tier served (or received) this step or instance, once known."""
+        with self._lock:
+            if instance_hash is not None:
+                return self._instance_hit_tier.get((step_id, instance_hash))
+            return self._hit_tier.get(step_id)
+
+    def entry_keys(self, step_id: str) -> set[str]:
+        """Hash keys held for the step in any read tier, from one listing each.
+
+        See :meth:`CheckpointManager.entry_keys`: a key may belong to an
+        interrupted write, so a present key still needs a probe, while an
+        absent one is a certain miss.
+        """
+        keys: set[str] = set()
+        for tier in self._read_order:
+            keys |= self._managers[tier].entry_keys(step_id)
+        return keys
+
+    @property
+    def read_order(self) -> list[str]:
+        """The tiers a cache read probes, in order."""
+        return list(self._read_order)
+
+    def manager(self, tier: str) -> CheckpointManager:
+        """The checkpoint manager of one tier."""
+        return self._managers[tier]
+
+    def tiers_holding(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> list[str]:
+        """Every tier holding a valid checkpoint for the step, user tier first.
+
+        Unlike :meth:`has_checkpoint` this probes every configured tier,
+        whatever the read order, and records no hit tier.
+        """
+        found = []
+        for tier, manager in self._managers.items():
+            held = (
+                manager.has_checkpoint(step_id, instance_hash=instance_hash)
+                if instance_hash is not None
+                else manager.has_checkpoint(step_id)
+            )
+            if held:
+                found.append(tier)
+        return found
+
+    def tiers_with_marker(self, step_id: str) -> list[str]:
+        """``["user"]`` when the user tier holds the step's marker, else empty."""
+        return [USER_TIER] if self._managers[USER_TIER].has_marker(step_id) else []
 
     def survey_root(self):
         """The survey tier's cache root location, when configured."""

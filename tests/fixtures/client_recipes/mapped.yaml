@@ -1,0 +1,62 @@
+# A two step mapped chain between a list producer and a collector.
+recipe:
+  name: client_mapped
+  version: "1.0"
+  description: Make a list, process each item twice, and sum the results.
+  schema_version: "1"
+
+steps:
+  - id: seg
+    op: custom
+    custom_spec:
+      description: Make a list of numbers.
+      callable_path: _stage9_helpers.make_list
+      outputs:
+        items: {type: list}
+      output_map: {items: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: proc
+    op: custom
+    map_over: ${seg.items}
+    inputs:
+      x: ${_item}
+    custom_spec:
+      description: Add one to the item.
+      callable_path: _stage9_helpers.inc
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: proc2
+    op: custom
+    map_over: ${seg.items}
+    inputs:
+      x: ${proc.out}
+    custom_spec:
+      description: Double the item.
+      callable_path: _stage9_helpers.scale
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: merge
+    op: custom
+    collect: ${proc2.out}
+    inputs:
+      values: ${proc2.out}
+    custom_spec:
+      description: Sum the per item results.
+      callable_path: _stage9_helpers.collect_sum
+      inputs:
+        values: {type: int, many: true}
+      outputs:
+        total: {type: int}
+      output_map: {total: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

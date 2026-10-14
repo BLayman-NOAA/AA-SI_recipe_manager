@@ -6,6 +6,7 @@ recipe_cache/
 
 outputs/
 exe_temp/
+!web/src/outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -227,3 +228,8 @@ __marimo__/
 
 # Generated op reference (aa-recipe docs)
 op_reference.html
+
+# Recipe manager client: web build and its copy served by the server
+web/node_modules/
+web/dist/
+src/aa_recipe_manager/server/static/

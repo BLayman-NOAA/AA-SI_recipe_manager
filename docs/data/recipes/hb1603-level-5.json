@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-level-5",
   "title": "HB1603 level 5, dive SVCodes",
   "recipe": {
@@ -70,6 +70,12 @@
       "custom": true,
       "extends": null,
       "callable_path": "aa_si_utils.dive_profiles.generate_sv_codes",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "processing_lvl_5_sv_codes.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Write per-dive SVCode CSVs from the embedded clustering.",
       "sink": false,
       "mapped": false,
@@ -84,7 +90,9 @@
           "type": "Dataset",
           "required": true,
           "description": null,
-          "value": "${inputs.clustered}"
+          "value": "${inputs.clustered}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -148,19 +156,25 @@
           "name": "code_csv_paths",
           "type": "list",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "summary_csv_path",
           "type": "path",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "dive_labels",
           "type": "list",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -172,6 +186,12 @@
       "custom": true,
       "extends": null,
       "callable_path": "aa_si_utils.dive_profiles.sv_code_depth_table",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "processing_lvl_5_sv_codes.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Percent of dive duration per depth interval per code.",
       "sink": false,
       "mapped": false,
@@ -215,19 +235,25 @@
           "name": "per_dive_csv_path",
           "type": "path",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "combined_csv_path",
           "type": "path",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "totals_csv_path",
           "type": "path",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -398,6 +424,7 @@
     }
   ],
   "groups": [],
+  "includes": [],
   "context": {
     "upstream": [
       {

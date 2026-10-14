@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "hb1603-dive-plan",
   "title": "HB1603 dive plan",
   "recipe": {
@@ -74,6 +74,12 @@
       "custom": true,
       "extends": null,
       "callable_path": "aa_si_utils.dive_profiles.plan_dive_datasets",
+      "category": null,
+      "implementation": null,
+      "include": null,
+      "document": "dive_plan.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Turn the NEFSC dive configs into recipe windows.",
       "sink": false,
       "mapped": false,
@@ -126,13 +132,17 @@
           "name": "windows",
           "type": "list",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "raw_files",
           "type": "list",
           "description": null,
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -216,6 +226,7 @@
     }
   ],
   "groups": [],
+  "includes": [],
   "context": {
     "upstream": [],
     "downstream": [

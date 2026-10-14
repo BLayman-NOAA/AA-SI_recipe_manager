@@ -80,10 +80,16 @@ class RunConfig:
     source: Path | None = None
 
 
-def default_config_search_paths() -> list[Path]:
-    """Conventional auto-discovery locations, in precedence order."""
+def default_config_search_paths(
+    cwd: str | os.PathLike[str] | None = None,
+) -> list[Path]:
+    """Conventional auto-discovery locations, in precedence order.
+
+    ``cwd`` stands in for the working directory, as when a recipe's own
+    folder should be searched the way running from that folder would.
+    """
     return [
-        Path.cwd() / CONFIG_FILENAME,
+        (Path.cwd() if cwd is None else Path(cwd)) / CONFIG_FILENAME,
         Path.home() / ".config" / "aa-recipe" / "config.yaml",
     ]
 
@@ -102,6 +108,7 @@ def recipe_config_candidate(recipe_path: str | os.PathLike[str]) -> Path:
 def discover_config_path(
     explicit: str | os.PathLike[str] | None = None,
     recipe_path: str | os.PathLike[str] | None = None,
+    cwd: str | os.PathLike[str] | None = None,
 ) -> Path | None:
     """Locate a run-config file, or return ``None`` if none is found.
 
@@ -129,7 +136,7 @@ def discover_config_path(
         if candidate.is_file():
             return candidate
 
-    for candidate in default_config_search_paths():
+    for candidate in default_config_search_paths(cwd):
         if candidate.is_file():
             return candidate
     return None
@@ -138,6 +145,7 @@ def discover_config_path(
 def load_run_config(
     explicit: str | os.PathLike[str] | None = None,
     recipe_path: str | os.PathLike[str] | None = None,
+    cwd: str | os.PathLike[str] | None = None,
 ) -> RunConfig:
     """Discover and parse a run-config file into a :class:`RunConfig`.
 
@@ -145,7 +153,7 @@ def load_run_config(
     for a malformed file (non-mapping top level, unknown keys, or wrong value
     types) so mistakes surface loudly instead of being silently ignored.
     """
-    path = discover_config_path(explicit, recipe_path=recipe_path)
+    path = discover_config_path(explicit, recipe_path=recipe_path, cwd=cwd)
     if path is None:
         return RunConfig()
 

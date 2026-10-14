@@ -136,6 +136,60 @@ def noisy(x: int, hold: float = 0.05) -> int:
     return x
 
 
+def partial_lines(x: int) -> int:
+    """Print a split line, a whole line, and an unterminated tail."""
+    print("first ", end="")
+    print("line")
+    print("second line")
+    print("tail", end="")
+    return x
+
+
+def write_scratch(x: int) -> str:
+    """Write ``x`` to a scratch file and return its path."""
+    import tempfile
+
+    handle, path = tempfile.mkstemp(suffix=".txt")
+    with os.fdopen(handle, "w") as stream:
+        stream.write(str(x))
+    return path
+
+
+def read_scratch(path: str) -> int:
+    """Read the number a scratch file holds."""
+    with open(path) as stream:
+        return int(stream.read())
+
+
+def console_note(x: int) -> int:
+    """Print a line straight to the terminal, past the run log."""
+    from aa_recipe_manager.executor.console import console_print
+
+    console_print(f"console-note x={x}")
+    return x
+
+
+# A cancel token a step can set mid run, and a call counter, for the cancel
+# tests. Thread backends share this module's globals with the test.
+CANCEL_HOOK: dict[str, Any] = {}
+_COUNTS: dict[str, int] = {"calls": 0}
+
+
+def reset_counts() -> None:
+    _COUNTS["calls"] = 0
+
+
+def call_count() -> int:
+    return _COUNTS["calls"]
+
+
+def trip_cancel(x: int) -> int:
+    """Count the call and cancel the run's token."""
+    _COUNTS["calls"] += 1
+    CANCEL_HOOK["token"].cancel("tripped")
+    return x
+
+
 # ---------------------------------------------------------------------------
 # DAG builders
 # ---------------------------------------------------------------------------

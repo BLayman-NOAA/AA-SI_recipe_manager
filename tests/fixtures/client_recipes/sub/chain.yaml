@@ -1,0 +1,36 @@
+# Adds one to each item, then runs leaf.yaml once per item.
+recipe:
+  name: client_chain
+  version: "1.0"
+  description: Per item increment followed by the leaf sub-recipe.
+  schema_version: "1"
+
+inputs:
+  source:
+    type: list
+    description: Items to work through.
+  k:
+    type: int
+    description: Constant the leaf adds.
+
+steps:
+  - id: chain_inc
+    op: custom
+    map_over: ${inputs.source}
+    inputs:
+      x: ${_item}
+    custom_spec:
+      description: Add one to the item.
+      callable_path: _stage9_helpers.inc
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - include: leaf.yaml
+    map_over: ${inputs.source}
+    input_overrides:
+      value: ${chain_inc.out}
+      k: ${inputs.k}

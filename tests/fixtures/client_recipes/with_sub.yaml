@@ -1,0 +1,47 @@
+# Two levels of includes: chain.yaml includes leaf.yaml, fanned out per item.
+recipe:
+  name: client_with_sub
+  version: "1.0"
+  description: A seed list, a nested sub-recipe mapped over it, and a sum.
+  schema_version: "1"
+
+inputs:
+  n:
+    type: int
+    default: 3
+    description: Length of the seed list.
+
+steps:
+  - id: seed
+    op: custom
+    params:
+      n: ${inputs.n}
+    custom_spec:
+      description: Make a list of n numbers.
+      callable_path: _stage9_helpers.make_list
+      params:
+        n: {type: int, default: 3}
+      outputs:
+        items: {type: list}
+      output_map: {items: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - include: sub/chain.yaml
+    input_overrides:
+      source: ${seed.items}
+      k: 5
+
+  - id: total
+    op: custom
+    collect: ${leaf_add.out}
+    inputs:
+      values: ${leaf_add.out}
+    custom_spec:
+      description: Sum the per item results.
+      callable_path: _stage9_helpers.collect_sum
+      inputs:
+        values: {type: int, many: true}
+      outputs:
+        total: {type: int}
+      output_map: {total: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "slug": "calibration-save",
   "title": "Calibration phase 3, archive",
   "recipe": {
@@ -90,6 +90,16 @@
       "custom": false,
       "extends": null,
       "callable_path": null,
+      "category": "calibration",
+      "implementation": {
+        "key": "default",
+        "callable_path": "aa_si_calibration.archive.save_calibration_archive",
+        "dependency": "aa-si-calibration"
+      },
+      "include": null,
+      "document": "save_calibration.yaml",
+      "hash": null,
+      "editable": false,
       "description": "Write the finished calibration outputs to a directory the survey keeps.\nWrites channel_mapping.yaml and calibration_provenance.yaml at the top of archive_dir, and one file per standardized channel under Standardized_Reports/ - the same files a local run writes to single_channel_calibration_files/. The channel files are named by each channel's calibration file key, which is what the mapping refers to, so the archive resolves against itself.\nEverything is rendered from the data the standardization and mapping steps return, so a caller that never sees the run's outputs folder can archive what those steps handed it. Omit an input and it is read from the outputs folder of the run in progress instead, which is how a local run archives with nothing but a directory.\narchive_dir may be a remote fsspec URL, which is the point for a client whose run directory disappears when the container does.\nMark it regenerate: always in a recipe. Its product is files outside the run's outputs directory, where the executor cannot verify them, so a cache hit would return the paths without writing anything.",
       "sink": false,
       "mapped": false,
@@ -104,21 +114,27 @@
           "type": "dict",
           "required": false,
           "description": "The standardized channels, from the standardization step's single_channel_data output. Read from single_channel_calibration_files/ under output_base when omitted.",
-          "value": "${inputs.single_channel_data}"
+          "value": "${inputs.single_channel_data}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mapping_dict",
           "type": "dict",
           "required": false,
           "description": "Each raw file's channels mapped to their calibration key, from build_calibration_mapping. Read from mapping_files/channel_mapping.yaml under output_base when omitted. An empty mapping is an error: that is what the mapping step returns while conflicts are unresolved, and an archive that looks complete and is not is worse than a failed run.",
-          "value": "${inputs.mapping_dict}"
+          "value": "${inputs.mapping_dict}",
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance",
           "type": "dict",
           "required": false,
           "description": "The provenance report from build_calibration_mapping. Read from mapping_files/calibration_provenance.yaml under output_base when omitted.",
-          "value": "${inputs.provenance}"
+          "value": "${inputs.provenance}",
+          "many": false,
+          "semantic": null
         }
       ],
       "params": [
@@ -173,37 +189,49 @@
           "name": "archive_dir",
           "type": "str",
           "description": "The directory the archive was written to.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "mapping_path",
           "type": "str",
           "description": "Full path of the archived channel_mapping.yaml.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "provenance_path",
           "type": "str",
           "description": "Full path of the archived calibration_provenance.yaml.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "reports_dir",
           "type": "str",
           "description": "The Standardized_Reports folder holding the channel files.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "channel_count",
           "type": "int",
           "description": "How many channel files were written.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         },
         {
           "name": "files_written",
           "type": "list",
           "description": "Every path written, in write order, so a caller can report the archive without listing the destination.",
-          "disposed": false
+          "disposed": false,
+          "many": false,
+          "semantic": null
         }
       ]
     },
@@ -393,5 +421,6 @@
       "type": "list"
     }
   ],
-  "groups": []
+  "groups": [],
+  "includes": []
 }

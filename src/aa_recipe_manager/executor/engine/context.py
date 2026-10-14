@@ -38,7 +38,7 @@ from aa_recipe_manager.executor.tiered import (
 from aa_recipe_manager.storage import StorageLocation
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, MutableMapping
 
     from aa_recipe_manager.model.types import (
         CheckpointFormat,
@@ -130,6 +130,11 @@ class WorkerContext:
     force: bool = False
     provenance_ref: str | None = None
     policy: frozenset[str] = frozenset()
+    #: Steps that recompute every instance even when cached.
+    force_steps: frozenset[str] = frozenset()
+    #: The targets of a run only, else empty. Any other chain member that is
+    #: not a cache hit for an instance fails the run.
+    only_targets: frozenset[str] = frozenset()
     #: PID of the process that built this context. A worker compares it against
     #: its own to tell a spawned process (where the environment is ours to set)
     #: from a thread running in the caller's process (where it is not).
@@ -232,6 +237,9 @@ class RunContext:
     checkpoint_format: str = "zarr"
     provenance_ref: str | None = None
     recipe_info: dict[str, str] = field(default_factory=dict)
+    targets: tuple[str, ...] = ()
+    force_steps: frozenset[str] = frozenset()
+    only: bool = False
 
     def worker_context(self) -> WorkerContext:
         """Project this context onto its picklable, worker-side subset."""
@@ -255,7 +263,24 @@ class RunContext:
             force=self.force,
             provenance_ref=self.provenance_ref,
             policy=frozenset(self.policy),
+            force_steps=self.force_steps,
+            only_targets=frozenset(self.targets) if self.only else frozenset(),
         )
+
+
+def publish_curated_provenance(ctx: RunContext) -> None:
+    """Write a curated run's provenance next to the survey cache.
+
+    A no-op unless the run writes the survey tier.
+    """
+    from aa_recipe_manager.provenance.recorder import ProvenanceRecorder, to_json
+
+    if ctx.provenance_ref is None or ctx.survey_loc is None:
+        return
+    prov = ProvenanceRecorder.capture(ctx.dag, inputs=ctx.pipeline_inputs or None)
+    prov_loc = ctx.survey_loc / ctx.provenance_ref
+    prov_loc.parent.mkdir()
+    prov_loc.write_text(to_json(prov))
 
 
 def build_run_context(
@@ -275,6 +300,11 @@ def build_run_context(
     storage_options: dict[str, Any] | None = None,
     survey_cache_dir: str | Path | None = None,
     cache_write_tier: str = "user",
+    targets: Iterable[str] | None = None,
+    force_steps: Iterable[str] = (),
+    only: bool = False,
+    fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
+    publish_provenance: bool = True,
 ) -> RunContext:
     """Validate run arguments and resolve the run-scoped execution state.
 
@@ -287,9 +317,15 @@ def build_run_context(
     A curated (``cache_write_tier="survey"``) run publishes its provenance next
     to the survey cache *before* any step runs, so no sidecar can reference a
     not-yet-written file.
-    """
-    from aa_recipe_manager.provenance.recorder import ProvenanceRecorder, to_json
 
+    With ``publish_provenance=False`` the provenance reference is set but the
+    file is left for :func:`publish_curated_provenance`, so a caller can refuse
+    the run first without publishing anything.
+
+    ``targets``, ``force_steps`` and ``only`` are stored as given; they are
+    validated by :func:`plan_execution`. ``fingerprint_cache`` memoizes path
+    fingerprints across calls (see :func:`compute_step_fingerprints`).
+    """
     if regenerate not in REGENERATE_MODES:
         raise ValueError(
             f"regenerate must be one of {REGENERATE_MODES}, got {regenerate!r}"
@@ -331,6 +367,9 @@ def build_run_context(
         regenerate=regenerate,
         storage_options=storage_options,
         cache_write_tier=cache_write_tier,
+        targets=tuple(targets or ()),
+        force_steps=frozenset(force_steps or ()),
+        only=only,
     )
 
     if cache_loc is not None and not no_checkpoints:
@@ -350,7 +389,10 @@ def build_run_context(
             )
         ctx.checkpoint_format = str(effective_format)
         fingerprints = compute_step_fingerprints(
-            dag, pipeline_inputs, storage_options=storage_options
+            dag,
+            pipeline_inputs,
+            storage_options=storage_options,
+            path_fingerprint_cache=fingerprint_cache,
         )
         ctx.step_hashes = fingerprints.hashes
         ctx.payloads = dict(fingerprints.payloads)
@@ -377,11 +419,9 @@ def build_run_context(
             provenance_ref: str | None = None
             if cache_write_tier == SURVEY_TIER:
                 provenance_ref = f"{PROVENANCE_DIR}/{dag.recipe.name}@{run_id}.json"
-                prov = ProvenanceRecorder.capture(dag, inputs=pipeline_inputs or None)
-                prov_loc = survey_loc / provenance_ref
-                prov_loc.parent.mkdir()
-                prov_loc.write_text(to_json(prov))
             ctx.provenance_ref = provenance_ref
+            if publish_provenance:
+                publish_curated_provenance(ctx)
             survey_manager = CheckpointManager(
                 survey_loc,
                 fingerprints.hashes,
