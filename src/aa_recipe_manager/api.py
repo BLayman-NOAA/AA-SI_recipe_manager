@@ -25,7 +25,10 @@ from aa_recipe_manager.exceptions import (
     UnknownStepError,  # noqa: F401  (re-exported)
     UpstreamNotCachedError,  # noqa: F401  (re-exported)
 )
-from aa_recipe_manager.executor.checkpoint import PROVENANCE_DIR
+from aa_recipe_manager.executor.checkpoint import (  # noqa: F401  (re-exported)
+    DEFAULT_OUTPUT_ROOT,
+    PROVENANCE_DIR,
+)
 from aa_recipe_manager.preview import (  # noqa: F401  (re-exported)
     PlanPreview,
     StepPreview,
@@ -1202,7 +1205,9 @@ def plan_preview(
         inputs: Pipeline input values.
         targets: Steps to run to (see :func:`execute`).
         only: Run the targets alone. Raises :class:`UpstreamNotCachedError`
-            when a parent is not cached, as the run would.
+            when a step other than a target would compute, including any
+            instance of a mapped or swept step (see
+            :func:`aa_recipe_manager.preview.plan_preview`).
         force_steps: Steps that recompute even when cached.
         force: Recompute every step.
         regenerate: Artifact regeneration mode.
@@ -1218,8 +1223,9 @@ def plan_preview(
             folder fingerprints, so remote folders are listed once.
         instance_probe_limit: Above this many instances a fanned out step is
             counted from a directory listing instead of probed per instance.
-        base_dir: Directory that relative paths in the recipe resolve
-            against, when ``recipe`` is not a file.
+        base_dir: Directory that relative local paths in the recipe are
+            checked and fingerprinted under (default: the working directory),
+            as for a run started there. The hashes do not depend on which.
 
     Returns:
         A :class:`PlanPreview` with one :class:`StepPreview` per step, in
@@ -1249,6 +1255,7 @@ def plan_preview(
         storage_options=storage_options,
         fingerprint_cache=fingerprint_cache,
         instance_probe_limit=instance_probe_limit,
+        base_dir=base_dir,
     )
 
 
@@ -1274,6 +1281,7 @@ def step_hashes(
     inputs: dict[str, Any] | None = None,
     storage_options: dict[str, Any] | None = None,
     fingerprint_cache: dict[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
 ) -> dict[str, StepHash]:
     """Compute every step's cache identity without running anything.
 
@@ -1282,17 +1290,23 @@ def step_hashes(
     files are fingerprinted, which reads them (or their remote metadata).
     ``fingerprint_cache`` is a dict the caller keeps between calls; it holds
     those file and folder fingerprints by path so they are read once.
+    Relative local paths are checked and read under ``base_dir`` (default: the
+    working directory), as for a run started there; the hashes do not depend
+    on which.
 
     Returns a mapping of step id to :class:`StepHash`, in topological order.
     """
     from aa_recipe_manager.executor.checkpoint import compute_step_fingerprints
 
-    dag = _load_dag(recipe, input_values=inputs, check_versions=False)
+    dag = _load_dag(
+        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+    )
     fingerprints = compute_step_fingerprints(
         dag,
         inputs or {},
         storage_options=storage_options,
         path_fingerprint_cache=fingerprint_cache,
+        base_dir=base_dir,
     )
     found: dict[str, StepHash] = {}
     for step_id in dag.topological_order:

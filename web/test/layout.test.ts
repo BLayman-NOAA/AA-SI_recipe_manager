@@ -15,6 +15,7 @@ import {
   nodeLines,
   readLayout,
   readPositions,
+  setTextScale,
   SIDE_PAD,
   textWidth,
   type Positions,
@@ -75,6 +76,50 @@ describe('node sizes', () => {
     const long = estimateSize(view(graph, [], true).nodes.find((node) => node.id === 'seed')!);
     expect(long.width).toBe(MAX_WIDTH.step);
     expect(long.height).toBeGreaterThan(short.height);
+  });
+
+  it('grows node and label sizes with the diagram text size', () => {
+    const node = view(withSubGraph, [], true).nodes.find((item) => item.id === 'seed')!;
+    const base = estimateSize(node);
+    const baseRequest = layoutRequest(view(withSubGraph, []), 'RIGHT');
+    try {
+      setTextScale(1.5);
+      const large = estimateSize(node);
+      expect(large.width).toBeGreaterThan(base.width);
+      expect(large.height).toBeGreaterThan(base.height);
+      const labelled = (request: typeof baseRequest) => request.edges.find((edge) => edge.label)!.label!;
+      const label = labelled(layoutRequest(view(withSubGraph, []), 'RIGHT'));
+      expect(label.height).toBe(1.5 * labelled(baseRequest).height);
+      expect(label.width).toBeGreaterThan(labelled(baseRequest).width);
+    } finally {
+      setTextScale(1);
+    }
+  });
+
+  it('leaves room for the section headers of an expanded sub-recipe box', () => {
+    const LVL0 = 'inc:sub_recipes/processing_lvl_0_user.yaml';
+    const both = view(uc1Graph, [], true).nodes.find((item) => item.id === LVL0);
+    if (both?.kind !== 'include') throw new Error('no lvl_0 box');
+    const texts = nodeLines(both).map((line) => line.text);
+    expect(texts).toEqual(expect.arrayContaining(['5 steps, 2 overrides, 7 inputs', 'Overrides', 'Inputs']));
+    // The same rows under one header only.
+    const one = structuredClone(both);
+    one.data.rows = one.data.rows.map((row) => ({ ...row, source: 'override' as const }));
+    expect(nodeLines(one).map((line) => line.text)).not.toContain('Inputs');
+    expect(estimateSize(both).height - estimateSize(one).height).toBeGreaterThanOrEqual(18);
+  });
+
+  it('leaves room for the more row of an expanded inputs box', () => {
+    const box = view(uc1Graph, [], true).nodes.find((item) => item.id === 'inputs');
+    if (box?.kind !== 'inputsBox') throw new Error('no inputs box');
+    expect(box.data.more).toBeGreaterThan(0);
+    const none = structuredClone(box);
+    none.data.more = 0;
+    expect(nodeLines(box).map((line) => line.text)).toContain(`${box.data.more} more inputs declared in sub-recipes`);
+    expect(estimateSize(box).height - estimateSize(none).height).toBeGreaterThanOrEqual(18);
+    // Collapsed, the box lists nothing, the more row included.
+    const collapsed = view(uc1Graph, []).nodes.find((item) => item.id === 'inputs')!;
+    expect(estimateSize(collapsed).height).toBeLessThan(estimateSize(box).height);
   });
 });
 

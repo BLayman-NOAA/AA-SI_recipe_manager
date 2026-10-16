@@ -1,0 +1,55 @@
+# A step that sleeps, for cancel and kill tests.
+recipe:
+  name: client_slow
+  version: "1.0"
+  description: A chain whose middle step sleeps for a set time.
+  schema_version: "1"
+
+inputs:
+  seconds:
+    type: float
+    default: 0.2
+    description: How long the middle step sleeps.
+
+steps:
+  - id: start
+    op: custom
+    custom_spec:
+      description: Return the constant 7.
+      callable_path: _stage9_helpers.const7
+      outputs:
+        v: {type: int}
+      output_map: {v: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: slow
+    op: custom
+    inputs:
+      x: ${start.v}
+    params:
+      seconds: ${inputs.seconds}
+    custom_spec:
+      description: Sleep, then pass the value on.
+      callable_path: _stage9_helpers.sleep_for
+      inputs:
+        x: {type: int}
+      params:
+        seconds: {type: float, default: 0.2}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: after
+    op: custom
+    inputs:
+      x: ${slow.out}
+    custom_spec:
+      description: Add one.
+      callable_path: _stage9_helpers.inc
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

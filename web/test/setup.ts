@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// jsdom renders slowly while every test file runs in parallel; the default
+// one second wait for findBy and waitFor is too short for a first diagram render.
+configure({ asyncUtilTimeout: 5000 });
 
 // jsdom lacks the layout APIs Dockview and React Flow call.
 class ResizeObserverStub {

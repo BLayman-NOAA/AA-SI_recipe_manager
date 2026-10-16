@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useSessionStore } from '../src/state/session';
 import { useView } from '../src/state/view';
 import { stepLine } from '../src/yaml/findLine';
+import { graphFiles, yamlTarget } from '../src/yaml/followSelection';
 import { YamlPane } from '../src/yaml/YamlPane';
-import { makeSession, mockApi, renderWithClient } from './helpers';
+import { makeSession, mockApi, renderWithClient, withSubGraph } from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
 
@@ -54,6 +55,28 @@ describe('stepLine', () => {
 
   it('returns null when the step is not in the text', () => {
     expect(stepLine(ROOT, 'missing')).toBeNull();
+  });
+});
+
+describe('followSelection', () => {
+  it('points a step at its document and an include at its source', () => {
+    expect(yamlTarget(withSubGraph, { kind: 'step', id: 'leaf_add' })).toEqual({
+      path: 'sub/leaf.yaml',
+      stepId: 'leaf_add',
+    });
+    expect(yamlTarget(withSubGraph, { kind: 'include', id: 'inc:sub/chain.yaml' })).toEqual({
+      path: 'sub/chain.yaml',
+      stepId: null,
+    });
+    expect(yamlTarget(withSubGraph, { kind: 'inputsBox', id: 'inputs' })).toBeNull();
+    expect(yamlTarget(withSubGraph, { kind: 'step', id: 'missing' })).toBeNull();
+    expect(yamlTarget(withSubGraph, null)).toBeNull();
+  });
+
+  it('lists the root file first, then each include source in graph order', () => {
+    const includes = withSubGraph.includes.map((include) => include.source);
+    expect(graphFiles(withSubGraph)).toEqual(['with_sub.yaml', ...includes]);
+    expect(new Set(includes)).toEqual(new Set(['sub/chain.yaml', 'sub/leaf.yaml']));
   });
 });
 

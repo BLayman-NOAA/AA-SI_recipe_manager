@@ -1,0 +1,109 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/survey_echogram_pyramid.yaml
+
+# HB1603 survey echogram pyramid: the whole cruise as one EchogramGL store.
+#
+# Per-file MVBS on depth at 18 and 38 kHz, seabed masked, built into a
+# level-of-detail pyramid the WebGPU viewer opens. Levels 0 to 2a are the
+# survey's, so the per-file Sv loads from the survey cache.
+#
+#   aa-recipe run survey_echogram_pyramid.yaml --executor dask --dask-workers 16
+#
+#   level 0, 1, 2a     the survey's catalogue, calibration and per-file Sv
+#   level 2b (viewer)  per file: angles, crop, seabed line, masks, noise removal
+#   level 3 (viewer)   per file: MVBS on a pinned depth grid; fan in to one store
+#   pyramid            plan segments, build each, merge into the viewer store
+#
+# Needs aa-si-echogram-gl installed in the run environment.
+# Keep the survey levels in step with survey_sv.yaml, and put nothing that
+# isn't per-file between levels 1 and 3.
+# To try a few files first, narrow file_time_start and file_time_end. A
+# narrowed window is its own cache lineage, so run the full survey with the
+# defaults.
+# Add --cache-write-tier survey to share the store instead of keeping it in
+# your own tier.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run survey_echogram_pyramid.yaml --visualize
+
+recipe:
+  name: "hb1603_survey_echogram_pyramid"
+  description: "The whole HB1603 cruise as an EchogramGL pyramid: per-file MVBS on depth, 18 and 38 kHz, seabed masked."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # Survey level. These must equal survey_sv.yaml's.
+  file_time_start:
+    type: str
+    default: "2016-06-01T00:00:00"
+    description: "Start of the catalogue query. The default is the whole cruise; narrow it only for a test."
+  file_time_end:
+    type: str
+    default: "2016-09-01T00:00:00"
+    description: "End of the catalogue query. See file_time_start."
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: "Range ceiling of the shared survey Sv. Changing it recomputes the whole survey Sv."
+
+  # Viewer level
+  viewer_crop_max_range_m:
+    type: float
+    default: 3000.0
+    description: "Range ceiling of the picture. Separate from crop_max_range_m, so the shared survey Sv keeps its 1800 m crop."
+  viewer_grid_max_depth:
+    type: str
+    default: "3010m"
+    description: >
+      Deepest depth the level 3 bins cover. It must clear viewer_crop_max_range_m
+      plus the transducer depth, or the deepest samples are dropped.
+
+  # Every other input lives in the level file that uses it, and can still be
+  # set from here or with --input.
+
+steps:
+
+  # Survey levels: keep in step with survey_sv.yaml
+
+  - include: sub_recipes/processing_lvl_0_user.yaml
+    input_overrides:
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # Viewer levels
+
+  # The viewer crops for itself, deeper than the survey's 1800 m, without
+  # touching the shared Sv.
+  - include: sub_recipes/processing_lvl_2_viewer_seabed.yaml
+    input_overrides:
+      crop_max_range_m: ${inputs.viewer_crop_max_range_m}
+
+  - include: sub_recipes/processing_lvl_3_viewer.yaml
+    input_overrides:
+      grid_max_depth: ${inputs.viewer_grid_max_depth}
+
+  - include: sub_recipes/viewer_pyramid.yaml
+    input_overrides:
+      gridded_sv: ${rechunk_viewer_mvbs.ds_Sv}

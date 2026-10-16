@@ -1,51 +1,14 @@
-=== "Levels"
+=== "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb2407-herring-per-file-overview" markdown>
+    <div class="recipe-viewer" data-recipe="hb2407-herring-per-file" data-slug="hb2407-herring-per-file" markdown>
 
     - [HB2407 level 0, file selection and calibration mapping](level-0.md)
     - [HB2407 level 1, raw ingest](level-1.md)
     - [HB2407 level 2, calibrated Sv, masks and noise removal](level-2.md)
-    - `plot_sv_clean`
-    - [HB2407 level 3, gridding and per-cell statistics](level-3.md)
-    - `plot_mvbs`
-    - [HB2407 level 4, clustering](level-4.md)
-
-    </div>
-
-=== "All steps"
-
-    <div class="recipe-flow" data-recipe="hb2407-herring-per-file" markdown>
-
-    - `initial_setup`: [`initial_setup`](../ops/initial_setup.md)
-    - `gen_cal_mapping`: [`generate_standardized_cal_mapping`](../ops/generate_standardized_cal_mapping.md)
-    - `read_raw`: [`read_raw_files`](../ops/read_raw_files.md)
-    - `combine_raw`: [`combine_raw_files`](../ops/combine_raw_files.md)
-    - `extract_cal_params`: [`extract_standardized_cal_params`](../ops/extract_standardized_cal_params.md)
-    - `compute_sv`: [`compute_sv`](../ops/compute_sv.md)
-    - `compute_transducer_depth`: [`compute_transducer_depth`](../ops/compute_transducer_depth.md)
-    - `ep_add_depth`: [`ep_add_depth`](../ops/ep_add_depth.md)
-    - `detect_seafloor`: [`read_seafloor_line`](../ops/read_seafloor_line.md)
-    - `create_seafloor_mask`: [`create_seafloor_mask`](../ops/create_seafloor_mask.md)
-    - `create_surface_mask`: [`create_surface_mask`](../ops/create_surface_mask.md)
-    - `combine_masks`: [`combine_masks`](../ops/combine_masks.md)
-    - `apply_mask`: [`apply_sv_mask`](../ops/apply_sv_mask.md)
-    - `merge_sv`: [`merge_datasets`](../ops/merge_datasets.md)
-    - `crop_range`: [`crop_range`](../ops/crop_range.md)
-    - `rechunk_before_noise`: [`rechunk_dataset`](../ops/rechunk_dataset.md)
-    - `remove_noise`: [`remove_background_noise`](../ops/remove_background_noise.md)
     - `plot_sv_clean`: [`plot_sv_echogram`](../ops/plot_sv_echogram.md)
-    - `mask_sparse`: [`mask_sparse_bins`](../ops/mask_sparse_bins.md)
-    - `rechunk_before_mvbs`: [`rechunk_dataset`](../ops/rechunk_dataset.md)
-    - `compute_mvbs`: [`compute_mvbs`](../ops/compute_mvbs.md)
-    - `compute_cell_stats`: [`compute_per_cell_statistics`](../ops/compute_per_cell_statistics.md)
+    - [HB2407 level 3, gridding and per-cell statistics](level-3.md)
     - `plot_mvbs`: [`plot_sv_echogram`](../ops/plot_sv_echogram.md)
-    - `reshape_ml`: [`reshape_for_ml`](../ops/reshape_for_ml.md)
-    - `add_aux_features`: [`add_auxiliary_features`](../ops/add_auxiliary_features.md)
-    - `normalize_ml`: [`normalize_ml_data`](../ops/normalize_ml_data.md)
-    - `plot_normalized_ml`: [`plot_ml_echogram`](../ops/plot_ml_echogram.md)
-    - `run_hdbscan`: [`run_hdbscan`](../ops/run_hdbscan.md)
-    - `embed_results`: [`embed_clustering_results`](../ops/embed_clustering_results.md)
-    - `plot_clustering_report`: [`plot_clustering_report`](../ops/plot_clustering_report.md)
+    - [HB2407 level 4, clustering](level-4.md)
 
     </div>
 
@@ -54,25 +17,21 @@
     [Download `Herring_10-15_per_file.yaml`](../recipes/HB2407/Herring_10-15_per_file.yaml)
 
     ```yaml
-    # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/Herring_10-15_per_file.yaml,
-    # with its level 1 include split into processing_lvl_0_calibration.yaml and processing_lvl_1_per_file.yaml,
-    # and extract_cal_params moved into level 2, so HB2407 follows the same levels as HB1603. Every step is
+    # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/
+    # Herring_10-15_per_file.yaml, regrouped into the HB1603 levels. Every step is
     # wired as in the original, in the same order.
 
-    # HB2407 Herring 10-15, per-raw-file pipeline.
+    # HB2407 Herring 10-15, processed one raw file at a time.
     #
-    # Each raw file is read, calibrated, Sv-computed and masked on its own, and
-    # merge_sv reassembles the survey before background noise removal. Levels 3
-    # and 4 are survey-wide.
+    # Each raw file is calibrated, converted to Sv and masked on its own, then
+    # merge_sv joins the survey back together before noise removal.
     #
-    #   level 0   select the raw files; build the calibration mapping
+    #   level 0   select the raw files and build the calibration mapping
     #   level 1   per file: raw ingest
-    #   level 2   per file: calibration, Sv, depth, seabed and surface masks; fan
-    #             in; then crop and noise removal on the whole survey
-    #   level 3   sparse mask, MVBS, per-cell statistics
-    #   level 4   HDBSCAN clustering and the clustering report
+    #   level 2   per file: Sv, depth and masks; then merge, crop and noise removal
+    #   level 3   sparse mask, MVBS and per-cell statistics
+    #   level 4   HDBSCAN clustering and its report
     #
-    # Usage:
     #   aa-recipe run Herring_10-15_per_file.yaml
     #   aa-recipe run Herring_10-15_per_file.yaml --executor dask
 
@@ -94,9 +53,8 @@
         type: path
         default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
 
-      # Data time range. Selects the raw files to process and the Echoview seabed
-      # line exports to read, and sets the fan-out width: one chain instance per
-      # selected raw file.
+      # Time window. Selects the raw files and seabed line files, and each selected
+      # raw file runs as its own chain instance.
       file_time_start:
         type: str
         default: "2024-10-15T13:38:52"
@@ -104,14 +62,13 @@
         type: str
         default: "2024-10-15T23:43:36"
 
-      # Default display window shared by every plotting step in this pipeline.
+      # Display window shared by every plot.
       min_depth:
         type: float
         default: 0
       max_depth:
         type: float
-      # No defaults span the whole time range. Set either to a UTC timestamp to
-      # window the echograms.
+      # Unset shows the whole time range. Set a UTC timestamp to window the plots.
       time_min:
         type: str
       time_max:
@@ -145,15 +102,15 @@
           echodata: ${combine_raw.echodata}
           calibration_dict: ${gen_cal_mapping.calibration_dict}
           mapping_dict: ${gen_cal_mapping.mapping_dict}
-          # Transducer depth comes from each file's drop keel offset plus heave.
-          # datum_correction_m assumes that offset is waterline referenced.
+          # Transducer depth is each file's drop keel offset plus heave, shifted by
+          # datum_correction_m to the waterline.
           datum_correction_m: -1.0
           use_heave: true
           heave_sign: 1.0
           surface_mask_depth: 5.0
           seafloor_buffer_m: 1
-          # Range crop by outlier rejection, so one anomalously deep ping does not
-          # hold the range axis open. Add crop_max_range_m for a hard ceiling.
+          # Crop the range by outlier rejection, so one very deep ping does not hold
+          # it open. Add crop_max_range_m for a hard ceiling.
           crop_outlier_sigma: 3.0
           crop_outlier_margin: 1.5
           # Parameters for echopype's remove_background_noise.
@@ -183,7 +140,7 @@
           # MVBS bin size.
           range_bin: "4m"
           ping_time_bin: "4s"
-          nan_threshold: 0.95 # mask bin if NaNs exceed this fraction of data in the cell
+          nan_threshold: 0.95 # mask a bin when more than this fraction is NaN
 
       - id: plot_mvbs
         op: plot_sv_echogram
@@ -200,9 +157,8 @@
           y_axis_units: ${inputs.y_axis_units}
           dpi: 50
 
-      # echodata and seafloor_depth are left unwired. Level 4 only needs them for
-      # the 'seafloor_depth' and 'altitude' features, which features: [cell_cv]
-      # does not use, and this pipeline builds no survey-wide EchoData.
+      # echodata and seafloor_depth stay unwired. They only feed the seafloor_depth
+      # and altitude features, which this recipe does not use.
       - include: sub_recipes/processing_lvl_4.yaml
         input_overrides:
           mvbs: ${compute_mvbs.ds_MVBS}

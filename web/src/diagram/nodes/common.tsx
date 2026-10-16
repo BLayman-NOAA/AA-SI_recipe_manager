@@ -11,6 +11,10 @@ export interface DiagramActions {
   select: (selection: Selection) => void;
   toggleStepExpanded: (stepId: string) => void;
   toggleBoxExpanded: (boxId: string) => void;
+  /** Start a run to a step (the play icon); absent hides the icon. */
+  runToHere?: (stepId: string) => void;
+  /** A run can start now. */
+  canRun: boolean;
 }
 
 export const DiagramContext = createContext<DiagramActions>({
@@ -19,6 +23,7 @@ export const DiagramContext = createContext<DiagramActions>({
   select: () => {},
   toggleStepExpanded: () => {},
   toggleBoxExpanded: () => {},
+  canRun: false,
 });
 
 export function useDiagram(): DiagramActions {
@@ -121,17 +126,31 @@ const ICONS = {
   chevronUp: 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z',
   up: 'M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z',
   drill: 'M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
+  play: 'M8 5v14l11-7z',
+  disk: 'M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z',
 };
 
+export type IconName = keyof typeof ICONS;
+
+/** A small icon, drawn in the current text color. */
+export function Icon({ icon }: { icon: IconName }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d={ICONS[icon]} />
+    </svg>
+  );
+}
+
 interface IconButtonProps {
-  icon: keyof typeof ICONS;
+  icon: IconName;
   title: string;
   onClick: () => void;
   className?: string;
+  disabled?: boolean;
 }
 
 /** A small icon button that does not select, drag or pan when inside a node. */
-export function IconButton({ icon, title, onClick, className = 'rc-node-tool' }: IconButtonProps) {
+export function IconButton({ icon, title, onClick, className = 'rc-node-tool', disabled }: IconButtonProps) {
   const stop = (event: MouseEvent) => event.stopPropagation();
   return (
     <button
@@ -139,15 +158,14 @@ export function IconButton({ icon, title, onClick, className = 'rc-node-tool' }:
       className={`${className} nodrag nopan`}
       title={title}
       aria-label={title}
+      disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();
         onClick();
       }}
       onDoubleClick={stop}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d={ICONS[icon]} />
-      </svg>
+      <Icon icon={icon} />
     </button>
   );
 }
@@ -159,7 +177,7 @@ export function ExpandButton({ expanded, what, onClick }: { expanded: boolean; w
       icon={expanded ? 'chevronUp' : 'chevronDown'}
       title={`${expanded ? 'Hide' : 'Show'} ${what}`}
       onClick={onClick}
-      className="rc-node-tool rc-box-toggle"
+      className="rc-node-tool rc-node-button"
     />
   );
 }
@@ -168,4 +186,9 @@ export function ExpandButton({ expanded, what, onClick }: { expanded: boolean; w
 export function Badges({ items }: { items: ReactNode[] }) {
   if (items.length === 0) return null;
   return <div className="rc-node-badges">{items}</div>;
+}
+
+/** A spinning ring shown beside a step or sub-recipe while it runs. */
+export function Spinner() {
+  return <span className="rc-run-mark rc-run-spinner" role="img" aria-label="Running" title="Running" />;
 }

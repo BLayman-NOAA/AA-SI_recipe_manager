@@ -8,6 +8,10 @@ sub-recipe on its own. References to steps the file does not declare become
 entry nodes at the top of the diagram instead of validation errors, and
 outputs nothing in the file consumes become exit nodes at the bottom, so a
 level's sub-recipe shows the data flowing into it and out of it.
+
+Each include entry lists the input declarations of its own file, and each
+input node names the file that declares it, so a reader can tell the root
+file's inputs from those a sub-recipe brought in.
 """
 
 from __future__ import annotations
@@ -28,7 +32,12 @@ from aa_recipe_manager.resolver.params import (
 )
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import Recipe, Step
+    from aa_recipe_manager.model.types import (
+        IncludeBlock,
+        InputDeclaration,
+        Recipe,
+        Step,
+    )
     from aa_recipe_manager.registry.registry import Registry
 
 #: Bumped when the graph document changes shape in a way the page must follow.
@@ -74,7 +83,10 @@ def build_recipe_graph(
             ports, instead of raising.
 
     Returns:
-        A dict containing only JSON-serializable values.
+        A dict containing only JSON-serializable values. Each entry of
+        ``includes`` carries ``inputs``, the declarations of its own file,
+        and each input node carries ``declared_in``, the root document or the
+        ``source`` of the include whose file declares it.
 
     Raises:
         SpecNotFoundError: A step names an op the registry does not have, and
@@ -113,6 +125,38 @@ def step_spec(step: Step, registry: Registry) -> Spec:
     return resolve_custom_spec(step, registry)
 
 
+def _declared_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Input declarations of one file as the graph lists them, in file order.
+
+    Tolerant of a declaration the model would reject: an input the parent
+    overrides is never validated, so the graph must not fail on it.
+    """
+    entries = []
+    for name, decl in inputs.items():
+        if not isinstance(decl, dict):
+            decl = {}
+            required = True
+        else:
+            required = decl.get("required", "default" not in decl)
+        entries.append(
+            {
+                "name": name,
+                "type": decl.get("type"),
+                "required": required,
+                "default": json_safe(decl.get("default")),
+                "description": clean_text(decl.get("description")),
+            }
+        )
+    return entries
+
+
+def _required(decl: InputDeclaration) -> bool:
+    """Whether an input must be set; an explicit ``default: null`` is optional."""
+    if "required" not in decl.model_fields_set and "default" in decl.model_fields_set:
+        return False
+    return decl.required
+
+
 def _custom_spec(step: Step):
     """The custom spec the executor would use, or None."""
     return step.custom_spec if step.op == "custom" else None
@@ -144,8 +188,10 @@ class _GraphBuilder:
         self.consumed: set[tuple[str, str]] = set()
         self.groups: list[dict[str, Any]] = []
         self.group_of: dict[str, dict[str, Any]] = {}
+        self.blocks: dict[int, IncludeBlock] = {}
         self.includes = self._include_tree()
         self.include_of = self._innermost_includes()
+        self.input_origins = self._input_origins()
 
     def _spec(self, step: Step) -> Spec:
         """The step's spec, or an empty stand in for an op that cannot be found."""
@@ -160,13 +206,13 @@ class _GraphBuilder:
         self, recipe_info: dict[str, Any], *, slug: str, title: str
     ) -> dict[str, Any]:
         self._group_mapped_steps()
+        # Every declared input gets a node, read or not, in declaration order.
+        for name in self.recipe.inputs:
+            self._input_entry(name, None, None)
         steps = []
         for step in self.recipe.steps:
             steps.append(self._step_node(step))
             self._wire(step)
-        # Declared inputs no step reads still get a node, so they can be set.
-        for name in self.recipe.inputs:
-            self._input_entry(name, None, None)
         exits = self._exit_nodes()
         self._place_in_groups(exits)
         for group in self.groups:
@@ -211,9 +257,11 @@ class _GraphBuilder:
                     "overrides": json_safe(block.overrides),
                     "map_over": block.map_over,
                     "bindings": block.bindings,
+                    "inputs": _declared_inputs(block.inputs),
                     "consumed": [],
                 }
             )
+            self.blocks[id(includes[-1])] = block
         for index, include in enumerate(includes):
             members = set(include["steps"])
             parents = [
@@ -225,6 +273,31 @@ class _GraphBuilder:
             if parents:
                 include["parent"] = min(parents)[2]
         return includes
+
+    def _input_origins(self) -> dict[str, str]:
+        """The include source declaring each input a sub-recipe brought in.
+
+        Follows each top level include's promoted names down to the file
+        that declares them. Inputs not listed are the root document's.
+        """
+
+        def trace(include: dict[str, Any], name: str) -> str:
+            if name in self.blocks[id(include)].inputs:
+                return include["source"]
+            for child in self.includes:
+                if child["parent"] != include["id"]:
+                    continue
+                if name in self.blocks[id(child)].promoted:
+                    return trace(child, name)
+            return include["source"]
+
+        origins: dict[str, str] = {}
+        for include in self.includes:
+            if include["parent"] is not None:
+                continue
+            for name in self.blocks[id(include)].promoted:
+                origins.setdefault(name, trace(include, name))
+        return origins
 
     def _innermost_includes(self) -> dict[str, dict[str, Any]]:
         """The smallest include containing each step that is in one."""
@@ -518,9 +591,12 @@ class _GraphBuilder:
                 "label": f"inputs.{name}",
                 "type": decl.type if decl else self._slot_type(step, slot),
                 "declared": decl is not None,
-                "required": decl.required if decl else None,
+                "required": _required(decl) if decl else None,
                 "default": json_safe(decl.default) if decl else None,
                 "description": clean_text(decl.description) if decl else None,
+                "declared_in": (
+                    self.input_origins.get(name, self.root_document) if decl else None
+                ),
             }
         return _Ref(node_id, name)
 

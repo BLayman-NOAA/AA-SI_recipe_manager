@@ -1,5 +1,6 @@
 /** Diagram view state: selection, expanded steps and boxes, drill path and view options. */
-import { create } from 'zustand';
+import { createContext, useContext } from 'react';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { readStoredJson, writeStored } from './storage';
 
 export const VIEW_KEY = 'rc.view';
@@ -18,11 +19,18 @@ export interface Selection {
 export type Direction = 'RIGHT' | 'DOWN';
 export type Theme = 'dark' | 'light';
 
+/** Diagram text sizes offered in View > Diagram Text Size, as scales of the base size. */
+export const TEXT_SIZES = [1, 1.15, 1.3, 1.5] as const;
+
 /** View options remembered per browser. */
 export interface ViewPreferences {
   connected: boolean;
   direction: Direction;
   theme: Theme;
+  /** Tint the steps the survey tier holds (Cache > Show Survey Backed Region). */
+  surveyRegion: boolean;
+  /** Diagram text size, one of TEXT_SIZES. */
+  textSize: number;
 }
 
 export interface ViewState extends ViewPreferences {
@@ -55,6 +63,8 @@ export interface ViewState extends ViewPreferences {
   setConnected: (connected: boolean) => void;
   setDirection: (direction: Direction) => void;
   setTheme: (theme: Theme) => void;
+  setSurveyRegion: (surveyRegion: boolean) => void;
+  setTextSize: (textSize: number) => void;
   setFindQuery: (query: string) => void;
   requestFit: () => void;
   requestFind: () => void;
@@ -66,23 +76,32 @@ export const DEFAULT_PREFERENCES: ViewPreferences = {
   connected: false,
   direction: 'RIGHT',
   theme: 'dark',
+  surveyRegion: true,
+  textSize: 1.15,
 };
 
-/** Stored preferences merged over the defaults, ignoring malformed values. */
-export function loadPreferences(): ViewPreferences {
-  const stored = readStoredJson<Partial<ViewPreferences>>(VIEW_KEY) ?? {};
+/**
+ * Stored preferences merged over the defaults, ignoring malformed values.
+ *
+ * Args:
+ *   storageKey: Where the preferences are kept; null reads nothing.
+ */
+export function loadPreferences(storageKey: string | null = VIEW_KEY): ViewPreferences {
+  const stored = (storageKey && readStoredJson<Partial<ViewPreferences>>(storageKey)) || {};
   const prefs = { ...DEFAULT_PREFERENCES };
   if (typeof stored.connected === 'boolean') prefs.connected = stored.connected;
   if (stored.direction === 'RIGHT' || stored.direction === 'DOWN') {
     prefs.direction = stored.direction;
   }
   if (stored.theme === 'dark' || stored.theme === 'light') prefs.theme = stored.theme;
+  if (typeof stored.surveyRegion === 'boolean') prefs.surveyRegion = stored.surveyRegion;
+  if ((TEXT_SIZES as readonly number[]).includes(stored.textSize as number)) prefs.textSize = stored.textSize as number;
   return prefs;
 }
 
-/** Remember the preferences of a state. */
-function savePreferences(state: ViewPreferences): void {
-  writeStored(VIEW_KEY, JSON.stringify(preferencesOf(state)));
+/** Remember the preferences of a state under a key; a null key keeps nothing. */
+function savePreferences(storageKey: string | null, state: ViewPreferences): void {
+  if (storageKey) writeStored(storageKey, JSON.stringify(preferencesOf(state)));
 }
 
 /** A copy of a set with one id added or removed. */
@@ -93,64 +112,95 @@ function toggled(ids: Set<string>, id: string): Set<string> {
   return next;
 }
 
-export const useView = create<ViewState>((set, get) => ({
-  ...loadPreferences(),
-  selected: null,
-  expandedSteps: new Set<string>(),
-  expandedBoxes: new Set<string>(),
-  expandRequest: { count: 0, expanded: true },
-  drill: [],
-  findQuery: '',
-  fitRequest: 0,
-  findRequest: 0,
+export interface ViewStoreOptions {
+  /** localStorage key for the preferences; null keeps nothing. */
+  storageKey?: string | null;
+}
 
-  select: (selected) => set({ selected }),
-  toggleStepExpanded: (id) => set((state) => ({ expandedSteps: toggled(state.expandedSteps, id) })),
-  toggleBoxExpanded: (id) => set((state) => ({ expandedBoxes: toggled(state.expandedBoxes, id) })),
-  requestExpandAll: (expanded) =>
-    set((state) => ({ expandRequest: { count: state.expandRequest.count + 1, expanded } })),
-  expandMany: (steps, boxes) =>
-    set((state) => ({
-      expandedSteps: new Set([...state.expandedSteps, ...steps]),
-      expandedBoxes: new Set([...state.expandedBoxes, ...boxes]),
-    })),
-  collapseAll: () => set({ expandedSteps: new Set<string>(), expandedBoxes: new Set<string>() }),
-  drillInto: (id) =>
-    set((state) => {
-      const expandedBoxes = new Set(state.expandedBoxes);
-      expandedBoxes.delete(id);
-      return { drill: [...state.drill, id], expandedBoxes };
-    }),
-  drillTo: (depth) => set((state) => ({ drill: state.drill.slice(0, Math.max(0, depth)) })),
-  drillOut: () => get().drillTo(get().drill.length - 1),
-  setDrill: (drill) => set({ drill }),
-  setConnected: (connected) => {
-    set({ connected });
-    savePreferences(get());
-  },
-  setDirection: (direction) => {
-    set({ direction });
-    savePreferences(get());
-  },
-  setTheme: (theme) => {
-    set({ theme });
-    savePreferences(get());
-  },
-  setFindQuery: (findQuery) => set({ findQuery }),
-  requestFit: () => set((state) => ({ fitRequest: state.fitRequest + 1 })),
-  requestFind: () => set((state) => ({ findRequest: state.findRequest + 1 })),
-  resetScope: () =>
-    set({
-      selected: null,
-      expandedSteps: new Set<string>(),
-      expandedBoxes: new Set<string>(),
-      drill: [],
-      findQuery: '',
-    }),
-}));
+export type ViewStore = UseBoundStore<StoreApi<ViewState>>;
+
+/** A view store of its own, so that diagrams on one page do not share a selection. */
+export function createViewStore(options: ViewStoreOptions = {}): ViewStore {
+  const { storageKey = null } = options;
+  const save = (state: ViewPreferences) => savePreferences(storageKey, state);
+  return create<ViewState>((set, get) => ({
+    ...loadPreferences(storageKey),
+    selected: null,
+    expandedSteps: new Set<string>(),
+    expandedBoxes: new Set<string>(),
+    expandRequest: { count: 0, expanded: true },
+    drill: [],
+    findQuery: '',
+    fitRequest: 0,
+    findRequest: 0,
+
+    select: (selected) => set({ selected }),
+    toggleStepExpanded: (id) => set((state) => ({ expandedSteps: toggled(state.expandedSteps, id) })),
+    toggleBoxExpanded: (id) => set((state) => ({ expandedBoxes: toggled(state.expandedBoxes, id) })),
+    requestExpandAll: (expanded) =>
+      set((state) => ({ expandRequest: { count: state.expandRequest.count + 1, expanded } })),
+    expandMany: (steps, boxes) =>
+      set((state) => ({
+        expandedSteps: new Set([...state.expandedSteps, ...steps]),
+        expandedBoxes: new Set([...state.expandedBoxes, ...boxes]),
+      })),
+    collapseAll: () => set({ expandedSteps: new Set<string>(), expandedBoxes: new Set<string>() }),
+    drillInto: (id) =>
+      set((state) => {
+        const expandedBoxes = new Set(state.expandedBoxes);
+        expandedBoxes.delete(id);
+        return { drill: [...state.drill, id], expandedBoxes };
+      }),
+    drillTo: (depth) => set((state) => ({ drill: state.drill.slice(0, Math.max(0, depth)) })),
+    drillOut: () => get().drillTo(get().drill.length - 1),
+    setDrill: (drill) => set({ drill }),
+    setConnected: (connected) => {
+      set({ connected });
+      save(get());
+    },
+    setDirection: (direction) => {
+      set({ direction });
+      save(get());
+    },
+    setTheme: (theme) => {
+      set({ theme });
+      save(get());
+    },
+    setSurveyRegion: (surveyRegion) => {
+      set({ surveyRegion });
+      save(get());
+    },
+    setTextSize: (textSize) => {
+      set({ textSize });
+      save(get());
+    },
+    setFindQuery: (findQuery) => set({ findQuery }),
+    requestFit: () => set((state) => ({ fitRequest: state.fitRequest + 1 })),
+    requestFind: () => set((state) => ({ findRequest: state.findRequest + 1 })),
+    resetScope: () =>
+      set({
+        selected: null,
+        expandedSteps: new Set<string>(),
+        expandedBoxes: new Set<string>(),
+        drill: [],
+        findQuery: '',
+      }),
+  }));
+}
+
+/** The application's store. */
+export const useView: ViewStore = createViewStore({ storageKey: VIEW_KEY });
+
+/** The view store of the enclosing diagram; the application's without a provider. */
+export const ViewStoreContext = createContext<ViewStore>(useView);
+
+/** The store of the enclosing diagram: a provider's, else the application's. */
+export function useViewStore(): ViewStore {
+  return useContext(ViewStoreContext);
+}
 
 /** The preferences part of a view state, as stored. */
 export function preferencesOf(state: ViewPreferences): ViewPreferences {
-  const { connected, direction, theme } = state;
-  return { connected, direction, theme };
+  const { connected, direction, theme, surveyRegion, textSize } = state;
+  return { connected, direction, theme, surveyRegion, textSize };
 }

@@ -274,13 +274,24 @@ def generate_cmd(
     metavar="NAME=VALUE",
     help="Supply a pipeline-level input value (repeatable).",
 )
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Run config file whose inputs apply, found as for run when omitted.",
+)
 def dry_run_cmd(
     recipe: str,
     visualize: bool,
     check_versions: bool,
     inputs: tuple[str, ...],
+    config_path: str | None,
 ) -> None:
-    """Validate RECIPE without executing or generating any artifacts."""
+    """Validate RECIPE without executing or generating any artifacts.
+
+    Inputs come from the run config, as for run, with --input values on top.
+    """
     parsed_inputs: dict[str, str] = {}
     for item in inputs:
         if "=" not in item:
@@ -288,9 +299,15 @@ def dry_run_cmd(
         name, _, value = item.partition("=")
         parsed_inputs[name.strip()] = value.strip()
 
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
     report = api.dry_run(
         recipe,
-        inputs=parsed_inputs or None,
+        inputs=merged_inputs or None,
         visualize=visualize,
         check_versions=check_versions,
     )
@@ -1622,6 +1639,15 @@ def clean_cmd(
     help="Supply a pipeline-level input value (repeatable).",
 )
 @click.option(
+    "--base-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help=(
+        "Resolve the recipe's relative paths against PATH instead of the "
+        "working directory, as a run started there would."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -1642,6 +1668,7 @@ def preview_cmd(
     checkpoint_mode: str | None,
     no_pin_targets: bool,
     inputs: tuple[str, ...],
+    base_dir: str | None,
     as_json: bool,
 ) -> None:
     """Show, per step, what running RECIPE would do, without running it.
@@ -1689,6 +1716,7 @@ def preview_cmd(
             checkpoint_steps=list(checkpoint_steps) or None,
             pin_targets=not no_pin_targets,
             storage_options=run_config.storage_options,
+            base_dir=base_dir,
         )
     except Exception as exc:
         _handle_recipe_errors(exc)

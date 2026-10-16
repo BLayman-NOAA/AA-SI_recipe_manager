@@ -300,6 +300,7 @@ def _path_fingerprint(
     storage_options: dict[str, Any] | None = None,
     *,
     mode: str = "auto",
+    base_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """Return a location-independent fingerprint for a path-like value.
 
@@ -311,6 +312,8 @@ def _path_fingerprint(
 
     fsspec URLs are fingerprinted remotely via :func:`_remote_path_fingerprint`;
     ``storage_options`` authenticates those calls but never enters the result.
+    A relative local path is read under ``base_dir`` (default: the working
+    directory); the result does not depend on which.
     """
     if path_value is None:
         return None
@@ -320,6 +323,8 @@ def _path_fingerprint(
         return _remote_path_fingerprint(str(path_value), storage_options, mode=mode)
     effective_mode = "size" if mode == "auto" else mode
     path = Path(path_value)
+    if base_dir is not None and not path.is_absolute():
+        path = Path(base_dir) / path
     if not path.exists():
         return {"kind": "missing"}
     if path.is_file():
@@ -368,18 +373,31 @@ def _cached_path_fingerprint(
     storage_options: dict[str, Any] | None,
     mode: str,
     cache: MutableMapping[tuple[str, str], Any] | None,
+    base_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """:func:`_path_fingerprint`, memoized in ``cache`` when one is given.
 
-    A ``missing`` or ``remote-unverified`` result is returned but not kept: the
-    path may appear, or a transient remote error clear, before the next call.
+    The cache is keyed by the path as read, so a relative path under two base
+    directories gives two entries. A ``missing`` or ``remote-unverified``
+    result is returned but not kept: the path may appear, or a transient
+    remote error clear, before the next call.
     """
     if cache is None:
-        return _path_fingerprint(value, storage_options, mode=mode)
-    key = (str(value), mode)
+        return _path_fingerprint(value, storage_options, mode=mode, base_dir=base_dir)
+    effective = str(value)
+    if (
+        base_dir is not None
+        and isinstance(value, (str, Path))
+        and not is_remote_url(value)
+        and not Path(value).is_absolute()
+    ):
+        effective = str(Path(base_dir) / value)
+    key = (effective, mode)
     if key in cache:
         return cache[key]
-    fingerprint = _path_fingerprint(value, storage_options, mode=mode)
+    fingerprint = _path_fingerprint(
+        value, storage_options, mode=mode, base_dir=base_dir
+    )
     kind = fingerprint.get("kind") if isinstance(fingerprint, dict) else None
     if kind not in ("missing", "remote-unverified"):
         cache[key] = fingerprint
@@ -392,6 +410,7 @@ def _step_fingerprint(
     input_declarations: dict[str, Any],
     storage_options: dict[str, Any] | None = None,
     path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Content fingerprint of a single step's definition.
 
@@ -401,7 +420,9 @@ def _step_fingerprint(
     stay cache-neutral), input/param wiring, resolved params, mapping/sweep
     declarations, and the values of any pipeline inputs the step references.
     Upstream data dependencies are folded in separately via the Merkle parent
-    hashes in :func:`compute_step_fingerprints`.
+    hashes in :func:`compute_step_fingerprints`. Relative local paths are read
+    under ``base_dir`` (default: the working directory); the hash does not
+    depend on which.
     """
     step = node.step
     impl = node.implementation
@@ -419,7 +440,7 @@ def _step_fingerprint(
         if fp_mode != "off":
             value = resolved_inputs[name]
             pipeline_input_paths[name] = _cached_path_fingerprint(
-                value, storage_options, fp_mode, path_fingerprint_cache
+                value, storage_options, fp_mode, path_fingerprint_cache, base_dir
             )
             if isinstance(value, (str, Path)):
                 fingerprinted_paths.add(str(value))
@@ -429,7 +450,7 @@ def _step_fingerprint(
         if fp_mode != "off":
             value = node.resolved_params.get(name)
             param_paths[name] = _cached_path_fingerprint(
-                value, storage_options, fp_mode, path_fingerprint_cache
+                value, storage_options, fp_mode, path_fingerprint_cache, base_dir
             )
             if isinstance(value, (str, Path)):
                 fingerprinted_paths.add(str(value))
@@ -500,6 +521,7 @@ def compute_step_fingerprints(
     *,
     storage_options: dict[str, Any] | None = None,
     path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
 ) -> StepFingerprints:
     """Per-step Merkle hashes + hashed payloads for content-addressed caching.
 
@@ -519,7 +541,8 @@ def compute_step_fingerprints(
     ``path_fingerprint_cache`` memoizes folder and file fingerprints by
     ``(path, mode)`` across calls, so a session can avoid listing the same
     remote folder again. The caller decides how long a cached listing is
-    trusted.
+    trusted. Relative local paths are read under ``base_dir`` (default: the
+    working directory); the hash does not depend on which.
     """
     pipeline_inputs = pipeline_inputs or {}
     input_declarations = dag.recipe.inputs
@@ -536,6 +559,7 @@ def compute_step_fingerprints(
             input_declarations,
             storage_options,
             path_fingerprint_cache,
+            base_dir,
         )
         parents = sorted(p for p in upstream.get(step_id, set()) if p in hashes)
         parent_hashes = [hashes[p] for p in parents]
@@ -555,17 +579,21 @@ def compute_step_hashes(
     *,
     storage_options: dict[str, Any] | None = None,
     path_fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
 ) -> dict[str, str]:
     """Per-step Merkle hashes used for content-addressed checkpoint caching.
 
     Thin wrapper over :func:`compute_step_fingerprints` for callers that only
-    need the hashes (the fingerprint payloads are discarded).
+    need the hashes (the fingerprint payloads are discarded). Relative local
+    paths are read under ``base_dir`` (default: the working directory); the
+    hash does not depend on which.
     """
     return compute_step_fingerprints(
         dag,
         pipeline_inputs,
         storage_options=storage_options,
         path_fingerprint_cache=path_fingerprint_cache,
+        base_dir=base_dir,
     ).hashes
 
 
@@ -749,26 +777,37 @@ def target_ancestry(dag: PipelineDAG, targets: Iterable[str]) -> set[str]:
     return ancestry
 
 
-def _check_run_only(
+def check_run_only(
     dag: PipelineDAG,
-    targets: tuple[str, ...],
-    must_run: set[str],
-    upstream: dict[str, set[str]],
+    targets: Collection[str],
+    must_run: Collection[str],
+    upstream: dict[str, set[str]] | None = None,
+    *,
+    fanned_out_missing: Iterable[str] = (),
 ) -> None:
     """Raise when a run only would compute a step besides its targets.
 
-    Mapped and swept steps are left out: their cache state is per instance and
-    is checked in the worker. Direct parents of the targets are named when any
-    of them is missing, since those are what the user has to run first.
+    Mapped and swept steps in ``must_run`` are left out: their cache state is
+    per instance, so the caller passes the ones that would compute as
+    ``fanned_out_missing`` (the plan preview does), or the worker checks them
+    instance by instance. Direct parents of the targets are named when any of
+    them is missing, since those are what the user has to run first.
+
+    Raises:
+        UpstreamNotCachedError: A step other than a target would compute.
     """
     from aa_recipe_manager.exceptions import UpstreamNotCachedError
 
+    targets = tuple(targets)
+    if upstream is None:
+        upstream = _step_upstream(dag)
     offenders = {
         step_id
         for step_id in must_run
         if step_id not in targets
         and not (dag.nodes[step_id].is_mapped or dag.nodes[step_id].is_swept)
     }
+    offenders.update(s for s in fanned_out_missing if s not in targets)
     parents = {p for t in targets for p in upstream.get(t, ())}
     if offenders & parents:
         raise UpstreamNotCachedError(targets, offenders & parents)
@@ -843,7 +882,7 @@ def plan_execution(
     if checkpoints is None:
         must_run = set(order)
         if only:
-            _check_run_only(dag, targets, must_run, upstream)
+            check_run_only(dag, targets, must_run, upstream)
         return ExecutionPlan(
             must_run=must_run,
             loadable=set(),
@@ -940,7 +979,7 @@ def plan_execution(
         needed.update(parents)
 
     if only:
-        _check_run_only(dag, targets, must_run, upstream)
+        check_run_only(dag, targets, must_run, upstream)
 
     # Compute which must-run intermediate steps are limiting the resume frontier.
     # These are steps that have no checkpoint but sit between a pruned/loadable

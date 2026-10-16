@@ -20,37 +20,8 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw",
-      "description": "Folder of .raw files, read for channel configuration only."
-    },
-    {
-      "id": "in:calibration_outputs",
-      "kind": "input",
-      "label": "inputs.calibration_outputs",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder for the calibration artifacts."
-    },
-    {
-      "id": "in:file_time_start",
-      "kind": "input",
-      "label": "inputs.file_time_start",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "2023-07-17T16:30:46",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
-    },
-    {
-      "id": "in:file_time_end",
-      "kind": "input",
-      "label": "inputs.file_time_end",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "2023-07-18T19:50:19",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+      "description": "Folder of .raw files, read for channel configuration only.",
+      "declared_in": "calibration_standardize.yaml"
     },
     {
       "id": "in:cal_input_folder",
@@ -60,7 +31,19 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS",
-      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).",
+      "declared_in": "calibration_standardize.yaml"
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory under the run's outputs folder for the calibration artifacts.",
+      "declared_in": "calibration_standardize.yaml"
     },
     {
       "id": "in:cruise_id",
@@ -70,7 +53,8 @@
       "declared": true,
       "required": false,
       "default": "RL2307",
-      "description": "Recorded in every generated single-channel file so it stays traceable to the survey."
+      "description": "Recorded in every generated single-channel file so it stays traceable to the survey.",
+      "declared_in": "calibration_standardize.yaml"
     },
     {
       "id": "in:record_author",
@@ -80,7 +64,30 @@
       "declared": true,
       "required": false,
       "default": "<Your Name>",
-      "description": "Recorded as the author of every generated single-channel file."
+      "description": "Recorded as the author of every generated single-channel file.",
+      "declared_in": "calibration_standardize.yaml"
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2023-07-17T16:30:46",
+      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "declared_in": "calibration_standardize.yaml"
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2023-07-18T19:50:19",
+      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "declared_in": "calibration_standardize.yaml"
     },
     {
       "id": "in:override_channels",
@@ -90,7 +97,8 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Standardized channels to write instead of parsing the manufacturer files, as returned on standardize_cal's single_channel_data output. This is how a reviewed and edited set comes back from a caller that never sees the folder. Declared here, and left unset, in both phase recipes: an unset value hashes identically, so standardize_cal still shares its cache entry, and only a caller actually supplying edits diverges."
+      "description": "Reviewed channels from single_channel_data, written in place of the manufacturer files. Unset, both phases share standardize_cal's cache.",
+      "declared_in": "calibration_standardize.yaml"
     },
     {
       "id": "initial_setup",

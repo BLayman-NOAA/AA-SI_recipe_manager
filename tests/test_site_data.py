@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from aa_recipe_manager.docs.site_data import (
     build_site_data,
     check_site_data,
     load_manifest,
+    page_url,
 )
 from aa_recipe_manager.exceptions import SpecNotFoundError
 from aa_recipe_manager.graph import build_recipe_graph
@@ -166,6 +168,11 @@ HB1603_SURVEY_TIER = [
             HB1603_SURVEY_TIER,
         ),
         (
+            "recipes/HB1603/survey_echogram_pyramid.yaml",
+            "HB1603/UC1/survey_echogram_pyramid.yaml",
+            None,
+        ),
+        (
             "recipes/HB2407/Herring_10-15_per_file.yaml",
             "HB2407/Herring_10-15_per_file.yaml",
             None,
@@ -191,7 +198,11 @@ def test_docs_recipes_share_the_originals_cache(docs_path, original, shared, reg
 
 @pytest.mark.parametrize(
     "docs_path",
-    ["recipes/HB1603/dive_analysis.yaml", "recipes/HB2407/Herring_10-15_per_file.yaml"],
+    [
+        "recipes/HB1603/dive_analysis.yaml",
+        "recipes/HB1603/survey_echogram_pyramid.yaml",
+        "recipes/HB2407/Herring_10-15_per_file.yaml",
+    ],
 )
 def test_reference_include_trees_match_the_files(docs_path):
     from ruamel.yaml import YAML
@@ -299,6 +310,7 @@ def built(tmp_path_factory):
 def test_build_writes_every_file(built):
     for entry in ENTRIES:
         assert (built / "partials" / f"{entry.slug}.md").is_file()
+    for entry in PARENTS:
         assert (built / "recipes" / f"{entry.slug}.json").is_file()
     assert (built / "ops.json").is_file()
     assert (built / "manifest.json").is_file()
@@ -383,7 +395,7 @@ def test_committed_site_data_is_current():
 
 
 # ---------------------------------------------------------------------------
-# How recipes connect
+# Viewer data
 # ---------------------------------------------------------------------------
 
 
@@ -391,42 +403,154 @@ def load_graph(built, slug):
     return json.loads((built / "recipes" / f"{slug}.json").read_text(encoding="utf-8"))
 
 
-def test_focus_shows_only_the_named_steps(built):
-    graph = load_graph(built, "calibration-mapping")
-    steps = [n["id"] for n in graph["nodes"] if n["kind"] == "step"]
-    assert steps == ["build_cal_mapping"]
-    upstream = {u["step"]: u for u in graph["context"]["upstream"]}
-    assert upstream["standardize_cal"]["recipe"] == "calibration-standardize"
-    assert upstream["standardize_cal"]["page"] == "calibration/phases/"
+def manifest_entries(built):
+    manifest = json.loads((built / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema"] == 2
+    return {entry["slug"]: entry for entry in manifest["recipes"]}
 
 
-def test_sub_recipe_context_traces_inputs_to_other_levels(built):
-    context = load_graph(built, "hb1603-level-2")["context"]
-    upstream = {(u["target"], u["step"]): u for u in context["upstream"]}
-    assert upstream[("in:per_file_source", "query_ncei")]["recipe"] == "hb1603-level-0"
-    assert upstream[("ext:combine_raw.echodata", "combine_raw")]["page"] == (
-        "levels/level-1/"
+def test_manifest_json_schema_2_names_root_and_include(built):
+    documents = manifest_entries(built)
+    for entry in ENTRIES:
+        doc = documents[entry.slug]
+        root = entry.parent or entry.slug
+        assert doc["root"] == root
+        assert doc["url"] == page_url(entry.page)
+        assert doc["recipe_dir"] == posixpath.dirname(documents[root]["path"])
+        if entry.parent is None:
+            assert doc["include"] is None
+            continue
+        includes = {inc["id"]: inc for inc in load_graph(built, root)["includes"]}
+        include = includes[doc["include"]]
+        steps = {step.id for step in load_recipe(DOCS / entry.path).steps}
+        assert set(include["steps"]) == steps, entry.slug
+        # The viewer finds the included file under the root recipe's folder.
+        assert (DOCS / doc["recipe_dir"] / include["source"]).is_file()
+    level2 = documents["hb1603-level-2"]
+    assert level2["include"] == "inc:sub_recipes/processing_lvl_2_combined.yaml"
+    assert level2["recipe_dir"] == "recipes/HB1603"
+    assert level2["url"] == "levels/level-2/"
+
+
+def test_only_root_graphs_are_written(built):
+    written = sorted(p.stem for p in (built / "recipes").glob("*.json"))
+    assert written == sorted(entry.slug for entry in PARENTS)
+
+
+def viewer_div(partial):
+    start = partial.index('<div class="recipe-viewer"')
+    return partial[start : partial.index("</div>", start)]
+
+
+def test_partials_embed_the_viewer(built):
+    for entry in ENTRIES:
+        partial = (built / "partials" / f"{entry.slug}.md").read_text(encoding="utf-8")
+        assert partial.startswith('=== "Flow diagram"'), entry.slug
+        div = viewer_div(partial)
+        root = entry.parent or entry.slug
+        assert div.startswith(
+            f'<div class="recipe-viewer" data-recipe="{root}" data-slug="{entry.slug}"'
+        )
+        assert ("data-drill=" in div) == (entry.parent is not None), entry.slug
+        fallback = [line.strip() for line in div.splitlines()[1:] if line.strip()]
+        assert fallback and all(line.startswith("- ") for line in fallback)
+
+    level2 = viewer_div(
+        (built / "partials" / "hb1603-level-2.md").read_text(encoding="utf-8")
     )
-    downstream = {(d["source"], d["step"]) for d in context["downstream"]}
-    assert ("out:dive_remove_noise.ds_Sv", "dive_mask_sparse") in downstream
-    assert context["values"]["in:surface_depth_m"] == "= 10.0"
-    assert context["values"]["in:ping_time_bin"] == "(from parent input ping_time_bin)"
+    assert 'data-drill="inc:sub_recipes/processing_lvl_2_combined.yaml"' in level2
+    assert "- `compute_sv`: [`compute_sv`](../ops/compute_sv.md)" in level2
+
+    # A full recipe lists its sub-recipes, linked to their pages, and the
+    # steps it declares itself.
+    herring = viewer_div(
+        (built / "partials" / "hb2407-herring-per-file.md").read_text(encoding="utf-8")
+    )
+    assert "- [HB2407 level 2, calibrated Sv, masks and noise removal](level-2.md)" in (
+        herring
+    )
+    assert "- `plot_sv_clean`:" in herring
+    assert "compute_sv" not in herring
+
+    # A sub-recipe documented on the parent's own page is listed unlinked.
+    dive = viewer_div(
+        (built / "partials" / "hb1603-dive-analysis.md").read_text(encoding="utf-8")
+    )
+    assert "- HB1603 dive plan\n" in dive
+    assert "(hb1603-dive-analysis.md)" not in dive
 
 
-def test_overview_draws_one_box_per_level(built):
-    graph = load_graph(built, "hb1603-dive-analysis-overview")
-    boxes = {n["id"]: n for n in graph["nodes"] if n["kind"] == "level"}
-    assert boxes["lvl:hb1603-level-2"]["page"] == "levels/level-2/"
-    assert boxes["lvl:hb1603-level-2"]["steps"] == 13
-    passed = {
-        (e["source"], e["target"]): e["outputs"]
-        for e in graph["edges"]
-        if e["kind"] == "data"
-    }
-    assert passed[("lvl:hb1603-level-1", "lvl:hb1603-level-2")] == ["echodata"]
-    # Steps the parent declares itself get a box of their own.
-    herring = load_graph(built, "hb2407-herring-per-file-overview")
-    assert "step:plot_sv_clean" in {n["id"] for n in herring["nodes"]}
+def test_child_without_a_matching_include_is_an_error(tmp_path):
+    quickstart = (DOCS / "recipes" / "quickstart" / "quickstart.yaml").as_posix()
+    save = (DOCS / "recipes" / "calibration" / "save_calibration.yaml").as_posix()
+    manifest = tmp_path / "site_recipes.yaml"
+    (tmp_path / "page.md").write_text("", encoding="utf-8")
+    manifest.write_text(
+        "recipes:\n"
+        f"  - {{slug: q, path: '{quickstart}', title: Q, page: page.md}}\n"
+        f"  - {{slug: s, path: '{save}', title: S, page: page.md, parent: q}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="'s': parent 'q' includes no file"):
+        build_site_data(manifest, tmp_path / "out", resolve_sources=False)
+
+
+def wrapped_recipe(tmp_path, entries):
+    """A full recipe including wrapper.yaml, which only includes inner.yaml."""
+    header = "recipe: {{name: {0}, version: '1.0', schema_version: '1'}}\n"
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "full.yaml").write_text(
+        header.format("full") + "steps:\n  - include: sub/wrapper.yaml\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sub" / "wrapper.yaml").write_text(
+        header.format("wrapper") + "steps:\n  - include: inner.yaml\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sub" / "inner.yaml").write_text(
+        header.format("inner") + "steps:\n"
+        "  - id: query\n"
+        "    op: query_ncei_data\n"
+        "    params: {file_time_start: '2016-07-25', file_time_end: '2016-07-26'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "page.md").write_text("", encoding="utf-8")
+    manifest = tmp_path / "site_recipes.yaml"
+    lines = [
+        f"  - {{slug: {slug}, path: {path}, title: {slug}, page: page.md{extra}}}"
+        for slug, path, extra in entries
+    ]
+    manifest.write_text("recipes:\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    return manifest
+
+
+def test_wrapper_and_wrapped_file_get_their_own_includes(tmp_path):
+    manifest = wrapped_recipe(
+        tmp_path,
+        [
+            ("full", "full.yaml", ""),
+            ("wrapper", "sub/wrapper.yaml", ", parent: full"),
+            ("inner", "sub/inner.yaml", ", parent: full"),
+        ],
+    )
+    out = tmp_path / "out"
+    build_site_data(manifest, out, resolve_sources=False)
+    documents = manifest_entries(out)
+    assert documents["wrapper"]["include"] == "inc:sub/wrapper.yaml"
+    assert documents["inner"]["include"] == "inc:sub/inner.yaml"
+
+
+def test_two_entries_for_one_include_is_an_error(tmp_path):
+    manifest = wrapped_recipe(
+        tmp_path,
+        [
+            ("full", "full.yaml", ""),
+            ("one", "sub/wrapper.yaml", ", parent: full"),
+            ("two", "sub/wrapper.yaml", ", parent: full"),
+        ],
+    )
+    with pytest.raises(ValueError, match="'two' and 'one' both document include"):
+        build_site_data(manifest, tmp_path / "out", resolve_sources=False)
 
 
 def test_full_recipes_get_a_runnable_notebook(built):
@@ -439,29 +563,13 @@ def test_full_recipes_get_a_runnable_notebook(built):
     assert not (built / "notebooks" / "hb1603-level-2.ipynb").exists()
 
 
-def test_partials_link_to_notebooks_and_overviews(built):
+def test_partials_link_to_notebooks(built):
     parent = (built / "partials" / "hb1603-dive-analysis.md").read_text(
         encoding="utf-8"
     )
-    assert parent.startswith('=== "Levels"')
-    assert 'data-recipe="hb1603-dive-analysis-overview"' in parent
     assert "(../data/notebooks/hb1603-dive-analysis.ipynb)" in parent
     child = (built / "partials" / "hb1603-level-2.md").read_text(encoding="utf-8")
     assert "(../data/notebooks/hb1603-dive-analysis.ipynb)" in child
-
-
-def test_focus_naming_an_unknown_step_is_an_error(tmp_path):
-    recipe = DOCS / "recipes" / "quickstart" / "quickstart.yaml"
-    manifest = tmp_path / "site_recipes.yaml"
-    (tmp_path / "page.md").write_text("", encoding="utf-8")
-    manifest.write_text(
-        "recipes:\n"
-        f"  - {{slug: q, path: '{recipe.as_posix()}', title: Q, page: page.md,"
-        " focus: [nope]}\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="focus names unknown steps"):
-        build_site_data(manifest, tmp_path / "out", resolve_sources=False)
 
 
 @pytest.mark.parametrize(
@@ -474,6 +582,4 @@ def test_focus_naming_an_unknown_step_is_an_error(tmp_path):
     ],
 )
 def test_page_url(page, url):
-    from aa_recipe_manager.docs.recipe_links import page_url
-
     assert page_url(page) == url

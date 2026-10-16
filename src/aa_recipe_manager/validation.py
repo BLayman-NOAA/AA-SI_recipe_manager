@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,8 @@ from aa_recipe_manager.resolver.params import resolve_input_refs
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import Dependency, Implementation, ParamDeclaration, PipelineDAG
+
+_WHOLE_INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
 
 @dataclass
@@ -145,6 +148,7 @@ class DryRunEngine:
             params = resolve_input_refs(node.step.params, input_values)
 
             self._check_sweep_purity(step_id, node, report_warnings)
+            self._check_unset_inputs(dag, step_id, input_values, errors)
 
             if impl is None:
                 step_info = DryRunStepInfo(
@@ -235,6 +239,40 @@ class DryRunEngine:
             return "warning", installed
 
         return "ok", installed
+
+    def _check_unset_inputs(
+        self,
+        dag: PipelineDAG,
+        step_id: str,
+        input_values: dict[str, Any],
+        errors: list[str],
+    ) -> None:
+        """Report required inputs and params fed by a recipe input with no value.
+
+        Mirrors ``build_kwargs``: such a reference is skipped when the op
+        declares the input or param optional, and fails the step otherwise.
+        """
+        node = dag.nodes[step_id]
+        params = {**node.step.params, **node.resolved_params}
+        slots = [
+            ("input", node.step.inputs, node.spec.inputs or {}),
+            ("param", params, node.spec.params or {}),
+        ]
+        for kind, values, decls in slots:
+            for name, value in values.items():
+                if not isinstance(value, str):
+                    continue
+                match = _WHOLE_INPUT_REF.fullmatch(value)
+                if match is None or match.group(1) in input_values:
+                    continue
+                decl = decls.get(name)
+                if decl is not None and not decl.required:
+                    continue
+                errors.append(
+                    f"step {step_id!r} {kind} {name!r} needs recipe input "
+                    f"{match.group(1)!r}, which has no value: set it in the run "
+                    "config's inputs, with --input, or give it a default"
+                )
 
     def _check_sweep_purity(
         self, step_id: str, node: Any, report_warnings: list[str]

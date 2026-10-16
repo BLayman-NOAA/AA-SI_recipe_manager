@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb2407-level-0-ncei-download" markdown>
+    <div class="recipe-viewer" data-recipe="hb2407-level-0-ncei-download" data-slug="hb2407-level-0-ncei-download" markdown>
 
     - `query_ncei`: [`query_ncei_data`](../ops/query_ncei_data.md)
     - `download_raw`: [`download_ncei_data`](../ops/download_ncei_data.md)

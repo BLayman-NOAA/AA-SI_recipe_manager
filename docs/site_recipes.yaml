@@ -1,17 +1,17 @@
 # Recipes the documentation site shows. `aa-recipe site-data` reads this and
-# writes each one's flow diagram graph and Flow / YAML / Notebook tabs under
-# docs/data. Paths are relative to this folder.
+# writes each one's Flow diagram / YAML / Notebook tabs under docs/data, plus
+# the graph of every full recipe, which the site's diagram viewer draws. Paths
+# are relative to this folder.
 #
-#   slug     names the data files; a page embeds a recipe with
+#   slug     names the partial; a page embeds a recipe with
 #            --8<-- "data/partials/<slug>.md"
-#   page     the page that embeds it, used for relative links
-#   parent   the full recipe that includes this file. Its notebook tab is cut
-#            from the parent's generated notebook, and its diagram can show
-#            the steps of other levels it connects to. Without a parent, the
-#            recipe is generated on its own.
+#   page     the page that embeds it, used for relative links and for the
+#            links the viewer shows to that page
+#   parent   the full recipe that includes this file. Its diagram is the
+#            parent's graph drilled into this file's include, and its notebook
+#            tab is cut from the parent's generated notebook. Without a parent,
+#            the recipe is a full recipe, drawn and generated on its own.
 #   level    the processing level it documents
-#   focus    for a full recipe, the steps its diagram shows; the others are
-#            drawn as context, documented by the `context` entry
 
 recipes:
 
@@ -76,6 +76,15 @@ recipes:
     parent: hb1603-dive-analysis
     level: 5
     page: levels/level-5.md
+
+  # --- HB1603 survey echogram pyramid ---------------------------------------
+
+  - slug: hb1603-survey-echogram-pyramid
+    path: recipes/HB1603/survey_echogram_pyramid.yaml
+    title: HB1603 survey echogram pyramid
+    cruise: HB1603
+    page: levels/hb1603-survey-echogram-pyramid.md
+    description: The whole cruise as one EchogramGL store, 18 and 38 kHz, seabed masked.
 
   # --- HB2407 herring, per file ---------------------------------------------
 
@@ -145,15 +154,13 @@ recipes:
     page: calibration/phases.md
 
   # Repeats phase 1's four steps only so it can load them from phase 1's
-  # cache, so the diagram shows the mapping step and draws the rest as phase 1.
+  # cache; the diagram shows all five.
   - slug: calibration-mapping
     path: recipes/calibration/calibration_mapping.yaml
     title: Calibration phase 2, mapping
     cruise: RL2307
     section: calibration
     page: calibration/phases.md
-    focus: [build_cal_mapping]
-    context: calibration-standardize
 
   - slug: calibration-save
     path: recipes/calibration/save_calibration.yaml

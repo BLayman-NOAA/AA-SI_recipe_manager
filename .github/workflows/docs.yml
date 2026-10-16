@@ -3,6 +3,8 @@
 # The site's data under docs/data is generated locally with `aa-recipe
 # site-data`, which needs the scientific packages, and committed. This
 # workflow only checks that data is current, then builds with the docs extra.
+# The recipe diagrams are drawn by the client's diagram viewer, which is not
+# committed: Node builds it from web/ into docs/assets/viewer before MkDocs runs.
 #
 # One-time setup: Settings > Pages > Build and deployment > Source: GitHub Actions.
 
@@ -19,6 +21,7 @@ on:
       - "tests/test_recipe_graph.py"
       - "tests/test_site_data.py"
       - "tests/test_cli_reference.py"
+      - "web/**"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -53,8 +56,31 @@ jobs:
       - name: Test the site data builders
         run: pytest tests/test_recipe_graph.py tests/test_site_data.py tests/test_cli_reference.py -q
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the diagram viewer
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:viewer
+
+      - name: Check the viewer assets
+        run: >-
+          test -f docs/assets/viewer/viewer.js
+          && test -f docs/assets/viewer/viewer.css
+          && test -f docs/assets/viewer/elk-worker.min.js
+
       - name: Build
         run: mkdocs build --strict
+
+      - name: Check that a level page embeds the viewer
+        run: |
+          grep -q 'class="recipe-viewer"' site/levels/level-2/index.html
+          grep -q 'assets/viewer/viewer.js' site/levels/level-2/index.html
 
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'

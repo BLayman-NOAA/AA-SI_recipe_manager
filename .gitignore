@@ -233,3 +233,5 @@ op_reference.html
 web/node_modules/
 web/dist/
 src/aa_recipe_manager/server/static/
+# Docs site diagram viewer, built by npm run build:viewer
+docs/assets/viewer/

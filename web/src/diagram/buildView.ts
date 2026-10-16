@@ -8,9 +8,12 @@
  * node components need, so they stay presentational.
  */
 import {
+  declaredIn,
   findInclude,
   findStep,
   inputName,
+  ownInputs,
+  rootDocument,
   stepNodes,
   type ExternalNode,
   type Graph,
@@ -23,9 +26,13 @@ import {
   type InputNode,
   type StepNode,
 } from '../api/graph';
+import type { InputSource } from '../api/models';
+import { includeSummary, type StepBadge } from '../runs/badges';
 import type { Selection } from '../state/view';
-import { plural, showValue, valueText } from '../text';
+import { andList, plural, showValue, valueText } from '../text';
 import { includeChain } from './locate';
+
+export type { InputSource };
 
 export interface ViewOptions {
   drill: string[];
@@ -35,10 +42,14 @@ export interface ViewOptions {
   findQuery?: string;
   /** Current recipe input values by name; defaults are shown when absent. */
   inputValues?: Record<string, unknown>;
+  /** Where each recipe input's value comes from, by name (the session's declared fields); absent on the site. */
+  inputSources?: Record<string, InputSource>;
   /** Step ids showing their parameter list. */
   expandedSteps: Set<string>;
   /** Inputs and outputs box node ids listing their rows. */
   expandedBoxes: Set<string>;
+  /** Run status marks by step id (runs/badges.ts). */
+  badges?: Record<string, StepBadge>;
 }
 
 export type Badge = 'per item' | 'collects' | 'sweep' | 'checkpoint' | 'writes files' | 'custom';
@@ -64,22 +75,35 @@ export interface StepData {
   /** The node lists its parameters. */
   expanded: boolean;
   params: ParamRow[];
+  /** Predicted and actual run status, or null before a preview or run. */
+  badge: StepBadge | null;
 }
 
 export interface IncludeData {
   include: GraphInclude;
   stepCount: number;
   overrideCount: number;
+  /** Inputs the file declares that the parent leaves alone. */
+  inputCount: number;
   inPorts: Port[];
   outPorts: Port[];
-  /** The box lists its overrides. */
+  /** The box lists its inputs. */
   expanded: boolean;
-  /** One row per override the include entry sets. */
+  /** The overrides the include entry sets, then the inputs the file declares itself. */
   rows: InputRow[];
+  /** The members' predicted marks counted, such as "9 survey, 2 to compute", or null. */
+  summary: string | null;
+  /** Every member is held by the survey tier. */
+  surveyBacked: boolean;
+  /** A member is running, or failed, in the run shown. */
+  status: 'running' | 'failed' | null;
 }
 
 export interface MapGroupData {
-  group: GraphGroup;
+  /** The header: the graph's label, or the input the line into the group names. */
+  label: string;
+  /** Hover text of a group drawn in part, saying where its other members are, or null. */
+  title: string | null;
 }
 
 export interface GhostData {
@@ -93,15 +117,15 @@ export interface ExternalData {
   external: ExternalNode;
 }
 
-/** One recipe input, or one override of the include drilled into. */
+/** One input or override a box lists. */
 export interface InputRow {
   name: string;
   value: unknown;
-  /** The value differs from the declared default, or the parent sets it. */
+  /** Something other than the declared default gives the value. */
   set: boolean;
   type: string | null;
   description: string | null;
-  /** The graph input node, or null for an override. */
+  /** The graph input node, or null for an override or an input without one. */
   inputId: string | null;
   /** Steps outside the sub-recipe the override value references. */
   from: { step: string; output: string }[];
@@ -112,15 +136,35 @@ export interface InputRow {
    * input has, where the parent recipe's inputs make it known.
    */
   resolved?: unknown;
+  /**
+   * An override the file above sets, an input this file declares, or an input
+   * of another file read here by name.
+   */
+  source: 'override' | 'own' | 'other';
+  /**
+   * What gives the shown value: the declaration's default, the run (config or
+   * session), an override further up the chain, or nothing.
+   */
+  setBy: 'default' | 'run' | 'parent' | 'unset';
+  /** The run source when known; only with setBy 'run'. */
+  runSource?: 'config' | 'session';
+  /** The file declaring an own or other input. */
+  declaredIn?: string;
 }
 
 export type InputsBoxId = 'inputs' | `overrides:${string}`;
 
 export interface InputsBoxData {
   id: InputsBoxId;
-  title: 'Recipe inputs' | 'Inputs from the parent';
+  title: 'Recipe inputs' | 'Inputs';
   include: GraphInclude | null;
+  /** Overrides, then the file's own inputs, then inputs of other files read here. */
   rows: InputRow[];
+  overrideCount: number;
+  /** Own and other rows. */
+  inputCount: number;
+  /** Inputs declared in sub-recipes below this file, not listed. */
+  more: number;
   expanded: boolean;
 }
 
@@ -216,13 +260,16 @@ export const CONTAINER_KINDS: ReadonlySet<ViewNodeKind> = new Set(['mapGroup']);
 
 const MAX_LABELS = 3;
 
-/** Names joined by ", ", at most three, then "+N more" (docs recipe_links._list_label). */
+/** The fewest visible members a group drawn in part has. */
+const MIN_PART_MEMBERS = 2;
+
+/** Names joined by ", ", at most three, then "+N more". */
 export function listLabel(names: string[]): string {
   if (names.length <= MAX_LABELS) return names.join(', ');
   return `${names.slice(0, MAX_LABELS).join(', ')} +${names.length - MAX_LABELS} more`;
 }
 
-/** Badges a step node shows, in the docs site's order. */
+/** Badges a step node shows, in display order. */
 export function stepBadges(step: StepNode): Badge[] {
   const badges: Badge[] = [];
   if (step.mapped) badges.push('per item');
@@ -396,26 +443,46 @@ function placeSteps(ctx: Context): Map<string, ViewNode> {
         badges: stepBadges(step),
         expanded: ctx.options.expandedSteps.has(step.id),
         params: paramRows(step),
+        badge: ctx.options.badges?.[step.id] ?? null,
       };
       nodes.set(step.id, { ...base(step.id, { kind: 'step', id: step.id }), kind: 'step', data });
     } else if (!nodes.has(rep)) {
       const include = findInclude(ctx.graph, rep)!;
+      const { inputValues, inputSources } = ctx.options;
+      const { overrides, own } = includeInputRows(ctx.graph, rep, inputValues, inputSources);
       nodes.set(rep, {
         ...base(rep, { kind: 'include', id: rep }),
         kind: 'include',
         data: {
           include,
           stepCount: include.steps.length,
-          overrideCount: Object.keys(include.overrides).length,
+          overrideCount: overrides.length,
+          inputCount: own.length,
           inPorts: [],
           outPorts: [],
           expanded: ctx.options.expandedBoxes.has(rep),
-          rows: includeOverrideRows(ctx.graph, rep, ctx.options.inputValues),
+          rows: [...overrides, ...own],
+          ...includeMarks(include, ctx.options.badges),
         },
       });
     }
   }
   return nodes;
+}
+
+/** An include box's run marks, from its members' badges. */
+function includeMarks(
+  include: GraphInclude,
+  badges: Record<string, StepBadge> | undefined,
+): Pick<IncludeData, 'summary' | 'surveyBacked' | 'status'> {
+  if (!badges) return { summary: null, surveyBacked: false, status: null };
+  const members = include.steps.map((id) => badges[id]).filter(Boolean);
+  const actual = new Set(members.map((badge) => badge.actual));
+  return {
+    summary: includeSummary(include, badges) || null,
+    surveyBacked: members.length > 0 && members.every((badge) => badge.surveyBacked),
+    status: actual.has('failed') ? 'failed' : actual.has('running') ? 'running' : null,
+  };
 }
 
 /** The list a per item edge's target maps over (`raw_urls` of `${query_ncei.raw_urls}`). */
@@ -607,39 +674,168 @@ function sourceName(id: string): string {
   return id.replace(/^(ext|ghost):/, '');
 }
 
-function inputValue(input: InputNode, options: ViewOptions): unknown {
-  const name = inputName(input);
-  const values = options.inputValues;
-  return values && name in values ? values[name] : input.default;
+/**
+ * An input's value and what gives it: the run when its source says config or
+ * session (or, without sources, when the value differs from the default),
+ * nothing when it is required and has no value, else the default.
+ */
+function runSetting(
+  name: string,
+  fallback: unknown,
+  required: boolean,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): Pick<InputRow, 'value' | 'set' | 'setBy' | 'runSource'> {
+  const given = inputValues !== undefined && name in inputValues;
+  const value = given ? inputValues[name] : fallback;
+  const source = inputSources?.[name];
+  if (source === 'config' || source === 'session') {
+    return { value, set: true, setBy: 'run', runSource: source };
+  }
+  let setBy: InputRow['setBy'] = 'default';
+  if (source === undefined && given && JSON.stringify(value) !== JSON.stringify(fallback)) setBy = 'run';
+  else if (required && (value === undefined || value === null)) setBy = 'unset';
+  return { value, set: setBy === 'run', setBy };
 }
 
-/** A row for a recipe input; a map over input reads "item of <input>". */
-function recipeInputRow(input: InputNode, options: ViewOptions, mapped: boolean): InputRow {
-  const value = inputValue(input, options);
+/** The steps an input node has an edge into, in edge order, optionally only some. */
+export function readers(graph: Graph, inputId: string, keep: (stepId: string) => boolean = () => true): string[] {
+  const ids: string[] = [];
+  for (const edge of graph.edges) {
+    if (edge.source === inputId && keep(edge.target) && !ids.includes(edge.target)) ids.push(edge.target);
+  }
+  return ids;
+}
+
+/** A row for a recipe input node, with the file that declares it. */
+function recipeInputRow(
+  graph: Graph,
+  input: InputNode,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): InputRow {
+  const name = inputName(input);
   return {
-    name: mapped ? `item of ${inputName(input)}` : inputName(input),
-    value,
-    set: JSON.stringify(value) !== JSON.stringify(input.default),
+    name,
+    ...runSetting(name, input.default, input.required === true, inputValues, inputSources),
     type: input.type,
     description: input.description,
     inputId: input.id,
     from: [],
-    usedBy: [],
+    usedBy: readers(graph, input.id),
+    source: 'own',
+    ...(input.declared ? { declaredIn: declaredIn(graph, input) } : {}),
   };
 }
 
-/** The value an input of an include's parent has, or undefined when it is not known. */
+/**
+ * One row per declared recipe input, in graph order, each naming the file
+ * that declares it: the root file's inputs and those its sub-recipes declare
+ * and nobody overrides.
+ */
+export function recipeInputRows(
+  graph: Graph,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): InputRow[] {
+  return graph.nodes
+    .filter((node): node is InputNode => node.kind === 'input' && node.declared)
+    .map((node) => recipeInputRow(graph, node, inputValues, inputSources));
+}
+
+/** The recipe inputs the root file declares, in graph order. */
+export function rootInputRows(
+  graph: Graph,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): InputRow[] {
+  const root = rootDocument(graph);
+  return recipeInputRows(graph, inputValues, inputSources).filter((row) => row.declaredIn === root);
+}
+
+/** The nearest include above this one whose entry overrides an input, if any. */
+function overridingAncestor(graph: Graph, include: GraphInclude, name: string): GraphInclude | undefined {
+  let ancestor = include.parent ? findInclude(graph, include.parent) : undefined;
+  while (ancestor && !(name in ancestor.overrides)) {
+    ancestor = ancestor.parent ? findInclude(graph, ancestor.parent) : undefined;
+  }
+  return ancestor;
+}
+
+/**
+ * One row per input a sub-recipe file declares that its include entry does not
+ * override, in file order.
+ *
+ * An include further up whose entry sets the input gives the value (and the
+ * value of the parent input it passes on); otherwise the run or the default
+ * does, as for a recipe input.
+ */
+export function ownInputRows(
+  graph: Graph,
+  includeId: string,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): InputRow[] {
+  const include = findInclude(graph, includeId);
+  if (!include) return [];
+  const members = new Set(include.steps);
+  return ownInputs(include).map((declaration): InputRow => {
+    const { name } = declaration;
+    const node = graph.nodes.find((candidate) => candidate.id === `in:${name}`);
+    const input = node?.kind === 'input' ? node : null;
+    const read = input ? readers(graph, input.id, (id) => members.has(id)) : [];
+    const row = {
+      name,
+      type: declaration.type,
+      description: declaration.description,
+      inputId: input?.id ?? null,
+      from: [],
+      source: 'own' as const,
+      declaredIn: include.source,
+    };
+    const setter = overridingAncestor(graph, include, name);
+    if (setter) {
+      const value = setter.overrides[name];
+      const resolved = resolveInputRefs(graph, setter, value, inputValues);
+      const bound = setter.bindings?.[name];
+      const usedBy = bound ? include.steps.filter((id) => bound.some((binding) => binding.step === id)) : read;
+      return { ...row, value, set: true, setBy: 'parent', usedBy, ...(resolved === undefined ? {} : { resolved }) };
+    }
+    // A root declaration of the same name wins over the file's own.
+    const fallback = input ? input.default : declaration.default;
+    const required = input ? input.required === true : declaration.required;
+    return { ...row, ...runSetting(name, fallback, required, inputValues, inputSources), usedBy: read };
+  });
+}
+
+/** A sub-recipe box's rows: the overrides its entry sets, and the inputs its file declares itself. */
+export function includeInputRows(
+  graph: Graph,
+  includeId: string,
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): { overrides: InputRow[]; own: InputRow[] } {
+  return {
+    overrides: includeOverrideRows(graph, includeId, inputValues),
+    own: ownInputRows(graph, includeId, inputValues, inputSources),
+  };
+}
+
+/**
+ * The value an input of an include's parent has, or undefined when it is not
+ * known: the override of the nearest include above that sets it, else the
+ * recipe input of that name.
+ */
 function parentInput(
   graph: Graph,
   include: GraphInclude,
   name: string,
   inputValues?: Record<string, unknown>,
 ): unknown {
-  const parent = include.parent ? findInclude(graph, include.parent) : null;
-  if (parent) {
-    if (!(name in parent.overrides)) return undefined;
-    const value = parent.overrides[name];
-    const resolved = resolveInputRefs(graph, parent, value, inputValues);
+  const setter = overridingAncestor(graph, include, name);
+  if (setter) {
+    const value = setter.overrides[name];
+    const resolved = resolveInputRefs(graph, setter, value, inputValues);
     if (resolved !== undefined) return resolved;
     return showValue(value).includes('${') ? undefined : value;
   }
@@ -693,19 +889,22 @@ export function includeOverrideRows(
     if (!bound) return steps.filter((step) => stepTakesOverride(step, name, value)).map((step) => step.id);
     return steps.filter((step) => bound.some((binding) => binding.step === step.id)).map((step) => step.id);
   };
-  return Object.entries(include.overrides).map(([name, value]) => {
+  return Object.entries(include.overrides).map(([name, value]): InputRow => {
     const resolved = resolveInputRefs(graph, include, value, inputValues);
+    const declaration = include.inputs?.find((input) => input.name === name);
     return {
       name,
       value,
       set: true,
-      type: null,
-      description: null,
+      type: declaration?.type ?? null,
+      description: declaration?.description ?? null,
       inputId: null,
       from: stepRefs(value)
         .filter(([step]) => !members.has(step) && findStep(graph, step))
         .map(([step, output]) => ({ step, output })),
       usedBy: usedBy(name, value),
+      source: 'override',
+      setBy: 'parent',
       ...(resolved === undefined ? {} : { resolved }),
     };
   });
@@ -713,11 +912,60 @@ export function includeOverrideRows(
 
 /**
  * A row's value as text: an override that passes on a known parent input reads
- * `${inputs.x} = value`. An empty override reads "none", an empty recipe input "unset".
+ * `${inputs.x} = value`. An empty override reads "none", an empty input "unset".
  */
 export function rowValue(row: InputRow): string {
-  const text = showValue(row.value) || (row.inputId ? 'unset' : 'none');
+  const text = showValue(row.value) || (row.source === 'override' ? 'none' : 'unset');
   return row.resolved === undefined ? text : `${text} = ${valueText(row.resolved)}`;
+}
+
+/** The tag a box shows after a row's value: who sets it, or that it is required. */
+export function rowTag(row: InputRow): string | null {
+  if (row.setBy === 'run') return row.runSource === 'config' ? 'run config' : row.runSource ?? 'set';
+  if (row.setBy === 'unset') return 'required';
+  if (row.setBy === 'parent' && row.source === 'own') return 'parent';
+  return null;
+}
+
+/** A box's rows split into the overrides and the rest (own and other inputs). */
+export function splitRows(rows: InputRow[]): { overrides: InputRow[]; inputs: InputRow[] } {
+  return {
+    overrides: rows.filter((row) => row.source === 'override'),
+    inputs: rows.filter((row) => row.source !== 'override'),
+  };
+}
+
+/** Counts joined by commas, zero counts left out, such as "5 steps, 4 overrides". */
+function countsText(counts: [number, string][]): string {
+  return counts
+    .filter(([count]) => count > 0)
+    .map(([count, word]) => plural(count, word))
+    .join(', ');
+}
+
+/** A sub-recipe box's counts, such as "5 steps, 4 overrides, 5 inputs". */
+export function includeMeta(data: Pick<IncludeData, 'stepCount' | 'overrideCount' | 'inputCount'>): string {
+  return countsText([
+    [data.stepCount, 'step'],
+    [data.overrideCount, 'override'],
+    [data.inputCount, 'input'],
+  ]);
+}
+
+/** What an inputs box counts: its rows at the root, drilled in its overrides and inputs. */
+export function inputsBoxCount(data: InputsBoxData): string {
+  if (!data.include) return plural(data.rows.length, 'input');
+  return (
+    countsText([
+      [data.overrideCount, 'override'],
+      [data.inputCount, 'input'],
+    ]) || 'No inputs'
+  );
+}
+
+/** The row a box ends with for the inputs sub-recipes below it declare. */
+export function moreText(more: number): string {
+  return `${plural(more, 'more input')} declared in sub-recipes`;
 }
 
 /** Add a name to the line into a target, keeping first seen order. */
@@ -752,19 +1000,57 @@ function busEdge(
   };
 }
 
+/** The root document and the sources of the includes enclosing one. */
+function enclosingFiles(graph: Graph, include: GraphInclude): Set<string> {
+  const files = new Set([rootDocument(graph)]);
+  for (let parent = include.parent; parent; ) {
+    const outer = findInclude(graph, parent);
+    if (!outer) break;
+    files.add(outer.source);
+    parent = outer.parent;
+  }
+  return files;
+}
+
+/** The sources of the includes nested, at any depth, in one. */
+function nestedFiles(graph: Graph, include: GraphInclude): Set<string> {
+  const files = new Set<string>();
+  for (const candidate of graph.includes) {
+    for (let parent = candidate.parent; parent; parent = findInclude(graph, parent)?.parent ?? null) {
+      if (parent === include.id) {
+        files.add(candidate.source);
+        break;
+      }
+    }
+  }
+  return files;
+}
+
 /**
  * Rule 4: one inputs box, with one line per target naming what it sends.
  *
- * At the root it is "Recipe inputs", with a row per recipe input. Drilled in,
- * it is "Inputs from the parent", with a row per override of the include, and
- * recipe input lines join the override that passes the input on. An outside
- * step an override references stays a ghost with a line into the box, unless
- * that ghost is already wired straight to a step the override feeds.
+ * A box lists what its file declares. At the root it is "Recipe inputs", with
+ * a row per input the root file declares. Drilled in, it is "Inputs": the
+ * overrides the include entry sets, then the inputs the sub-recipe file
+ * declares that nobody overrides; recipe input lines join the override that
+ * passes the input on. An input of a file above read in the view by name gets
+ * a row too. Inputs declared in sub-recipes further down are a count, not
+ * rows, and their lines name nothing. An outside step an override references
+ * stays a ghost with a line into the box, unless that ghost is already wired
+ * straight to a step the override feeds. A row a drawn group maps over goes
+ * on one line into the group, not on the line into each member.
  */
-function boxInputs(ctx: Context, folding: Folding): { kept: Folded[]; nodes: ViewNode[]; edges: ViewEdge[] } {
-  const { scope, options } = ctx;
+function boxInputs(
+  ctx: Context,
+  folding: Folding,
+  groupOf: Map<string, GraphGroup>,
+): { kept: Folded[]; nodes: ViewNode[]; edges: ViewEdge[] } {
+  const { graph, scope, options } = ctx;
+  const { inputValues, inputSources } = options;
   const id: InputsBoxId = scope ? `overrides:${scope.id}` : 'inputs';
-  const rows = new Map<string, InputRow>();
+  const overrides = new Map<string, InputRow>();
+  const own = new Map<string, InputRow>();
+  const other = new Map<string, InputRow>();
   const lines = new Map<string, string[]>();
   const feeds = new Map<string, string[]>();
   const kept: Folded[] = [];
@@ -772,24 +1058,79 @@ function boxInputs(ctx: Context, folding: Folding): { kept: Folded[]; nodes: Vie
   const use = (row: InputRow, stepId: string) => {
     if (!row.usedBy.includes(stepId)) row.usedBy.push(stepId);
   };
+  /** The slots a row set from above was substituted into, from its include's bindings, or undefined. */
+  const bindingsOf = (row: InputRow) => {
+    const setter = row.source === 'override' ? scope : overridingAncestor(graph, scope!, row.name);
+    return setter?.bindings?.[row.name];
+  };
+  /**
+   * Name a row set from above on the line into a step's node. A member of a
+   * drawn group takes the row's map_over slot on the group's line instead,
+   * and keeps it on its own line only for its other slots.
+   */
+  const sendBound = (row: InputRow, stepId: string, target = ctx.representative(stepId)) => {
+    const group = groupOf.get(stepId);
+    const slots = (bindingsOf(row) ?? []).filter((binding) => binding.step === stepId).map((binding) => binding.slot);
+    if (!group || !slots.includes('map_over')) {
+      addName(lines, target, row.name);
+      return;
+    }
+    addName(lines, group.id, row.name);
+    if (slots.some((slot) => slot !== 'map_over')) addName(lines, target, row.name);
+  };
 
-  for (const row of scope ? includeOverrideRows(ctx.graph, scope.id, options.inputValues) : []) {
-    rows.set(row.name, row);
+  const listed = scope
+    ? includeInputRows(graph, scope.id, inputValues, inputSources)
+    : { overrides: [], own: rootInputRows(graph, inputValues, inputSources) };
+  for (const row of listed.overrides) {
+    overrides.set(row.name, row);
     const fed = new Set(row.usedBy.map((stepId) => ctx.representative(stepId)));
-    for (const rep of fed) addName(lines, rep, row.name);
+    for (const stepId of row.usedBy) sendBound(row, stepId);
     for (const { step, output } of row.from) {
-      const ghost = folding.ghostOf(findStep(ctx.graph, step)!);
+      const ghost = folding.ghostOf(findStep(graph, step)!);
       if (![...fed].some((rep) => direct.has(`${ghost}>${rep}`))) addName(feeds, ghost, output);
     }
   }
+  for (const row of listed.own) {
+    own.set(row.name, row);
+    // A value an include further up sets was substituted into the steps, so no input edge carries it.
+    if (row.setBy === 'parent') for (const stepId of row.usedBy) sendBound(row, stepId);
+  }
 
-  /** Override rows by the recipe inputs their values pass on. */
+  /** Rows set from above by the recipe inputs their values pass on. */
   const passedOn = new Map<string, InputRow[]>();
-  for (const row of rows.values()) {
+  /** The steps a row set from above feeds, for rows whose include records them in its bindings. */
+  const bound = new Map<InputRow, Set<string>>();
+  for (const row of [...overrides.values(), ...listed.own.filter((own) => own.setBy === 'parent')]) {
     for (const [, input] of showValue(row.value).matchAll(INPUT_REF)) {
       passedOn.set(input, [...(passedOn.get(input) ?? []), row]);
     }
+    if (bindingsOf(row)) bound.set(row, new Set(row.usedBy));
   }
+
+  const above = scope ? enclosingFiles(graph, scope) : null;
+  /**
+   * The row an input edge into the view names, or undefined when it reaches a
+   * sub-recipe box below and a file below declares the input.
+   */
+  const rowOf = (input: InputNode, edge: Folded): InputRow | undefined => {
+    const name = inputName(input);
+    const found = own.get(name);
+    if (found || overrides.has(name)) return found;
+    const readable = !edge.foldedTarget || Boolean(above?.has(declaredIn(graph, input)));
+    if (input.declared && !readable) return undefined;
+    const seen = other.get(name);
+    if (seen) return seen;
+    const { declaredIn: _guess, ...read } = recipeInputRow(graph, input, inputValues, inputSources);
+    const row: InputRow = {
+      ...read,
+      source: 'other',
+      usedBy: [],
+      ...(input.declared_in ? { declaredIn: input.declared_in } : {}),
+    };
+    other.set(name, row);
+    return row;
+  };
 
   for (const edge of folding.edges) {
     const source = ctx.byId.get(edge.source);
@@ -798,34 +1139,39 @@ function boxInputs(ctx: Context, folding: Folding): { kept: Folded[]; nodes: Vie
       continue;
     }
     const stepId = edge.foldedTarget ?? edge.target;
-    const passing = passedOn.get(inputName(source)) ?? [];
+    // A row the bindings tie to other steps does not pass the input to this one.
+    const passing = (passedOn.get(inputName(source)) ?? []).filter((row) => bound.get(row)?.has(stepId) ?? true);
     if (passing.length > 0) {
       for (const row of passing) {
-        addName(lines, edge.target, row.name);
+        sendBound(row, stepId, edge.target);
         use(row, stepId);
       }
       continue;
     }
-    const mapped = edge.kind === 'map_over';
-    const key = `${source.id}${mapped ? '#item' : ''}`;
-    const row = rows.get(key) ?? recipeInputRow(source, options, mapped);
-    rows.set(key, row);
-    addName(lines, edge.target, row.name);
+    const row = rowOf(source, edge);
+    if (!row) continue;
+    const group = edge.kind === 'map_over' ? groupOf.get(stepId) : undefined;
+    if (group?.map_over === `\${inputs.${row.name}}`) addName(lines, group.id, row.name);
+    else addName(lines, edge.target, edge.kind === 'map_over' ? `item of ${row.name}` : row.name);
     use(row, stepId);
   }
 
-  if (!scope && rows.size === 0) return { kept, nodes: [], edges: [] };
-  const order = new Map(ctx.graph.nodes.map((node, index) => [node.id, index]));
-  const sorted = [...rows.values()];
-  if (!scope) sorted.sort((a, b) => order.get(a.inputId!)! - order.get(b.inputId!)!);
+  const order = new Map(graph.nodes.map((node, index) => [node.id, index]));
+  const others = [...other.values()].sort((a, b) => order.get(a.inputId!)! - order.get(b.inputId!)!);
+  const rows = [...overrides.values(), ...own.values(), ...others];
+  const more = moreCount(graph, scope, new Set(other.keys()));
+  if (!scope && rows.length === 0 && more === 0) return { kept, nodes: [], edges: [] };
   const box: ViewNode = {
     ...base(id, { kind: 'inputsBox', id }),
     kind: 'inputsBox',
     data: {
       id,
-      title: scope ? 'Inputs from the parent' : 'Recipe inputs',
+      title: scope ? 'Inputs' : 'Recipe inputs',
       include: scope,
-      rows: sorted,
+      rows,
+      overrideCount: overrides.size,
+      inputCount: own.size + others.length,
+      more,
       expanded: options.expandedBoxes.has(id),
     },
   };
@@ -834,6 +1180,21 @@ function boxInputs(ctx: Context, folding: Folding): { kept: Folded[]; nodes: Vie
     ...[...lines].map(([target, names]) => busEdge(id, target, [BOX_HANDLE, BUS_IN_HANDLE], 'param', names, 'in')),
   ];
   return { kept, nodes: [box], edges };
+}
+
+/**
+ * The declared inputs a box leaves to its count: at the root those any
+ * sub-recipe declares, drilled in those a sub-recipe nested in the scope
+ * declares, less the ones listed as read here.
+ */
+function moreCount(graph: Graph, scope: GraphInclude | null, shown: Set<string>): number {
+  const root = rootDocument(graph);
+  const below = scope ? nestedFiles(graph, scope) : null;
+  return graph.nodes.filter((node) => {
+    if (node.kind !== 'input' || !node.declared || shown.has(inputName(node))) return false;
+    const file = declaredIn(graph, node);
+    return below ? below.has(file) : file !== root;
+  }).length;
 }
 
 /** The label of an output box owner: a step id or an include title. */
@@ -990,13 +1351,52 @@ function externalNodes(ctx: Context, edges: ViewEdge[]): ViewNode[] {
     }));
 }
 
-/** Rule 6: a mapped group is drawn when all its members are visible steps. */
-function drawGroups(ctx: Context, nodes: Map<string, ViewNode>) {
+/** The hover text of a group drawn in part: how many steps the run has and where the others are. */
+function partTitle(graph: Graph, group: GraphGroup, others: string[]): string {
+  const includes = new Set<string>();
+  let atTop = false;
+  for (const id of others) {
+    const step = findStep(graph, id);
+    const include = step?.include ? findInclude(graph, step.include) : undefined;
+    if (include) includes.add(shortTitle(graph, include.title));
+    else atTop = true;
+  }
+  const places = [...(includes.size > 0 ? [`in ${andList([...includes])}`] : []), ...(atTop ? ['at the top level'] : [])];
+  return `Part of a run of ${group.members.length} steps once per item. The others are ${andList(places)}.`;
+}
+
+/**
+ * Rule 6: a mapped group is drawn around its members when they are all
+ * visible steps, or, as the part of the run a sub-recipe holds, when at least
+ * two are and the others are outside the view.
+ *
+ * Returns:
+ *   The group drawn around each member step, by step id.
+ */
+function drawGroups(ctx: Context, nodes: Map<string, ViewNode>): Map<string, GraphGroup> {
+  const groupOf = new Map<string, GraphGroup>();
   for (const group of ctx.graph.groups) {
-    const members = group.members.map((id) => nodes.get(id));
-    if (members.length === 0 || members.some((node) => node?.kind !== 'step')) continue;
-    nodes.set(group.id, { ...base(group.id, null), kind: 'mapGroup', data: { group } });
-    for (const node of members) node!.parentId = group.id;
+    const shown = group.members.filter((id) => nodes.get(id)?.kind === 'step');
+    const others = group.members.filter((id) => !shown.includes(id));
+    if (shown.length === 0) continue;
+    if (others.length > 0 && (shown.length < MIN_PART_MEMBERS || others.some(ctx.inScope))) continue;
+    const title = others.length > 0 ? partTitle(ctx.graph, group, others) : null;
+    nodes.set(group.id, { ...base(group.id, null), kind: 'mapGroup', data: { label: group.label, title } });
+    for (const id of shown) {
+      nodes.get(id)!.parentId = group.id;
+      groupOf.set(id, group);
+    }
+  }
+  return groupOf;
+}
+
+/** A group with a line into it reads in the view's terms: the input the line names. */
+function nameGroups(nodes: Map<string, ViewNode>, edges: ViewEdge[]) {
+  for (const edge of edges) {
+    const group = nodes.get(edge.target);
+    if (group?.kind === 'mapGroup' && edge.names.length === 1) {
+      group.data.label = `Runs once per item of ${edge.names[0]}`;
+    }
   }
 }
 
@@ -1027,16 +1427,22 @@ function markSelection(ctx: Context, nodes: ViewNode[], edges: ViewEdge[]) {
   const ids = new Set(nodes.map((node) => node.id));
   const focus = focusNode(ctx, selected, ids);
   if (!focus || !ids.has(focus)) return;
+  // A line into a group reaches its members, and a member takes the lines into its group.
+  const group = nodes.find((node) => node.id === focus)?.parentId;
+  const into = (edge: ViewEdge) => edge.target === focus || (group !== undefined && edge.target === group);
   const near = new Set<string>([focus]);
   for (const edge of edges) {
     if (edge.source === focus) near.add(edge.target);
-    if (edge.target === focus) near.add(edge.source);
+    if (into(edge)) near.add(edge.source);
+  }
+  for (const node of nodes) {
+    if (node.parentId && near.has(node.parentId)) near.add(node.id);
   }
   for (const node of nodes) {
     node.dimmed = !CONTAINER_KINDS.has(node.kind) && !near.has(node.id);
   }
   for (const edge of edges) {
-    edge.dimmed = edge.source !== focus && edge.target !== focus;
+    edge.dimmed = edge.source !== focus && !into(edge);
   }
 }
 
@@ -1077,13 +1483,14 @@ function breadcrumb(ctx: Context): Crumb[] {
 export function buildView(graph: Graph, options: ViewOptions): View {
   const ctx = makeContext(graph, options);
   const nodes = placeSteps(ctx);
+  const groupOf = drawGroups(ctx, nodes);
   const folding = foldEdges(ctx);
-  const inputs = boxInputs(ctx, folding);
+  const inputs = boxInputs(ctx, folding, groupOf);
+  nameGroups(nodes, inputs.edges);
   const outputs = boxOutputs(ctx, inputs.kept, folding.exits);
   assignPorts(nodes, outputs.kept);
   const core = mergeEdges(outputs.kept);
   const externals = externalNodes(ctx, core);
-  drawGroups(ctx, nodes);
 
   const all = [...folding.ghosts.values(), ...externals, ...nodes.values(), ...inputs.nodes, ...outputs.nodes];
   const edges = [...inputs.edges, ...core, ...outputs.edges];
@@ -1092,21 +1499,41 @@ export function buildView(graph: Graph, options: ViewOptions): View {
   return { nodes: sortParentsFirst(all), edges, breadcrumb: breadcrumb(ctx) };
 }
 
-function boxView(graph: Graph, drill: string[], inputValues?: Record<string, unknown>): View {
+function boxView(
+  graph: Graph,
+  drill: string[],
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): View {
   return buildView(graph, {
     drill,
     connected: false,
     selected: null,
     inputValues,
+    inputSources,
     expandedSteps: new Set(),
     expandedBoxes: new Set(),
   });
 }
 
+function inputsBoxOf(view: View): InputsBoxData | null {
+  const box = view.nodes.find((node) => node.kind === 'inputsBox');
+  return box?.kind === 'inputsBox' ? box.data : null;
+}
+
 /** The rows of the inputs box a drill path shows, or none. */
-export function inputsBoxRows(graph: Graph, drill: string[], inputValues?: Record<string, unknown>): InputRow[] {
-  const box = boxView(graph, drill, inputValues).nodes.find((node) => node.kind === 'inputsBox');
-  return box?.kind === 'inputsBox' ? box.data.rows : [];
+export function inputsBoxRows(
+  graph: Graph,
+  drill: string[],
+  inputValues?: Record<string, unknown>,
+  inputSources?: Record<string, InputSource>,
+): InputRow[] {
+  return inputsBoxOf(boxView(graph, drill, inputValues, inputSources))?.rows ?? [];
+}
+
+/** How many inputs declared in sub-recipes below it the inputs box of a drill path counts. */
+export function inputsBoxMore(graph: Graph, drill: string[]): number {
+  return inputsBoxOf(boxView(graph, drill))?.more ?? 0;
 }
 
 /** The rows of one producer's outputs box in a drill path, or none. */

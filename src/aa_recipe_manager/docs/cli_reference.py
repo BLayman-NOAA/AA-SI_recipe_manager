@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 import click
 
 #: Example invocations shown under each command, keyed by command path.
@@ -65,18 +67,22 @@ EXAMPLES: dict[str, list[str]] = {
     "preview": [
         "aa-recipe preview dive_analysis.yaml --to dive_sv",
         "aa-recipe preview quickstart.yaml --json",
+        "aa-recipe preview sub/recipe.yaml --base-dir sub",
     ],
 }
 
 _WIDTH = 100
 
 
-def build_cli_reference(group: click.Group, prog: str = "aa-recipe") -> str:
+def build_cli_reference(
+    group: click.Group, prog: str = "aa-recipe", exclude: Collection[str] = ()
+) -> str:
     """Build the CLI reference page from a click group's own help text.
 
     Args:
         group: The top-level command group.
         prog: Program name shown in usage lines.
+        exclude: Command paths (``"serve"``, ``"env create"``) to leave out.
 
     Returns:
         Markdown with a summary table and one section per command.
@@ -84,7 +90,7 @@ def build_cli_reference(group: click.Group, prog: str = "aa-recipe") -> str:
     root = click.Context(
         group, info_name=prog, terminal_width=_WIDTH, max_content_width=_WIDTH
     )
-    commands = list(_walk(group, root, []))
+    commands = [entry for entry in _walk(group, root, []) if entry[0] not in exclude]
 
     lines = [
         "# CLI reference",

@@ -502,6 +502,12 @@
           "step": "dive_apply_mask"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_apply_mask"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -1015,6 +1021,12 @@
           "step": "build_cal_mapping"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "build_cal_mapping"
+        },
+        {
           "recipe": "calibration-staged",
           "title": "Calibration pipeline, staged",
           "page": "calibration/index.md",
@@ -1169,7 +1181,14 @@
         }
       ],
       "search": "build_echogram_pyramid visualization build a level-of-detail pyramid from an sv dataset for the webgpu echogram viewer. the output is a datatree with one node per level, level 0 being the data as given and level k merging 2**k pings into one by averaging in linear space. checkpoint the step and the store lands in the recipe or survey cache under the step's content address, where `aa-echogram serve --store <path>` can read it directly. nothing has to be published for a pyramid to be looked at. `ping_range` is what makes this parallel. passing one builds a single segment of the survey, so the op can be mapped over the ranges from plan_pyramid_segments and the results collected by merge_echogram_pyramids. the slice is taken inside the op, so a mapped instance reads only its own pings rather than the whole survey. ds_sv sv dataset with a vertical coordinate and ping_time. normally the output of apply_sv_mask or remove_noise, or the merged survey sv from a segment-parallel chain. pyramid datatree with one node per level, carrying the multiscales block and the per chunk summaries on its root attributes. levels levels to build, halving the ping axis each time. eight levels reduce the ping axis by 128 at the coarsest, which is what lets an overview of a survey read a small array. range_var vertical coordinate to build the geometry from. echo_range rather than depth: depth carries heave, and averaging sample index i across pings that heaved averages different depths, which the pyramid's alignment check refuses. the surface reference is not lost, because the sidecar keeps depth minus echo_range as the per ping transducer depth. ping_range optional [start, stop] naming one segment of the ping axis. supplied by a mapped step as ${_item} from plan_pyramid_segments. aggregation how pings are merged: 'linear_mean' averages in linear space and reports decibels, 'max' keeps the loudest sample. mean is right for biomass, max preserves a single strong target that a mean would dilute. aa_si_echogram_gl.ops.build_echogram_pyramid aa-si-echogram-gl",
-      "used_by": []
+      "used_by": [
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "build_pyramid"
+        }
+      ]
     },
     {
       "op": "build_range_grid",
@@ -1377,6 +1396,12 @@
           "step": "dive_combine_masks"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_combine_masks"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -1483,6 +1508,12 @@
           "recipe": "hb1603-level-1",
           "title": "HB1603 level 1, raw ingest",
           "page": "levels/level-1.md",
+          "step": "combine_raw"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
           "step": "combine_raw"
         },
         {
@@ -1675,6 +1706,12 @@
           "title": "HB1603 level 3, gridding and per-cell statistics",
           "page": "levels/level-3.md",
           "step": "dive_file_mvbs"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_file_mvbs"
         },
         {
           "recipe": "hb2407-level-3",
@@ -1972,6 +2009,12 @@
           "step": "compute_sv"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "compute_sv"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -2116,6 +2159,12 @@
           "step": "compute_transducer_depth"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "compute_transducer_depth"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -2217,6 +2266,12 @@
           "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
           "step": "dive_frequency_mask"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_frequency_mask"
         }
       ]
     },
@@ -2337,6 +2392,12 @@
           "step": "dive_seabed_mask"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_seabed_mask"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -2438,6 +2499,12 @@
           "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
           "step": "dive_surface_mask"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_surface_mask"
         },
         {
           "recipe": "hb2407-level-2",
@@ -2689,6 +2756,18 @@
           "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
           "step": "crop_survey_range"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "crop_survey_range"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_crop"
         },
         {
           "recipe": "hb2407-level-2",
@@ -3255,6 +3334,12 @@
           "step": "ep_add_depth"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "ep_add_depth"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -3406,7 +3491,14 @@
         }
       ],
       "search": "ep_add_splitbeam_angle consolidate add split-beam alongship and athwartship angle variables to an sv dataset. this step is echopype.consolidate.add_splitbeam_angle called directly, so the angle computation and its parameters are echopype's. the result preserves the input sv data and adds ``angle_alongship`` and ``angle_athwartship`` on ``(channel, ping_time, range_sample)`` when the source echodata contains the required split-beam angle data. this step is required before echopype's blackwell seafloor detector because that detector thresholds the per-sample split-beam angle fields. calibration parameters such as ``angle_offset_alongship`` are used by echopype to compute these variables, but they are not themselves the angle fields consumed by the detector. ds_sv calibrated sv dataset, typically after ``ep_add_depth``. echodata source echodata object containing split-beam samples. ds_sv input sv dataset with ``angle_alongship`` and ``angle_athwartship`` variables added. waveform_mode transmit waveform mode. use ``cw`` for narrowband ek60/ek80 power/angle data, or ``bb`` for broadband complex samples. encode_mode return echo encoding mode. use ``power`` for ek60/ek80 power/angle data, or ``complex`` for complex samples. pulse_compression whether to pulse-compress broadband complex samples. only valid for ``waveform_mode: bb`` and ``encode_mode: complex``. to_disk write split-beam angles back to disk when ``ds_sv`` is a path. keep false for in-memory recipe execution. drop_last_hanning_zero echopype compatibility option for broadband pulse compression. usually leave false. echopype.consolidate.add_splitbeam_angle echopype",
-      "used_by": []
+      "used_by": [
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_splitbeam_angle"
+        }
+      ]
     },
     {
       "op": "ep_detect_seafloor",
@@ -3805,6 +3897,12 @@
           "recipe": "hb1603-level-2",
           "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
+          "step": "extract_cal_params"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
           "step": "extract_cal_params"
         },
         {
@@ -4617,6 +4715,12 @@
           "step": "initial_setup"
         },
         {
+          "recipe": "calibration-mapping",
+          "title": "Calibration phase 2, mapping",
+          "page": "calibration/phases.md",
+          "step": "initial_setup"
+        },
+        {
           "recipe": "calibration-fused",
           "title": "Calibration pipeline, one step",
           "page": "calibration/fused.md",
@@ -4836,6 +4940,12 @@
           "title": "HB1603 level 3, gridding and per-cell statistics",
           "page": "levels/level-3.md",
           "step": "dive_mask_sparse"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_mask_sparse"
         },
         {
           "recipe": "hb2407-level-3",
@@ -5101,6 +5211,12 @@
           "step": "merge_dive_files_cell_stats"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "merge_viewer_mvbs"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -5205,7 +5321,14 @@
         }
       ],
       "search": "merge_echogram_pyramids visualization collect per segment pyramids into one. the fan-in for a segment-parallel pyramid build. level k of the survey is level k of each part laid end to end, so this concatenates per level rather than rebuilding, and adds no levels: each part already carries every level. the per chunk summaries are recomputed, because a part's chunk grid is not the whole survey's and its keys cannot be shifted into place. only correct when the parts were cut by plan_pyramid_segments. a split off the grid puts a partial cell in the middle of the survey and every coarse level after it is wrong. parts collected pyramid datatrees, in ping order, supplied by a ``collect: ${mapped_step.pyramid}`` directive. pyramid the combined pyramid, as one datatree with a node per level. dim ping dimension to concatenate along. aa_si_echogram_gl.ops.merge_echogram_pyramids aa-si-echogram-gl",
-      "used_by": []
+      "used_by": [
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "survey_echogram_store"
+        }
+      ]
     },
     {
       "op": "normalize_ml_data",
@@ -5755,7 +5878,14 @@
         }
       ],
       "search": "phase_detect_seafloor detection detect the seafloor with a phase-aware dynamic-programming line picker and return a 1-d (ping_time,) dataarray of the seabed echo's leading edge in metres. on the primary channel the detector finds phase-stable, loud seed regions, scores every sample inside a search window on sv, local phase stability, echo asymmetry, snr and the leading-edge energy gradient (mode 1 of the v4 design; ``mode: 2`` adds the below-versus-above sv contrast, below-region stationarity and below-region phase activity, for when dense near-bottom aggregations are confused with the seabed), then runs a viterbi pass over the top score maxima per ping with a huber transition whose break-point scales with the distance the vessel travelled between pings. the pick is walked back to the -10 db point of the echo. a forward-backward pass gives a confidence and margin per ping. drop-in swap with the ``detect_seafloor``, ``ep_detect_seafloor``, ``read_seafloor_line`` and ``hdbscan_detect_seafloor`` ops: the output port name (``seafloor_depth``) and shape (1-d, ping_time) match, so ``create_seafloor_mask`` works unchanged. by default the line is the leading edge, not an integration line; put the dead-zone offset in ``create_seafloor_mask``'s ``seafloor_buffer_m``. ``line: integration`` returns the ona-mitson backstepped line with the slope correction instead, which on the hb1603 canyon walls clears the up-slope echo that a 10 m buffer above the leading edge left in the 18 khz channel. every intermediate is available through ``diagnostics_path``. the op is self-contained: with no window or prior given it first runs a fast slab estimator (mode 0b) over the whole recorded range, which averages a few dozen slabs of pings, scores them and joins them with the same line search, adding slabs where the seabed moves; its line and uncertainty become the per-ping search window for the full detector. ``r_min`` / ``r_max`` bound that search and ``z_prior`` replaces it. split-beam angles come from ``ds_sv`` when ``ep_add_splitbeam_angle`` ran upstream. without them the detector runs amplitude-only with a warning: seeds are picked on sv and extent alone, so a dense aggregation can be taken for the seabed. pings where no candidate clears ``min_score`` are bridged by the line search and interpolated up to ``max_gap_s``; longer runs and the ends of the file stay nan, which ``create_seafloor_mask`` masks entirely. aliased-seabed detection is off by default: it is single-channel only and on hb1603 the water-column angle noise alone tripped it and the mask covered the true seabed. measured 2026-09-24 on one file each: hb1603 38 khz at 1750 m (ek60, 8 s pinging) followed the seabed through a 100 m step with a median 8 m offset above the .bot line, which itself sits below the sv rise; hb2407 18 khz at 57 m (ek80) sat 2 m below the echoview line with no gross errors. both take a few seconds per file after sv is computed. ds_sv calibrated sv dataset with ``echo_range`` and the ``tau_effective``, ``sound_speed`` and beamwidth variables that ``compute_sv`` attaches. pass the ``ep_add_depth`` (or better, ``ep_add_splitbeam_angle``) dataset so the line is surface-referenced and the phase features are available; without ``depth`` the line is referenced to the transducer, matching ``echo_range``. echodata accepted for interface parity with the other seafloor detection ops; not read. z_prior optional expected seabed depth per ping, for example another detector's ``seafloor_depth`` or a survey line, on any ping grid. it sets the per-ping search window to z_prior +/- 3 sigma_prior_m and overrides r_min / r_max where they conflict. seafloor_depth seabed leading edge in metres, shape (ping_time,), on ds_sv's exact ping_time coordinate. attributes record the vertical reference, the primary channel, the regime preset, ping coverage and the number of flagged and interpolated pings. channel primary channel as its label, or its frequency in hz or khz given as a string (e.g. \"38\"). null picks the lowest frequency channel whose seeds span at least a fifth of the pings, falling back to the lowest frequency with a warning. r_min lower bound of the search window on the dataset's range reference. default 10 m past the first sample, which skips the transmit pulse. r_max upper bound of the search window. default the end of the channel's range. set both bounds on deep surveys: the crop they define is what keeps a 15000-sample ping affordable. sigma_prior_m uncertainty of z_prior; default 2 % of z_prior. ignored without it. regime depth regime preset: \"shelf\" (< 200 m), \"slope\" (200 to 1000 m), \"deep\" (> 1000 m) or \"auto\" from the search window midpoint. sets the snr reference, the seed sv floor and the mode 2 shape window. mode scoring mode. 1 scores the six point features; 2 adds the three local shape features (stage 3b), which cost a little more and help where a school sits on the bottom. both are deterministic. line \"leading_edge\" (default) or \"integration\": which line to return on the seafloor_depth port. see the description. prior \"auto\" (default) runs the mode 0 slab estimator when no z_prior is given and uses it as the search window; \"none\" searches only the fixed r_min / r_max window. missing what a ping with no seabed found gets after gap filling. \"nan\" (default) leaves it nan and create_seafloor_mask masks the ping entirely, which an analysis wants. \"max_range\" sets it to the last recorded range so the ping is kept whole, which a survey picture wants where the seabed is sometimes below the recording. ping_coverage still counts detections. min_seabed_sv_db a pick whose mean sv over the pulse length below it is under this is rejected as not seabed, both in the prior's slabs and in the final line. the scores are relative to each ping, so without a floor a file whose seabed lies beyond the recorded range picks its loudest scattering layer instead (on hb1603, a -57 db layer just past the near field). seabed echoes on hb1603 and hb2407 run -13 to -40 db. null disables the check. prior_budget slab budget for the mode 0 estimator. each slab reads a few pings across the range; on a zarr store chunked along ping_time a slab costs one chunk read. n_candidates score maxima kept per ping for the line search. max_slope_deg maximum plausible seabed slope. with the distance travelled between pings it sets the depth change the transition cost treats as ordinary; larger jumps are tolerated at linear cost. use 45 on rocky or canyon terrain. alpha transition strength multiplier in [0.5, 2]. beta_fraction shallow-first tie-break prior as a fraction of the candidate score spread; 0 disables it. targets ghost bottoms and the echo tail. min_score candidates below this score are dropped; a ping with none is skipped and bridged. scores are sums of tanh terms, so 0 means neutral. walkback_db drop below the echo peak that marks the leading edge. effective_beamwidth_deg effective beamwidth for the backstepped integration line in the diagnostics; default nominal times 12/7 (the es38b ratio). vessel_speed_m_s speed used for along-track distance when ds_sv carries no latitude and longitude. without either, the break-point falls to one pulse length per ping, which suits a station but over-smooths a transect. min_confidence pings whose posterior confidence is below this are flagged. phase_weight weight of the two phase features. raise to 1.5 where fish aggregations are the main confuser. max_gap_s interior runs of skipped pings up to this long are interpolated; longer runs stay nan. null interpolates nothing. transition \"huber\" or \"truncated\" (quadratic capped at the break-point, for cliffs). pulse_length_s pulse duration when ds_sv has no tau_effective. beamwidth_deg nominal beamwidth when ds_sv has none. detect_aliases run the single-channel blackwell aliased-seabed detector and exclude its mask. see the description before enabling it. phase_threshold_deg2 seed phase-stability threshold on the summed angle variance within one pulse length; default (beamwidth / 2)^2. confidence_tolerance_pulses alternatives within this many pulse lengths of the pick (plus the beam-geometry spread, or inside the same loud run) count as the same pick when computing confidence and margin. diagnostics_path optional zarr path for the full diagnostics: masks, features, score, candidates, raw pick, leading edge, backstepped integration line, confidence, margin and flags on the cropped grid. local runs only; the path is written as given. aa_si_utils.seabed.detect_seafloor_phase aa-si-utils",
-      "used_by": []
+      "used_by": [
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_seabed_line"
+        }
+      ]
     },
     {
       "op": "plan_pyramid_segments",
@@ -5885,7 +6015,14 @@
         }
       ],
       "search": "plan_pyramid_segments visualization choose ping ranges that a pyramid can be built over independently and then concatenated exactly. a pyramid is a reduction along the ping axis, so it splits along that axis, but only if the cuts fall on the reduction's own cell boundaries. level k merges 2**k pings, so every range but the last is a multiple of 2**(levels-1) and reduces to a whole number of cells at every level. the last range is whatever is left: its final cell is short, which is exactly what a serial build produces at the end of a survey, so the segmented result is not an approximation of the serial one but the same answer. ds_sv sv dataset, read only for its ping count. ranges list of [start, stop] ping ranges, in order and tiling the survey with no gap or overlap. map build_echogram_pyramid over this. grid the multiple the ranges are aligned to, which is 2**(levels-1). levels levels the build will produce, which is what sets the grid. target_pings rough segment size, rounded down onto the grid. sized for the memory one mapped instance needs: a segment is held whole while its levels are reduced, so at five channels and an uncropped water column 32,768 pings is roughly a gigabyte at level zero and twice that through the cascade. raise it for a wide machine, lower it for a deep water column. aa_si_echogram_gl.ops.plan_pyramid_segments aa-si-echogram-gl",
-      "used_by": []
+      "used_by": [
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "plan_segments"
+        }
+      ]
     },
     {
       "op": "plot_clustering_report",
@@ -6864,6 +7001,12 @@
           "step": "query_ncei"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "query_ncei"
+        },
+        {
           "recipe": "hb2407-level-0-ncei-download",
           "title": "HB2407 level 0, NCEI download",
           "page": "levels/level-0.md",
@@ -6985,6 +7128,12 @@
           "step": "scan_raw_config"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "scan_raw_config"
+        },
+        {
           "recipe": "calibration-staged",
           "title": "Calibration pipeline, staged",
           "page": "calibration/index.md",
@@ -6993,6 +7142,12 @@
         {
           "recipe": "calibration-standardize",
           "title": "Calibration phase 1, standardize",
+          "page": "calibration/phases.md",
+          "step": "scan_raw_config"
+        },
+        {
+          "recipe": "calibration-mapping",
+          "title": "Calibration phase 2, mapping",
           "page": "calibration/phases.md",
           "step": "scan_raw_config"
         }
@@ -7127,6 +7282,12 @@
           "recipe": "hb1603-level-1",
           "title": "HB1603 level 1, raw ingest",
           "page": "levels/level-1.md",
+          "step": "read_raw"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
           "step": "read_raw"
         },
         {
@@ -7442,6 +7603,12 @@
           "step": "rechunk_dive_mvbs"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "rechunk_viewer_mvbs"
+        },
+        {
           "recipe": "hb2407-level-2",
           "title": "HB2407 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
@@ -7593,6 +7760,12 @@
           "step": "record_raw_configs"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "record_raw_configs"
+        },
+        {
           "recipe": "calibration-staged",
           "title": "Calibration pipeline, staged",
           "page": "calibration/index.md",
@@ -7601,6 +7774,12 @@
         {
           "recipe": "calibration-standardize",
           "title": "Calibration phase 1, standardize",
+          "page": "calibration/phases.md",
+          "step": "record_raw_configs"
+        },
+        {
+          "recipe": "calibration-mapping",
+          "title": "Calibration phase 2, mapping",
           "page": "calibration/phases.md",
           "step": "record_raw_configs"
         }
@@ -7734,6 +7913,12 @@
           "title": "HB1603 level 2, calibrated Sv, masks and noise removal",
           "page": "levels/level-2.md",
           "step": "dive_remove_noise"
+        },
+        {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "viewer_remove_noise"
         },
         {
           "recipe": "hb2407-level-2",
@@ -8778,6 +8963,12 @@
           "step": "standardize_cal"
         },
         {
+          "recipe": "hb1603-survey-echogram-pyramid",
+          "title": "HB1603 survey echogram pyramid",
+          "page": "levels/hb1603-survey-echogram-pyramid.md",
+          "step": "standardize_cal"
+        },
+        {
           "recipe": "calibration-staged",
           "title": "Calibration pipeline, staged",
           "page": "calibration/index.md",
@@ -8786,6 +8977,12 @@
         {
           "recipe": "calibration-standardize",
           "title": "Calibration phase 1, standardize",
+          "page": "calibration/phases.md",
+          "step": "standardize_cal"
+        },
+        {
+          "recipe": "calibration-mapping",
+          "title": "Calibration phase 2, mapping",
           "page": "calibration/phases.md",
           "step": "standardize_cal"
         }

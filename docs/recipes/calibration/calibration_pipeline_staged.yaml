@@ -1,65 +1,38 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/calibration_pipeline_staged.yaml.
 # Its title and recipe name said HB2407; they are corrected to RL2307, which its defaults point at.
 
-# RL2307 Calibration Only (Staged) - the same calibration outputs as
-# calibration_pipeline_fused.yaml, but as four separately cached steps.
+# RL2307 calibration, staged: the same outputs as calibration_pipeline_fused.yaml,
+# as separately cached steps.
 #
-#   initial_setup        resolve the raw file set and the calibration output
-#                        directory under outputs/
-#   scan_raw_config      one instance per raw file, reading that file's channel
-#                        configuration and nothing else
-#   record_raw_configs   fans the per-file results back in and writes
-#                        raw_file_configs.yaml
-#   standardize_cal      parses the manufacturer .cal / .xml files into one
-#                        standardized file per channel
-#   build_cal_mapping    matches each raw channel to its calibration data and
-#                        writes the mapping files
+#   aa-recipe run calibration_pipeline_staged.yaml
 #
-# Artifacts land under <outputs_dir>/<calibration_outputs>/, exactly as the
-# fused recipe leaves them:
+#   initial_setup        resolve the raw file set and the output directory
+#   scan_raw_config      read each raw file's channel configuration
+#   record_raw_configs   collect the scans into raw_file_configs.yaml
+#   standardize_cal      write one standardized file per channel
+#   build_cal_mapping    map each raw channel to its calibration
+#
+# On a re-run:
+#
+#   nothing changed          only build_cal_mapping runs
+#   scan interrupted         only the unscanned files are read
+#   a cal file changed       standardize_cal and build_cal_mapping run again
+#   the channel folder gone  rebuilt in full
+#   one channel file gone    not put back, which is the conflict workflow
+#   a raw file added         every raw file is scanned again
+#
+# outputs_dir must stay local. The input folders may be gs:// URLs, which needs
+# pip install aa-si-calibration[gcs].
+#
+# Outputs under <outputs_dir>/<calibration_outputs>/:
 #
 #   raw_file_configs/                  raw_file_configs.yaml
-#   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
-#   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
+#   single_channel_calibration_files/  one .yaml per channel, required by NCEI
+#   mapping_files/                     channel_mapping.yaml (required by NCEI),
 #                                      calibration_configurations.yaml
 #   unused_calibration_files/          cal files no raw channel matched
 #   logs/                              calibration_flags.json
-#   standardization.fingerprint.json   which manufacturer files produced the
-#                                      single-channel files above
-#
-# The fused generate_standardized_cal_mapping does all of this in one step, so
-# it is one cache entry: a crash part way through the raw scan loses the whole
-# scan, and a corrected calibration file invalidates the scan along with the
-# parse. Split, each stage answers to its own inputs. Re-running does this
-# (measured on this recipe, 57 raw files):
-#
-#   nothing changed          everything cached except build_cal_mapping
-#   scan interrupted         only the unscanned files are read. Killed 45s into
-#                            a cold scan, 19 of 58 instances survived.
-#   a manufacturer cal file  standardize_cal and build_cal_mapping re-run, the
-#     corrected or replaced  raw scan does not
-#   raw_file_configs.yaml    rebuilt from the cached per-file scans without
-#     deleted                re-reading a raw file
-#   the single-channel       rebuilt in full
-#     FOLDER deleted
-#   ONE single-channel       not put back, which is the conflict workflow;
-#     file deleted by hand   build_cal_mapping re-runs against what is left
-#
-# What this does not buy: adding a raw file re-scans every file, not just the
-# new one. initial_setup fingerprints the raw folder, so a new file changes its
-# hash and every scan_raw_config instance descends from it.
-#
-# The default checkpoint mode is "explicit", so all four steps say
-# checkpoint: always. Steps record the files they write, which is what lets
-# regenerate: if-missing tell that an output was deleted.
-#
-# outputs_dir comes from the run config (aa-recipe.config.yaml) and must stay
-# local. The input folders may be local paths or gs:// URLs; the raw folder is
-# scanned one file at a time and the calibration folder is downloaded whole.
-# Remote input needs the gcs extra: pip install aa-si-calibration[gcs].
-#
-# Usage:
-#   aa-recipe run calibration_pipeline_staged.yaml
+#   standardization.fingerprint.json   which manufacturer files were used
 
 recipe:
   name: "rl2307_calibration_staged"
@@ -104,10 +77,8 @@ inputs:
     type: str
     default: "interactive"
     description: >
-      What to do when one raw channel matches several calibration files.
-      "error" lists the conflicts and stops; "interactive" prompts on the
-      terminal and fails, before moving any file, if the run has no interactive
-      input.
+      When a raw channel matches several calibration files: "error" lists them
+      and stops, and "interactive" prompts, which needs a terminal.
 
 steps:
 
@@ -120,9 +91,7 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # One instance per raw file, content-addressed by that file's path, so an
-  # interrupted scan resumes from what it already read.
-  # verbose is off because one banner per file buries the rest of the log.
+  # One cached instance per raw file, so an interrupted scan resumes.
   - id: scan_raw_config
     op: read_raw_file_config
     map_over: ${initial_setup.raw_file_paths}
@@ -130,11 +99,8 @@ steps:
     params:
       raw_file_path: ${_item}
       verbose: false
-      # Read a growing prefix rather than all ~1 GiB: the scan starts at 8 MiB
-      # and doubles to this cap, stopping once every channel's Parameter
-      # datagram is in hand. CW files settle on the first rung; RL2307's ~1 GiB
-      # FM files sit behind much larger RAW3 payloads and climb. A file that
-      # never settles within the cap is read whole.
+      # Reads a prefix that doubles from 8 MiB up to this cap, not the whole
+      # file. A file that needs more is read whole.
       max_scan_bytes: 134217728  # 128 MiB
 
   - id: record_raw_configs
@@ -147,9 +113,8 @@ steps:
     params:
       output_base: ${initial_setup.calibration_output_dir}
 
-  # regenerate: if-missing is safe here only because this step records its
-  # output directory: wiping the folder rebuilds it, deleting one file inside
-  # it does not. The conflict workflow depends on that distinction.
+  # Deleting the whole folder rebuilds it; deleting one file inside it does not,
+  # which is how the conflict workflow drops a channel.
   - id: standardize_cal
     op: standardize_calibration_files
     checkpoint: always
@@ -163,8 +128,7 @@ steps:
       record_author: ${inputs.record_author}
       short_filenames: true
 
-  # single_channel_dir and raw_configs_path are wired for the ordering edges;
-  # both would otherwise default to the same locations under output_base.
+  # single_channel_dir and raw_configs_path are wired only to order the steps.
   - id: build_cal_mapping
     op: build_calibration_mapping
     checkpoint: always
@@ -176,7 +140,6 @@ steps:
       single_channel_dir: ${standardize_cal.single_channel_dir}
       raw_configs_path: ${record_raw_configs.raw_configs_path}
       short_filenames: true
-      # Keep unmatched calibration files rather than deleting them: they are
-      # the evidence when a channel comes out unmapped.
+      # Keep unmatched calibration files, to explain any unmapped channel.
       keep_unused: true
       conflict_resolution: ${inputs.conflict_resolution}

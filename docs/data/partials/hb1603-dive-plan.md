@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb1603-dive-plan" markdown>
+    <div class="recipe-viewer" data-recipe="hb1603-dive-analysis" data-slug="hb1603-dive-plan" data-drill="inc:sub_recipes/dive_plan.yaml" markdown>
 
     - `plan_dives`: custom `aa_si_utils.dive_profiles.plan_dive_datasets`
 
@@ -15,16 +15,11 @@
 
     # HB1603 dive plan: turn the NEFSC dive configs into recipe windows.
     #
-    # Not a processing level: it reads no acoustic data. It decides which dives the
-    # analysis covers, where each dive's line files are, and the ping_time window
-    # each one spans. Everything user-level below is driven by its windows list.
+    # Reads no acoustic data. It picks the dives, finds each dive's line files and
+    # gives the ping_time window each one spans, which drives the analysis levels.
     #
-    # INCLUDE THIS FIRST
-    #
-    #   plan_dives depends only on inputs, so it can sit anywhere in the DAG, but
-    #   not anywhere in the file. Levels 1 to 3 form one per-file chain mapped over
-    #   the catalogue, and a non-mapped step declared between two of them splits
-    #   that chain. Declared ahead of level 0 it is out of the way.
+    # Include it first. It isn't per-file, so it must not sit between the level 1
+    # to 3 includes, which form one per-file chain.
 
     recipe:
       name: "hb1603_dive_plan"
@@ -63,25 +58,13 @@
           - "SWD_20160814-OE09"
           - "SWD_20160814-OE44"
         description: >
-          The 13 dives in the analysis: every localized dive HB1603 recorded except
-          SWD_20160703-OE20, whose dive data is incorrect.
-
-          Spelled as the set that is included rather than the one excluded, which
-          is what plan_dive_datasets accepts and is also the more useful record. It
-          states the analysis population outright, and plan_dive_datasets raises if
-          a label names a dive no config provides, so a renamed or missing config
-          stops the run instead of quietly shrinking the study.
-
-          SWD_20160707-OE20-OE29-OE32 is absent because it is not a fourteenth
-          dive. It is a combined view of three July 7 dives that each have their
-          own config, and it carries no 99% confidence lines, so it cannot drive
-          the coding step. plan_dive_datasets skips it by default.
+          The 13 dives analysed: every localized HB1603 dive except
+          SWD_20160703-OE20, whose dive data is incorrect. A label with no matching
+          config stops the run. SWD_20160707-OE20-OE29-OE32 is a combined view of
+          three dives listed here, not a dive of its own.
 
     steps:
 
-      # Declared first: it depends only on inputs, and anything non-mapped that
-      # lands between the survey include and dive_sv would split the per-file
-      # chain (see the header).
       - id: plan_dives
         op: custom
         checkpoint: always

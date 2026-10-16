@@ -25,6 +25,11 @@ def _write_recipe(tmp_path: Path, content: str) -> Path:
     return p
 
 
+def _write_file(path: Path, content: str) -> Path:
+    path.write_text(textwrap.dedent(content))
+    return path
+
+
 MINIMAL_RECIPE = """\
     recipe:
       name: minimal_pipeline
@@ -279,6 +284,144 @@ class TestRecipeIncludes:
             "count": [{"step": "preprocess", "slot": "params.limit"}],
             "unused": [],
         }
+
+    def test_include_block_records_own_inputs_and_promoted_names(self, tmp_path):
+        _write_file(tmp_path / "child.yaml", """\
+            recipe:
+              name: child
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              raw_folder:
+                type: path
+              count:
+                type: int
+              unused:
+                type: int
+              extra:
+                type: str
+                default: hello
+            steps:
+              - id: preprocess
+                op: initial_setup
+                inputs:
+                  source: ${inputs.raw_folder}
+                params:
+                  limit: ${inputs.count}
+                  label: ${inputs.extra}
+            """)
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: child.yaml
+                input_overrides:
+                  raw_folder: /data/raw
+                  count: 3
+                  unused: 1
+            """)
+
+        recipe = load_recipe(parent)
+        [block] = recipe.include_blocks
+        assert block.inputs == {
+            "raw_folder": {"type": "path"},
+            "count": {"type": "int"},
+            "unused": {"type": "int"},
+            "extra": {"type": "str", "default": "hello"},
+        }
+        assert block.promoted == ["extra"]
+        assert recipe.inputs["extra"].default == "hello"
+
+    def test_nested_include_promotes_through_the_middle_file(self, tmp_path):
+        _write_file(tmp_path / "leaf.yaml", """\
+            recipe:
+              name: leaf
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              n:
+                type: int
+                default: 1
+            steps:
+              - id: leaf_step
+                op: query_ncei_data
+                params:
+                  limit: ${inputs.n}
+            """)
+        _write_file(tmp_path / "middle.yaml", """\
+            recipe:
+              name: middle
+              version: "1.0"
+              schema_version: "1"
+            inputs:
+              m:
+                type: int
+                default: 2
+            steps:
+              - include: leaf.yaml
+              - id: middle_step
+                op: query_ncei_data
+                params:
+                  limit: ${inputs.m}
+            """)
+        root = """\
+            recipe:
+              name: root
+              version: "1.0"
+              schema_version: "1"
+            {inputs}
+            steps:
+              - include: middle.yaml
+            """
+
+        recipe = load_recipe(_write_recipe(tmp_path, root.format(inputs="")))
+        leaf, middle = recipe.include_blocks
+        assert middle.inputs == {"m": {"type": "int", "default": 2}}
+        assert middle.promoted == ["m", "n"]
+        assert leaf.inputs == {"n": {"type": "int", "default": 1}}
+        assert leaf.promoted == ["n"]
+
+        declared = "inputs: {n: {type: int, default: 9}}"
+        recipe = load_recipe(_write_recipe(tmp_path, root.format(inputs=declared)))
+        leaf, middle = recipe.include_blocks
+        assert leaf.promoted == ["n"]
+        assert middle.promoted == ["m"]
+        assert recipe.inputs["n"].default == 9
+
+    def test_sibling_includes_declaring_the_same_input(self, tmp_path):
+        for name in ("first", "second"):
+            _write_file(tmp_path / f"{name}.yaml", f"""\
+                recipe:
+                  name: {name}
+                  version: "1.0"
+                  schema_version: "1"
+                inputs:
+                  shared:
+                    type: str
+                    default: {name}
+                steps:
+                  - id: {name}_step
+                    op: query_ncei_data
+                    params:
+                      cruise: ${{inputs.shared}}
+                """)
+        parent = _write_recipe(tmp_path, """\
+            recipe:
+              name: parent
+              version: "1.0"
+              schema_version: "1"
+            steps:
+              - include: first.yaml
+              - include: second.yaml
+            """)
+
+        recipe = load_recipe(parent)
+        first, second = recipe.include_blocks
+        assert first.promoted == ["shared"]
+        assert second.promoted == []
+        assert recipe.inputs["shared"].default == "first"
 
     def test_include_merges_unoverridden_child_inputs(self, tmp_path):
         child = tmp_path / "child.yaml"

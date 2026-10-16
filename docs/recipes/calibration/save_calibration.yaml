@@ -1,38 +1,22 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/save_calibration.yaml
 
-# RL2307 Calibration, phase 3: archive the finished calibration
+# RL2307 calibration, phase 3: archive the finished calibration
 #
-# Runs after calibration_standardize.yaml and calibration_mapping.yaml, and
-# writes what a survey keeps into a directory of the user's choosing:
+# Runs after calibration_standardize.yaml and calibration_mapping.yaml and
+# copies what the survey keeps into archive_dir.
+#
+#   aa-recipe run save_calibration.yaml --input archive_dir=./archive
+#   aa-recipe run save_calibration.yaml --input archive_dir=gs://bucket/RL2307/calibration
+#
+# Run locally with only archive_dir set, and it reads the folder phase 2 wrote.
+# Keep its run config identical to the other two phases so it finds that folder.
+# A caller with no folder passes phase 2's mapping_dict, provenance and
+# single_channel_data instead.
+# A non-empty archive_dir is refused unless overwrite is true.
 #
 #   <archive_dir>/channel_mapping.yaml
 #   <archive_dir>/calibration_provenance.yaml
-#   <archive_dir>/Standardized_Reports/     one file per standardized channel,
-#                                           the same files phase 1 writes to
-#                                           single_channel_calibration_files/
-#
-# It shares no steps with the first two phases, so nothing here participates in
-# the cache-sharing contract those two keep with each other.
-#
-# Two ways in, and they do not interfere:
-#
-#   LOCAL      Run it after phase 2 with nothing but archive_dir. Every data
-#              input is unset, so the step reads the folder phase 2 just wrote
-#              under outputs/calibration/. Keeping this recipe's run config
-#              identical to the other two is what makes that folder findable.
-#
-#   A CALLER   Pass mapping_dict, provenance and single_channel_data back from
-#              phase 2's outputs, and point archive_dir at a bucket. Nothing is
-#              read from disk, which is the whole point: the container the
-#              phases ran in has no folder left to read.
-#
-# The destination is refused when it is not empty. An archive is written once
-# and kept, so replacing one is a decision, not a default: pass overwrite=true
-# to make it.
-#
-# Usage:
-#   aa-recipe run save_calibration.yaml --input archive_dir=./archive
-#   aa-recipe run save_calibration.yaml --input archive_dir=gs://bucket/RL2307/calibration
+#   <archive_dir>/Standardized_Reports/     one file per standardized channel
 
 recipe:
   name: "rl2307_save_calibration"
@@ -45,24 +29,19 @@ inputs:
   archive_dir:
     type: path
     required: true
-    description: >
-      Directory the calibration is archived into. A local path, or a gs:// URL
-      for a remote client that wants the outputs kept on the bucket.
+    description: "Directory to archive the calibration into, a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
     description: >
-      Subdirectory under the run's outputs folder the earlier phases wrote to.
-      Only consulted when an input below is left unset. Keep it the same as in
-      the other two phase recipes.
+      Subdirectory under the outputs folder the earlier phases wrote to. Keep it
+      the same as in the other two phase recipes.
   output_base:
     type: path
     required: false
     description: >
-      Calibration outputs folder to read anything left unset from. Defaults to
-      the folder this run's own outputs directory holds, which is what a local
-      run straight after phase 2 wants. Set it to archive the outputs of a run
-      that happened somewhere else.
+      Calibration outputs folder to read unset inputs from. Defaults to this
+      run's own; set it to archive a run made elsewhere.
   overwrite:
     type: bool
     default: false
@@ -70,27 +49,20 @@ inputs:
   single_channel_data:
     type: dict
     required: false
-    description: >
-      The standardized channels the mapping was built from, as returned on
-      either phase's single_channel_data output. Read from the outputs folder
-      when unset.
+    description: "Phase 2's single_channel_data output. Read from the outputs folder when unset."
   mapping_dict:
     type: dict
     required: false
-    description: >
-      Each raw file's channels mapped to their calibration key, from phase 2's
-      mapping_dict output. Read from the outputs folder when unset.
+    description: "Phase 2's mapping_dict output. Read from the outputs folder when unset."
   provenance:
     type: dict
     required: false
-    description: >
-      Phase 2's provenance output. Read from the outputs folder when unset.
+    description: "Phase 2's provenance output. Read from the outputs folder when unset."
 
 steps:
 
-  # regenerate: always because the archive lives outside the run's outputs
-  # directory, where the executor cannot check whether it is still there. A
-  # cache hit would hand back the paths without writing anything.
+  # Always runs: the archive is outside the outputs directory, so a cache hit
+  # could not tell whether it still exists.
   - id: save_calibration
     op: save_calibration_archive
     checkpoint: never
@@ -117,9 +89,7 @@ outputs:
   provenance_path:
     step_id: save_calibration
     output_name: provenance_path
-    description: >
-      Full path of the archived calibration_provenance.yaml. Unlike the mapping
-      recipe's output of the same name, this one outlives the run.
+    description: "Full path of the archived calibration_provenance.yaml."
   reports_dir:
     step_id: save_calibration
     output_name: reports_dir
@@ -131,6 +101,4 @@ outputs:
   files_written:
     step_id: save_calibration
     output_name: files_written
-    description: >
-      Every file the archive holds, in write order, so a caller can report the
-      archive without listing the destination itself.
+    description: "Every file the archive holds, in write order."

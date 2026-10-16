@@ -13,6 +13,17 @@
   },
   "nodes": [
     {
+      "id": "in:cruise_name",
+      "kind": "input",
+      "label": "inputs.cruise_name",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "HB1603",
+      "description": "NCEI CRUISE_NAME to search.",
+      "declared_in": "quickstart.yaml"
+    },
+    {
       "id": "in:file_time_start",
       "kind": "input",
       "label": "inputs.file_time_start",
@@ -20,7 +31,8 @@
       "declared": true,
       "required": false,
       "default": "2016-07-25T20:58:00",
-      "description": "Start of the window, UTC. Every file overlapping the window is fetched."
+      "description": "Start of the window, UTC. Every file overlapping the window is fetched.",
+      "declared_in": "quickstart.yaml"
     },
     {
       "id": "in:file_time_end",
@@ -30,17 +42,8 @@
       "declared": true,
       "required": false,
       "default": "2016-07-25T21:45:00",
-      "description": "End of the window, UTC. A wider window fetches more files."
-    },
-    {
-      "id": "in:cruise_name",
-      "kind": "input",
-      "label": "inputs.cruise_name",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "HB1603",
-      "description": "NCEI CRUISE_NAME to search."
+      "description": "End of the window, UTC. A wider window fetches more files.",
+      "declared_in": "quickstart.yaml"
     },
     {
       "id": "in:sonar_model",
@@ -50,7 +53,8 @@
       "declared": true,
       "required": false,
       "default": "EK60",
-      "description": "Echosounder model, as echopype names it."
+      "description": "Echosounder model, as echopype names it.",
+      "declared_in": "quickstart.yaml"
     },
     {
       "id": "in:max_depth",
@@ -60,7 +64,8 @@
       "declared": true,
       "required": false,
       "default": 1000.0,
-      "description": "Deepest depth drawn on the echogram, in metres."
+      "description": "Deepest depth drawn on the echogram, in metres.",
+      "declared_in": "quickstart.yaml"
     },
     {
       "id": "query_ncei",

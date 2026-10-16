@@ -12,3 +12,13 @@
 .md-typeset .tabbed-set {
   margin: 1em 0 1.5em;
 }
+
+/* Wider pages, so the recipe diagrams get room, and a narrower table of
+   contents on the right. */
+.md-grid {
+  max-width: 80rem;
+}
+
+.md-sidebar--secondary {
+  width: 9rem;
+}

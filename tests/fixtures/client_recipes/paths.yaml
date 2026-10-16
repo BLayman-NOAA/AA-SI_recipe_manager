@@ -1,0 +1,35 @@
+# A fingerprinted relative folder, for base directory tests.
+recipe:
+  name: client_paths
+  version: "1.0"
+  description: A step that reads a folder beside the recipe by a relative path.
+  schema_version: "1"
+
+steps:
+  - id: start
+    op: custom
+    params:
+      folder: ./data
+    custom_spec:
+      description: Count the entries in a folder.
+      callable_path: _stage9_helpers.count_entries
+      params:
+        folder: {type: path, fingerprint_mode: size}
+      outputs:
+        n: {type: int}
+      output_map: {n: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: bump
+    op: custom
+    inputs:
+      x: ${start.n}
+    custom_spec:
+      description: Add one.
+      callable_path: _stage9_helpers.inc
+      inputs:
+        x: {type: int}
+      outputs:
+        out: {type: int}
+      output_map: {out: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

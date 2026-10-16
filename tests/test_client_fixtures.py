@@ -14,12 +14,20 @@ from aa_recipe_manager.cli import main
 from aa_recipe_manager.parser.yaml_reader import load_recipe
 
 FIXTURES = Path(__file__).parent / "fixtures" / "client_recipes"
-RECIPES = ["flat.yaml", "with_sub.yaml", "mapped.yaml", "custom_no_cache_key.yaml"]
+RECIPES = [
+    "flat.yaml",
+    "with_sub.yaml",
+    "mapped.yaml",
+    "custom_no_cache_key.yaml",
+    "slow.yaml",
+    "failing.yaml",
+    "paths.yaml",
+]
 
 
 @pytest.mark.parametrize("name", RECIPES)
 def test_every_fixture_loads_and_validates(name):
-    report = api.dry_run(FIXTURES / name, check_versions=False)
+    report = api.dry_run(FIXTURES / name, check_versions=False, base_dir=FIXTURES)
     assert report.is_valid, report.errors
 
 
@@ -28,7 +36,10 @@ def test_fixture_hashes_are_stable():
         (FIXTURES / "expected_hashes.json").read_text(encoding="utf-8")
     )
     found = {
-        name: {k: v.step_hash for k, v in api.step_hashes(FIXTURES / name).items()}
+        name: {
+            k: v.step_hash
+            for k, v in api.step_hashes(FIXTURES / name, base_dir=FIXTURES).items()
+        }
         for name in RECIPES
     }
     assert found == expected, (
@@ -61,6 +72,10 @@ def test_with_sub_include_tree():
         ],
         "k": [{"step": "leaf_add", "slot": "params.k"}],
     }
+    # Every sub-recipe input is overridden, so none reaches the root.
+    assert list(chain.inputs) == ["source", "k"]
+    assert list(leaf.inputs) == ["value", "k"]
+    assert chain.promoted == leaf.promoted == []
 
     graph = api.recipe_graph(FIXTURES / "with_sub.yaml")
     includes = {include["id"]: include for include in graph["includes"]}
@@ -77,6 +92,8 @@ def test_with_sub_include_tree():
     assert steps["leaf_add"]["include"] == "inc:sub/leaf.yaml"
     assert steps["seed"]["include"] is None
     assert steps["seed"]["document"] == "with_sub.yaml"
+    inputs = {n["id"]: n for n in graph["nodes"] if n["kind"] == "input"}
+    assert inputs["in:n"]["declared_in"] == "with_sub.yaml"
 
 
 
@@ -88,6 +105,35 @@ def test_include_bindings_name_the_slots_a_value_test_misses():
     block = blocks["processing_lvl_2_per_file.yaml"]
     assert block.bindings["surface_mask_depth"] == [
         {"step": "create_surface_mask", "slot": "params.surface_depth_m"}
+    ]
+
+
+def test_input_nodes_name_the_sub_recipe_that_declares_them():
+    """Promoted inputs trace to their file; the root keeps its own."""
+    hb1603 = Path(__file__).parents[1] / "docs" / "recipes" / "HB1603"
+    graph = api.recipe_graph(hb1603 / "survey_echogram_pyramid.yaml")
+    inputs = {n["id"]: n for n in graph["nodes"] if n["kind"] == "input"}
+    assert inputs["in:cruise_name"]["declared_in"] == (
+        "sub_recipes/processing_lvl_0_user.yaml"
+    )
+    # Also declared in the viewer seabed level, which the root overrides.
+    assert inputs["in:crop_max_range_m"]["declared_in"] == (
+        "survey_echogram_pyramid.yaml"
+    )
+    # An explicit default: null leaves the input optional.
+    assert inputs["in:noise_background_max"]["required"] is False
+    includes = {include["source"]: include for include in graph["includes"]}
+    lvl_0 = includes["sub_recipes/processing_lvl_0_user.yaml"]
+    assert [entry["name"] for entry in lvl_0["inputs"]] == [
+        "cruise_name",
+        "file_time_start",
+        "file_time_end",
+        "cal_input_folder",
+        "calibration_output_dir",
+        "cruise_id",
+        "record_author",
+        "max_scan_bytes",
+        "match_tolerances",
     ]
 
 

@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb1603-level-5" markdown>
+    <div class="recipe-viewer" data-recipe="hb1603-dive-analysis" data-slug="hb1603-level-5" data-drill="inc:sub_recipes/processing_lvl_5_sv_codes.yaml" markdown>
 
     - `generate_sv_codes`: custom `aa_si_utils.dive_profiles.generate_sv_codes`
     - `sv_code_depth_table`: custom `aa_si_utils.dive_profiles.sv_code_depth_table`
@@ -18,18 +18,12 @@
     #
     #   generate_sv_codes -> sv_code_depth_table
     #
-    # HB2407 stops at level 4. This is the step beyond it that the sperm whale
-    # analysis needs: the clustering projected back onto each dive as per-ping
-    # SVCodes, and the NEFSC report's percent-of-dive-duration tables.
+    # Projects the clustering back onto each dive as per-ping SVCodes, and builds
+    # the NEFSC report's percent-of-dive-duration tables. Overlapping dives are
+    # each coded over their shared minutes.
     #
-    # Each dive is coded on its own slice of the pooled grid, between its own 99%
-    # confidence lines, read from the paths its window carries. Two dives that
-    # overlap in time are therefore each coded over the shared minutes, so the
-    # per-dive tables are exact and the combined table counts those minutes once
-    # per dive.
-    #
-    # Cluster ids are run scoped, so read the codes against the per-code Sv in the
-    # CSVs, not against the numbering of an earlier analysis.
+    # Cluster ids change between runs, so read the codes against their per-code
+    # Sv in the CSVs, not against an earlier analysis's numbering.
 
     recipe:
       name: "hb1603_processing_lvl_5_sv_codes"
@@ -44,17 +38,13 @@
         description: "Dataset with the embedded cluster labels. Wire it to embed_results.ds_normalized."
       dive_windows:
         type: list
-        description: >
-          Window dicts, one per dive, each with start and end. Wire it to
-          plan_dives.windows. Any list of windows works, which is what lets this
-          level serve an analysis other than the dives.
+        description: "Windows with start and end, one per dive. Wire it to plan_dives.windows."
       ping_time_bin:
         type: str
         default: "10s"
         description: >
-          The grid's ping-time bin, as level 3 takes it. Each ping contributes
-          one bin of this length to its code's duration, so it must be the value
-          level 3 gridded on. Wire both from one parent input.
+          Level 3's ping-time bin, the time each ping adds to its code's duration.
+          Wire both levels from one parent input.
       code_output_dir:
         type: path
         default: "./outputs/sv_codes"
@@ -66,19 +56,9 @@
 
     steps:
 
-      # Per-cell CSVs in the reference layout, plus the per-ping summary the
-      # duration table is built from. A ping contributes its whole bin, one
-      # ping_time_bin long, to the code that dominates the cells between its 99%
-      # confidence bounds, which is what makes the per-code minutes add up to the
-      # dive length.
-      #
-      # These CSVs are also where the codes can be interpreted without a figure:
-      # each row carries its cell 18 and 38 kHz Sv next to its code, so grouping
-      # by code gives the per-cluster statistics that say what each id actually is.
-      #
-      # The dive lines are read here, per dive, onto that dive's slice of the
-      # merged grid, from the dive_fit_evl / dive_u99_evl / dive_l99_evl paths on
-      # its window. See OVERLAPPING DIVES for why they are not attached upstream.
+      # Writes per-cell CSVs with each cell's 18 and 38 kHz Sv next to its code,
+      # plus a per-ping summary. Each ping counts toward the code that dominates
+      # between its dive's 99% lines, read per dive from the window's paths.
       - id: generate_sv_codes
         op: custom
         checkpoint: always
@@ -122,10 +102,8 @@
             source: git
             url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
 
-      # "Percent of total dive duration the whale spent at 200 m depth intervals
-      # per code." Depth comes from the fitted dive profile, not from the cells:
-      # the question is how long the whale spent at a depth, and the code says what
-      # was around it there.
+      # Percent of dive duration per depth interval and code. Depth comes from the
+      # fitted dive profile, not from the cells.
       - id: sv_code_depth_table
         op: custom
         checkpoint: always

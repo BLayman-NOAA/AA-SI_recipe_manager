@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb1603-level-2" markdown>
+    <div class="recipe-viewer" data-recipe="hb1603-dive-analysis" data-slug="hb1603-level-2" data-drill="inc:sub_recipes/processing_lvl_2_combined.yaml" markdown>
 
     - `extract_cal_params`: [`extract_standardized_cal_params`](../ops/extract_standardized_cal_params.md)
     - `compute_sv`: [`compute_sv`](../ops/compute_sv.md)
@@ -24,9 +24,8 @@
 
     ```yaml
     # Documentation copy combining AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/sub_recipes/
-    # processing_lvl_2_survey.yaml (level 2a) and processing_lvl_2_user.yaml (level 2b) into one file.
-    # The original 2b re-added depth in a second ep_add_depth step (dive_depth) as range from the
-    # transducer; this copy drops it and keeps 2a's surface-referenced depth throughout.
+    # processing_lvl_2_survey.yaml (2a) and processing_lvl_2_user.yaml (2b). This copy
+    # drops the original 2b's second depth step and keeps 2a's surface-referenced depth.
 
     # Processing level 2: calibrated Sv, then masks and noise removal, per file.
     #
@@ -34,50 +33,12 @@
     #                          -> ep_add_depth -> crop_survey_range
     #   2b  dive_sv -> surface + frequency + seabed masks -> apply -> remove noise
     #
-    # The working recipes keep 2a and 2b in separate files because 2a is the
-    # survey's shared artifact: computed once per cruise, checkpointed at
-    # crop_survey_range, and loaded from the shared cache by every analysis. 2b is
-    # the analyst's own and is varied freely. This copy puts them in one file so
-    # the whole level reads as one recipe. The 2a steps are wired exactly as in
-    # the original, so they hash the same and load from the survey cache.
+    # 2a is the survey's shared Sv, computed once per cruise and loaded from the
+    # survey cache, so keep its steps as the survey recipe has them. 2b is the
+    # analyst's own. Depth throughout is below the sea surface.
     #
-    # ONE VERTICAL REFERENCE
-    #
-    #   ep_add_depth adds depth below the sea surface: echo_range plus the file's
-    #   transducer depth and per-ping heave. Everything after it uses that depth,
-    #   so the surface mask, the Echoview seabed and dive lines, and the level 3
-    #   grid all share the sea-surface reference.
-    #
-    # WHAT THE STEPS MAP OVER
-    #
-    #   per_file_source, an input the including recipe must set, normally
-    #   ${query_ncei.raw_urls}. It must be the value levels 1 and 3 are given, or
-    #   the per-file chain splits. The include substitutes it into map_over
-    #   textually, so the fingerprinted map_over is the value passed.
-    #
-    # WHY THERE IS NO FAN-IN AT THIS LEVEL
-    #
-    #   range_sample is not a shared axis across HB1603. max_range_m is a ceiling,
-    #   not a fixed length, and the cruise runs sample intervals differing by about
-    #   11x, so the per-file Sv comes back with 17 distinct range_sample lengths.
-    #   Concatenating on ping_time would NaN-pad all of them up to the longest.
-    #   Files are merged in level 3, once they are on a shared depth grid.
-    #
-    # WHERE 2b STARTS
-    #
-    #   dive_sv reads ep_add_depth's uncropped Sv, so the dives see the whole water
-    #   column down to the seabed line (up to 2343 m on these dives). The 1800 m
-    #   crop_survey_range output is the shared survey artifact and is not consumed
-    #   by the dive analysis; it stays so the survey cache is addressed.
-    #
-    # WHY THE SEABED IS MASKED BEFORE NOISE REMOVAL
-    #
-    #   remove_background_noise estimates the floor by taking a minimum over
-    #   range, so what sits below the seabed feeds it. Six of the 13 dives have the
-    #   seabed inside the 1800 m crop, so the seabed is masked first. It cannot go
-    #   in the survey tier: the seabed lines cover only the six dive dates, and a
-    #   ping with no line depth would be masked out entirely. seabed_min_coverage
-    #   turns any gap into a failed step rather than a missing dive.
+    # Pass the same per_file_source as levels 1 and 3, or the per-file chain
+    # splits. Files are merged in level 3, once they share a depth grid.
 
     recipe:
       name: "hb1603_processing_lvl_2"
@@ -90,9 +51,8 @@
       per_file_source:
         type: str
         description: >
-          The ${step.output} list the per-file steps map over, one instance per
-          entry. Must be overridden by the including recipe, with the same value
-          for every level that shares the chain. Normally ${query_ncei.raw_urls}.
+          The list the per-file steps map over, normally ${query_ncei.raw_urls}.
+          Required, and the same value for every level in the chain.
       calibration_dict:
         type: dict
         description: "Standardized calibration data, from build_cal_mapping."
@@ -102,19 +62,14 @@
       crop_max_range_m:
         type: float
         default: 1800.0
-        description: "Fixed range ceiling of the shared survey Sv. A different ceiling is a full recompute."
+        description: "Range ceiling of the survey Sv, in metres. Changing it recomputes the Sv."
       dive_windows:
         type: list
-        description: >
-          Window dicts, one per dive, each with start and end. Wire it to
-          plan_dives.windows. Any list of windows works.
+        description: "Windows with start and end, one per dive. Wire it to plan_dives.windows."
       ping_time_bin:
         type: str
         default: "10s"
-        description: >
-          Ping-time bin the level 3 grid is built on. dive_sv widens each window to
-          whole bins of this width so the first and last bins of a dive are
-          averaged over all of their pings.
+        description: "Level 3's ping-time bin. dive_sv widens each window to whole bins of it."
       surface_depth_m:
         type: float
         default: 10.0
@@ -148,9 +103,7 @@
       noise_snr_threshold:
         type: str
         default: "3.0dB"
-        description: >
-          Samples whose corrected Sv sits less than this above the noise estimate
-          are masked. The NEFSC reference analysis config sets 6.0dB.
+        description: "Minimum Sv margin above the noise estimate. The NEFSC reference uses 6.0dB."
       noise_background_max:
         type: str
         default: null
@@ -158,13 +111,10 @@
 
     steps:
 
-      # --- Level 2a: calibrated Sv and depth ------------------------------------
+      # Level 2a: calibrated Sv and depth
 
-      # Path(url).name gives the bare filename, which is the key the calibration
-      # mapping is built under, so a URL resolves the same as a local path would.
-      # unmapped_channels is left at its "warn" default, so a channel no
-      # calibration file matched falls back to the values the raw file records for
-      # it and says so on the terminal.
+      # A channel no calibration file matched warns and uses the raw file's own
+      # recorded calibration.
       - id: extract_cal_params
         op: extract_standardized_cal_params
         map_over: ${inputs.per_file_source}
@@ -184,9 +134,8 @@
           cal_params: ${extract_cal_params.cal_params}
           env_params: ${extract_cal_params.env_params}
 
-      # The vertical reference, computed explicitly rather than left to echopype's
-      # use_platform_vertical_offsets, which on an EK60 file puts the transducer
-      # above the sea surface by twice its draft.
+      # Computed here because echopype's platform offsets put an EK60 transducer
+      # above the sea surface.
       - id: compute_transducer_depth
         op: compute_transducer_depth
         map_over: ${inputs.per_file_source}
@@ -207,8 +156,8 @@
         params:
           depth_offset: ${compute_transducer_depth.transducer_depth}
 
-      # The shared survey artifact. checkpoint: always because read_raw's stores
-      # are disposable, so the chain's surviving output must be durable.
+      # The shared survey Sv. The dive steps below read the uncropped Sv, but this
+      # step stays so the survey cache is addressed.
       - id: crop_survey_range
         op: crop_range
         map_over: ${inputs.per_file_source}
@@ -220,11 +169,10 @@
           drop_trailing_all_nan: false
           outlier_sigma: null
 
-      # --- Level 2b: window selection, masks and noise removal ------------------
+      # Level 2b: window selection, masks and noise removal
 
-      # Mapped over every file, it keeps the pings inside any dive window. For a
-      # file no window touches it returns nothing, and every step below is skipped
-      # for that file.
+      # Keeps the pings inside any dive window, from the uncropped Sv. Files no
+      # window touches skip every step below.
       - id: dive_sv
         op: select_ping_time_range
         map_over: ${inputs.per_file_source}
@@ -235,8 +183,8 @@
           allow_empty: true
           snap_to_bin: ${inputs.ping_time_bin}
 
-      # Masks the top surface_depth_m of range below the transducer: it reads
-      # echo_range, not depth.
+      # Masks the top surface_depth_m below the transducer. It reads echo_range,
+      # not depth.
       - id: dive_surface_mask
         op: create_surface_mask
         map_over: ${inputs.per_file_source}
@@ -253,9 +201,8 @@
         params:
           frequencies_to_mask: ${inputs.frequencies_to_mask}
 
-      # The folder, read whole, onto this file's selected pings. A ping outside
-      # the line's span is NaN, and seabed_min_coverage makes any such ping a
-      # failure.
+      # Reads the seabed lines onto this file's pings. Too many pings without a
+      # line depth fail the step, per seabed_min_coverage.
       - id: dive_seabed_line
         op: read_seafloor_line
         map_over: ${inputs.per_file_source}
@@ -292,7 +239,8 @@
           ds_Sv: ${dive_sv.ds_Sv}
           mask: ${dive_combine_masks.mask}
 
-      # Noise removal on seabed-masked Sv.
+      # Runs on seabed-masked Sv, since the noise estimate would otherwise pick up
+      # what lies below the seabed.
       - id: dive_remove_noise
         op: remove_background_noise
         map_over: ${inputs.per_file_source}

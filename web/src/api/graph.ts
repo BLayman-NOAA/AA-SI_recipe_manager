@@ -103,6 +103,11 @@ export interface InputNode {
   required: boolean | null;
   default: unknown;
   description: string | null;
+  /**
+   * The file declaring the input: the root document or an include's source,
+   * null for an input no file declares. Absent in older graphs.
+   */
+  declared_in?: string | null;
 }
 
 /** A reference to a step outside the recipe (id `ext:<step>.<output>` or `ext:<dep>`). */
@@ -187,7 +192,18 @@ export interface GraphInclude {
    * Absent in graphs from servers that predate it.
    */
   bindings?: Record<string, IncludeBinding[]>;
+  /** The file's own input declarations, in file order. Absent in older graphs. */
+  inputs?: GraphIncludeInput[];
   consumed: ConsumedOutput[];
+}
+
+/** One input declaration of a sub-recipe file, as written there. */
+export interface GraphIncludeInput {
+  name: string;
+  type: string | null;
+  required: boolean;
+  default: unknown;
+  description: string | null;
 }
 
 /** One step slot an include override was substituted into. */
@@ -226,6 +242,62 @@ export function findInclude(graph: Graph, id: string): GraphInclude | undefined 
 /** A recipe input's name, without the `inputs.` of its label. */
 export function inputName(node: InputNode): string {
   return node.label.replace(/^inputs\./, '');
+}
+
+/** The root recipe's file name, as the `document` of its steps names it. */
+export function rootDocument(graph: Graph): string {
+  return graph.recipe.source.split(/[\/]/).pop() || graph.recipe.source;
+}
+
+/**
+ * The file declaring a recipe input. Older graphs do not say, so every input
+ * reads as the root document's.
+ */
+export function declaredIn(graph: Graph, input: InputNode): string {
+  return input.declared_in ?? rootDocument(graph);
+}
+
+/** The include whose source is a file, or undefined for the root document. */
+export function includeOf(graph: Graph, document: string): GraphInclude | undefined {
+  return graph.includes.find((include) => include.source === document);
+}
+
+/** Things grouped by the file they come from; `file` is null for those with none. */
+export interface DocumentGroup<T> {
+  file: string | null;
+  items: T[];
+}
+
+/**
+ * Group items by file: the root document first, then the includes' sources in
+ * graph order, then any other file, then items without one. Empty groups are
+ * left out and items keep their order within a group.
+ */
+export function groupByDocument<T>(
+  graph: Graph,
+  items: T[],
+  fileOf: (item: T) => string | null | undefined,
+): DocumentGroup<T>[] {
+  const files = new Map<string, T[]>();
+  for (const file of [rootDocument(graph), ...graph.includes.map((include) => include.source)]) {
+    files.set(file, []);
+  }
+  const loose: T[] = [];
+  for (const item of items) {
+    const file = fileOf(item);
+    if (!file) loose.push(item);
+    else files.set(file, [...(files.get(file) ?? []), item]);
+  }
+  const groups: DocumentGroup<T>[] = [...files]
+    .filter(([, list]) => list.length > 0)
+    .map(([file, list]) => ({ file, items: list }));
+  if (loose.length > 0) groups.push({ file: null, items: loose });
+  return groups;
+}
+
+/** The inputs a sub-recipe file declares that its include entry does not override. */
+export function ownInputs(include: GraphInclude): GraphIncludeInput[] {
+  return (include.inputs ?? []).filter((input) => !(input.name in include.overrides));
 }
 
 /** The op as the client names it, custom steps included. */

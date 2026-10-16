@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { vi } from 'vitest';
-import type { Graph } from '../src/api/graph';
+import type { Graph, GraphEdge } from '../src/api/graph';
 import type { SessionDocument } from '../src/api/models';
+import mapped from './fixtures/mapped.graph.json';
 import withSub from './fixtures/with_sub.graph.json';
 
 /** The with_sub fixture graph (aa-recipe graph tests/fixtures/client_recipes/with_sub.yaml --json). */
@@ -104,5 +105,79 @@ export function declaredGraph(): Graph {
   const graph = structuredClone(withSubGraph);
   const output = graph.nodes.find((node) => node.id === 'out:total.total');
   if (output?.kind === 'output') output.declared = true;
+  return graph;
+}
+
+/**
+ * with_sub with an input `offset` that leaf.yaml declares and nobody
+ * overrides, so the loader promotes it to the recipe; leaf_add reads it.
+ */
+export function nestedInputGraph(): Graph {
+  const graph = structuredClone(withSubGraph);
+  const declaration = { type: 'int', required: false, default: 2, description: 'Added after k.' };
+  const leaf = graph.includes.find((include) => include.id === 'inc:sub/leaf.yaml')!;
+  leaf.inputs = [...(leaf.inputs ?? []), { name: 'offset', ...declaration }];
+  graph.nodes.unshift({
+    id: 'in:offset',
+    kind: 'input',
+    label: 'inputs.offset',
+    declared: true,
+    ...declaration,
+    declared_in: 'sub/leaf.yaml',
+  });
+  graph.edges.push({
+    source: 'in:offset',
+    target: 'leaf_add',
+    kind: 'param',
+    source_output: null,
+    target_input: 'offset',
+    label: 'offset',
+    type: 'int',
+  });
+  return graph;
+}
+
+/** mapped with a recipe input that seg maps over and proc reads. */
+export function mappedInputGraph(): Graph {
+  const graph = structuredClone(mapped as unknown as Graph);
+  graph.nodes.unshift({
+    id: 'in:files',
+    kind: 'input',
+    label: 'inputs.files',
+    type: 'list',
+    declared: true,
+    required: true,
+    default: ['a', 'b'],
+    description: 'Files to read.',
+  });
+  const edge = (target: string, kind: GraphEdge['kind'], input: string) =>
+    ({
+      source: 'in:files',
+      target,
+      kind,
+      source_output: null,
+      target_input: input,
+      label: 'files',
+      type: 'list',
+    }) as GraphEdge;
+  graph.edges.push(edge('proc', 'map_over', 'x'), edge('seg', 'param', 'files'));
+  return graph;
+}
+
+/** mapped with its group over a recipe input, `files`, which proc also reads as a param. */
+export function mappedOverInputGraph(): Graph {
+  const graph = mappedInputGraph();
+  const group = graph.groups[0];
+  group.map_over = '${inputs.files}';
+  group.label = 'Runs once per item of inputs.files';
+  graph.edges.push({
+    source: 'in:files',
+    target: 'proc',
+    kind: 'param',
+    source_output: null,
+    target_input: 'names',
+    label: 'files',
+    type: 'list',
+  } as GraphEdge);
   return graph;
 }

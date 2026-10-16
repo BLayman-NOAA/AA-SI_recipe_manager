@@ -1,5 +1,5 @@
-/* Flow diagram. Node anatomy follows the docs site (docs/assets/recipe-flow.css);
-   colors come from the client's --rc-* variables. */
+/* Flow diagram, shared by the client and the docs site viewer. Colors come from
+   the client's --rc-* variables. */
 
 .rc-diagram {
   display: flex;
@@ -33,7 +33,7 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: calc(14px * var(--rc-text-scale, 1));
 }
 
 .rc-breadcrumb > span {
@@ -56,7 +56,7 @@
   border: none;
   background: none;
   color: var(--rc-accent);
-  font-size: 14px;
+  font-size: calc(14px * var(--rc-text-scale, 1));
   cursor: pointer;
 }
 
@@ -74,7 +74,7 @@
 
 .rc-find-count {
   color: var(--rc-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--rc-text-scale, 1));
   white-space: nowrap;
 }
 
@@ -87,7 +87,7 @@
   border-radius: 12px;
   background: none;
   color: var(--rc-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--rc-text-scale, 1));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -134,7 +134,7 @@
 }
 
 .rc-diagram .react-flow__node {
-  font-size: 12px;
+  font-size: calc(12px * var(--rc-text-scale, 1));
   line-height: 1.35;
   color: var(--rc-fg);
   cursor: pointer;
@@ -150,8 +150,8 @@
   background: var(--rc-bg);
   color: var(--rc-fg);
   font-family: var(--rc-font-mono);
-  font-size: 10px;
-  line-height: 16px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
+  line-height: calc(16px * var(--rc-text-scale, 1));
   white-space: nowrap;
   pointer-events: all;
   cursor: default;
@@ -267,8 +267,8 @@
 
 .rc-step {
   width: max-content;
-  min-width: 170px;
-  max-width: 360px;
+  min-width: calc(170px * var(--rc-text-scale, 1));
+  max-width: calc(360px * var(--rc-text-scale, 1));
   padding: 6px 10px 7px;
   border: 1px solid var(--rc-faint);
   border-left: 3px solid var(--rc-accent);
@@ -296,19 +296,19 @@
 .rc-step-op {
   color: var(--rc-accent);
   font-family: var(--rc-font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
   overflow-wrap: anywhere;
 }
 
 .rc-step-params {
   margin-top: 6px;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-step-params td {
   padding: 0 8px 0 0;
-  line-height: 16px;
+  line-height: calc(16px * var(--rc-text-scale, 1));
   vertical-align: top;
 }
 
@@ -330,7 +330,7 @@
 .rc-step-description {
   margin-top: 3px;
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -347,8 +347,8 @@
   padding: 0 7px;
   border-radius: 8px;
   background: var(--rc-line);
-  font-size: 10px;
-  line-height: 16px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
+  line-height: calc(16px * var(--rc-text-scale, 1));
 }
 
 .rc-node-badge-map {
@@ -368,8 +368,8 @@
 
 .rc-include {
   width: max-content;
-  min-width: 220px;
-  max-width: 360px;
+  min-width: calc(220px * var(--rc-text-scale, 1));
+  max-width: calc(360px * var(--rc-text-scale, 1));
   padding: 7px 10px 8px;
   border: 1px solid var(--rc-faint);
   border-top: 3px solid var(--rc-accent);
@@ -390,20 +390,20 @@
 
 .rc-include-title {
   flex: 1;
-  font-size: 13px;
+  font-size: calc(13px * var(--rc-text-scale, 1));
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
 .rc-include-meta {
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-include-source {
   color: var(--rc-faint);
   font-family: var(--rc-font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
   overflow-wrap: anywhere;
 }
 
@@ -421,7 +421,7 @@
   padding: 0;
   list-style: none;
   font-family: var(--rc-font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
   color: var(--rc-muted);
   overflow-wrap: anywhere;
 }
@@ -464,7 +464,7 @@
   fill: currentColor;
 }
 
-.rc-node-tool.rc-box-toggle {
+.rc-node-tool.rc-node-button {
   flex: none;
   width: 26px;
   height: 26px;
@@ -474,12 +474,12 @@
   color: var(--rc-fg);
 }
 
-.rc-node-tool.rc-box-toggle svg {
+.rc-node-tool.rc-node-button svg {
   width: 20px;
   height: 20px;
 }
 
-.rc-node-tool.rc-box-toggle:hover {
+.rc-node-tool.rc-node-button:hover {
   border-color: var(--rc-accent);
   background: var(--rc-accent);
   color: var(--rc-accent-fg);
@@ -505,7 +505,7 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--rc-accent) 14%, var(--rc-bg));
   color: var(--rc-accent);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
   font-weight: 600;
   white-space: nowrap;
 }
@@ -526,21 +526,21 @@
 
 .rc-pill-label {
   font-family: var(--rc-font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-pill-type {
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
   opacity: 0.8;
 }
 
 .rc-pill-value {
-  max-width: 220px;
+  max-width: calc(220px * var(--rc-text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--rc-muted);
   font-family: var(--rc-font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
 }
 
 .rc-pill-external {
@@ -551,8 +551,8 @@
 
 .rc-box {
   width: max-content;
-  min-width: 220px;
-  max-width: 320px;
+  min-width: calc(220px * var(--rc-text-scale, 1));
+  max-width: calc(320px * var(--rc-text-scale, 1));
   padding: 4px 6px 6px 10px;
   border: 1.5px solid var(--rc-input);
   border-radius: 10px;
@@ -561,7 +561,7 @@
 }
 
 .rc-box-outputs {
-  min-width: 200px;
+  min-width: calc(200px * var(--rc-text-scale, 1));
   border-color: var(--rc-output);
   border-style: dashed;
 }
@@ -597,7 +597,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--rc-output) 18%, transparent);
   color: var(--rc-output);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
 }
 
 .rc-box-head {
@@ -613,7 +613,7 @@
 
 .rc-box-count {
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-box-owner {
@@ -627,7 +627,7 @@
   margin-bottom: 2px;
   overflow: hidden;
   color: var(--rc-input);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
   font-weight: 700;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -655,7 +655,7 @@
   align-items: baseline;
   gap: 0 6px;
   padding: 2px 0;
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-box-rows li + li {
@@ -671,7 +671,7 @@
 .rc-box-type,
 .rc-box-from {
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
   overflow-wrap: anywhere;
 }
 
@@ -681,14 +681,14 @@
 
 .rc-box-type {
   font-family: var(--rc-font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
 }
 
 .rc-box-value {
   flex-basis: 100%;
   color: var(--rc-input);
   font-family: var(--rc-font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--rc-text-scale, 1));
   overflow-wrap: anywhere;
 }
 
@@ -696,15 +696,54 @@
   font-weight: 700;
 }
 
+.rc-box-value-unset {
+  color: var(--rc-error);
+}
+
+.rc-box-value .rc-box-tag {
+  margin-left: 6px;
+  font-weight: normal;
+}
+
+.rc-box-value-unset .rc-box-tag {
+  background: color-mix(in srgb, var(--rc-error) 18%, transparent);
+  color: var(--rc-error);
+}
+
+.rc-box-rows li.rc-box-section {
+  display: block;
+  padding-top: 4px;
+  color: var(--rc-muted);
+  font-size: calc(10px * var(--rc-text-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rc-box-rows li.rc-box-section:first-child {
+  padding-top: 0;
+}
+
+.rc-box-rows li.rc-box-section + li {
+  border-top: none;
+}
+
+.rc-box-rows li.rc-box-more {
+  display: block;
+  border-top: 1px dotted var(--rc-line);
+  color: var(--rc-muted);
+  font-size: calc(11px * var(--rc-text-scale, 1));
+}
+
 .rc-box-empty {
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 /* Context: steps outside the drilled sub-recipe */
 
 .rc-ghost {
-  min-width: 130px;
+  min-width: calc(130px * var(--rc-text-scale, 1));
   padding: 5px 11px 6px;
   border: 1.5px dashed var(--rc-context);
   border-radius: 5px;
@@ -720,7 +759,7 @@
 .rc-ghost-op,
 .rc-ghost-where {
   color: var(--rc-muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--rc-text-scale, 1));
 }
 
 .rc-ghost-op {
@@ -733,13 +772,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: 2px 12px;
-  max-width: 520px;
+  max-width: calc(520px * var(--rc-text-scale, 1));
   padding: 3px 8px;
   border: 1px solid var(--rc-line);
   border-radius: 4px;
   background: color-mix(in srgb, var(--rc-panel) 90%, transparent);
   color: var(--rc-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
 .rc-legend-item {
@@ -787,4 +826,302 @@
 
 .rc-key-ghost {
   border: 1.5px dashed var(--rc-context);
+}
+
+/* Run status (front end doc 3.3). The prediction recolors the border, the
+   actual status tints the fill, and the marks sit outside the node's flow, so
+   no status change resizes a node. */
+
+.rc-step,
+.rc-include {
+  position: relative;
+}
+
+.rc-pred-survey {
+  border-color: var(--rc-survey);
+}
+
+.rc-pred-user,
+.rc-pred-marker {
+  border-color: var(--rc-accent);
+}
+
+.rc-pred-compute {
+  border-color: var(--rc-ok);
+}
+
+.rc-pred-pruned,
+.rc-pred-skipped {
+  border-color: var(--rc-faint);
+  border-style: dashed;
+}
+
+.rc-pred-untargeted {
+  opacity: 0.45;
+}
+
+.rc-pred-unknown {
+  border-style: dotted;
+  border-color: var(--rc-muted);
+}
+
+.rc-actual-computed {
+  background: color-mix(in srgb, var(--rc-ok) 20%, var(--rc-raised));
+}
+
+.rc-actual-hit-survey-cache {
+  background: color-mix(in srgb, var(--rc-survey) 22%, var(--rc-raised));
+}
+
+.rc-actual-hit-user-cache,
+.rc-actual-marker {
+  background: color-mix(in srgb, var(--rc-accent) 20%, var(--rc-raised));
+}
+
+.rc-actual-pruned,
+.rc-actual-skipped,
+.rc-actual-stopped,
+.rc-actual-not-run {
+  background: color-mix(in srgb, var(--rc-faint) 18%, var(--rc-raised));
+}
+
+.rc-actual-failed {
+  border-color: var(--rc-error);
+  background: color-mix(in srgb, var(--rc-error) 22%, var(--rc-raised));
+}
+
+.rc-step.rc-actual-failed {
+  cursor: pointer;
+}
+
+.rc-running::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--rc-accent);
+  border-radius: 7px;
+  pointer-events: none;
+  animation: rc-running-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rc-running-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.rc-run-spinner {
+  box-sizing: border-box;
+  width: 16px;
+  padding: 0;
+  border: 2px solid color-mix(in srgb, var(--rc-accent) 25%, transparent);
+  border-top-color: var(--rc-accent);
+  border-radius: 50%;
+  animation: rc-spin 0.8s linear infinite;
+}
+
+@keyframes rc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rc-running::after {
+    animation: none;
+    border-style: dashed;
+  }
+
+  .rc-run-spinner {
+    animation-duration: 3s;
+  }
+}
+
+/* The survey backed region: a soft gold band around each node the survey tier holds. */
+.rc-diagram:not(.rc-no-survey-region) .rc-survey-backed {
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--rc-survey) 28%, transparent),
+    var(--rc-shadow);
+}
+
+.rc-stale-corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border-top-left-radius: 4px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--rc-warning) 0 2px,
+    transparent 2px 4px
+  );
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.rc-run-marks {
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  display: flex;
+  gap: 3px;
+}
+
+.rc-include-summary {
+  top: auto;
+  right: auto;
+  bottom: -9px;
+  left: 8px;
+}
+
+.rc-run-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--rc-line);
+  border-radius: 8px;
+  background: var(--rc-panel);
+  color: var(--rc-fg);
+  font-size: calc(10px * var(--rc-text-scale, 1));
+  font-weight: 700;
+  line-height: calc(14px * var(--rc-text-scale, 1));
+  white-space: nowrap;
+}
+
+.rc-run-mark svg {
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
+}
+
+.rc-letter-S {
+  border-color: var(--rc-survey);
+  color: var(--rc-survey);
+}
+
+.rc-letter-U,
+.rc-letter-M {
+  border-color: var(--rc-accent);
+  color: var(--rc-accent);
+}
+
+.rc-run-saved {
+  color: var(--rc-muted);
+}
+
+.rc-run-pending {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.rc-run-progress {
+  color: var(--rc-accent);
+}
+
+/* The play icon: always on steps the recipe checkpoints, else on hover or selection.
+   visibility keeps its space, so showing it does not resize the node. */
+.rc-step .rc-play {
+  flex: none;
+  visibility: hidden;
+}
+
+.rc-step.rc-checkpointed .rc-play,
+.rc-step:hover .rc-play,
+.rc-step.rc-node-selected .rc-play {
+  visibility: visible;
+}
+
+.rc-step .rc-play:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.rc-step.rc-checkpointed .rc-play:not(:disabled) {
+  color: var(--rc-ok);
+}
+
+/* The FR-57 hint bar above the diagram. */
+.rc-run-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--rc-line);
+  background: color-mix(in srgb, var(--rc-accent) 12%, var(--rc-bg));
+  font-size: calc(12px * var(--rc-text-scale, 1));
+}
+
+/* Legend swatches of the run statuses. */
+.rc-key-survey {
+  border: 2px solid var(--rc-survey);
+}
+
+.rc-key-user {
+  border: 2px solid var(--rc-accent);
+}
+
+.rc-key-marker {
+  border: 2px solid var(--rc-accent);
+  background: color-mix(in srgb, var(--rc-accent) 30%, transparent);
+}
+
+.rc-key-compute {
+  border: 2px solid var(--rc-ok);
+  background: color-mix(in srgb, var(--rc-ok) 30%, transparent);
+}
+
+.rc-key-running {
+  border: 2px solid var(--rc-accent);
+  animation: rc-running-pulse 1.2s ease-in-out infinite;
+}
+
+.rc-key-pruned {
+  border: 2px dashed var(--rc-faint);
+}
+
+.rc-key-untargeted {
+  border: 1px solid var(--rc-faint);
+  opacity: 0.45;
+}
+
+.rc-key-unknown {
+  border: 2px dotted var(--rc-muted);
+}
+
+.rc-key-failed {
+  border: 2px solid var(--rc-error);
+  background: color-mix(in srgb, var(--rc-error) 30%, transparent);
+}
+
+.rc-key-stopped {
+  border: 1px solid var(--rc-faint);
+  background: color-mix(in srgb, var(--rc-faint) 30%, transparent);
+}
+
+.rc-key-stale {
+  border: 1px solid var(--rc-faint);
+  background: repeating-linear-gradient(-45deg, var(--rc-warning) 0 2px, transparent 2px 4px);
+}
+
+.rc-key-saved {
+  border: 1px solid var(--rc-line);
+  border-radius: 7px;
+  background: var(--rc-panel);
+}
+
+.rc-key-survey-region {
+  background: color-mix(in srgb, var(--rc-survey) 35%, transparent);
+}
+
+.rc-diagram:not(.rc-no-survey-region) .rc-survey-backed.rc-match {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--rc-warning) 70%, transparent),
+    0 0 0 7px color-mix(in srgb, var(--rc-survey) 28%, transparent);
 }

@@ -1,0 +1,89 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/sub_recipes/viewer_pyramid.yaml
+
+# Viewer pyramid: a gridded store built into EchogramGL's level-of-detail store.
+#
+#   plan_segments           ping ranges cut on the pyramid's cell boundaries
+#   build_pyramid           one pyramid per segment, in parallel
+#   survey_echogram_store   the segments joined per level, checkpointed
+#
+# Not a processing level: it reshapes the data without changing it. Level 0 is
+# the input as given, and level k averages 2**k columns into one, so an
+# overview reads a small array and a close-up reads the real one.
+#
+# The segment cuts must fall on the coarsest level's cell boundaries, or every
+# coarse level after a cut is shifted. plan_pyramid_segments takes care of it.
+#
+# The store lands in the cache under survey_echogram_store's content address.
+# Find pyramid.zarr there and open it with:
+#
+#   aa-echogram validate <.../pyramid.zarr>
+#   aa-echogram serve --store <.../pyramid.zarr>
+#
+# The three ops come from AA-SI_EchogramGL:
+#   pip install -e <path to>/AA-SI_EchogramGL
+
+recipe:
+  name: "hb1603_viewer_pyramid"
+  description: "Build a gridded Sv store into an EchogramGL pyramid, segment-parallel."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  gridded_sv:
+    type: Dataset
+    description: "Sv on one shared grid with a 1-D vertical coordinate, such as the survey MVBS store."
+  pyramid_range_var:
+    type: str
+    default: "depth"
+    description: >
+      Vertical coordinate of the store. depth suits a gridded product;
+      full-resolution Sv needs echo_range, because depth carries heave.
+  pyramid_levels:
+    type: int
+    default: 8
+    description: "Levels to build, halving the column axis each time. Eight reduce it by 128."
+  pyramid_segment_columns:
+    type: int
+    default: 16384
+    description: >
+      Rough segment size in columns. Each segment is held in memory while it
+      builds, about 1.7 GiB at this size, once per worker.
+  pyramid_aggregation:
+    type: str
+    default: "linear_mean"
+    description: >
+      How columns are merged. linear_mean averages in linear space, right for
+      biomass; max keeps a single strong target a mean would dilute.
+
+steps:
+
+  - id: plan_segments
+    op: plan_pyramid_segments
+    inputs:
+      ds_Sv: ${inputs.gridded_sv}
+    params:
+      levels: ${inputs.pyramid_levels}
+      target_pings: ${inputs.pyramid_segment_columns}
+
+  # One pyramid per segment. Each instance reads only its own columns.
+  - id: build_pyramid
+    op: build_echogram_pyramid
+    map_over: ${plan_segments.ranges}
+    inputs:
+      ds_Sv: ${inputs.gridded_sv}
+    params:
+      ping_range: ${_item}
+      levels: ${inputs.pyramid_levels}
+      range_var: ${inputs.pyramid_range_var}
+      aggregation: ${inputs.pyramid_aggregation}
+
+  # Joins level k of every segment. Nothing is reduced again.
+  - id: survey_echogram_store
+    op: merge_echogram_pyramids
+    collect: ${build_pyramid.pyramid}
+    checkpoint: always
+    inputs:
+      parts: ${build_pyramid.pyramid}
+    params:
+      dim: ping_time

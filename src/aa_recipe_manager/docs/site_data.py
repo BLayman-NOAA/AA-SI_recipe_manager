@@ -2,11 +2,13 @@
 # SPDX-FileCopyrightText: NOAA Fisheries
 """Generate the data files the documentation site is built from.
 
-A manifest lists the recipes the site documents. For each one this writes a
-flow-diagram graph and a Markdown partial holding its Flow, YAML and Notebook
-tabs, and for the registry it writes the op reference payload. Everything goes
-under ``docs/data`` and is committed, so the site build itself needs neither
-the scientific packages nor network access.
+A manifest lists the recipes the site documents. For each full recipe this
+writes the flow-diagram graph the site's viewer draws, and for every entry a
+Markdown partial holding its Flow diagram, YAML and Notebook tabs. A sub-recipe
+is drawn as its full recipe's graph drilled into its include. For the registry
+it writes the op reference payload. Everything goes under ``docs/data`` and is
+committed, so the site build itself needs neither the scientific packages nor
+network access.
 """
 
 from __future__ import annotations
@@ -32,20 +34,12 @@ from aa_recipe_manager.docs.payload import (
     strip_environment,
     unresolved_ops,
 )
-from aa_recipe_manager.docs.recipe_links import (
-    Home,
-    declared_inputs,
-    include_overrides,
-    overview_graph,
-    page_url,
-    recipe_context,
-)
-from aa_recipe_manager.graph import build_recipe_graph, strings_in
+from aa_recipe_manager.graph import build_recipe_graph
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import Recipe
 
-MANIFEST_SCHEMA = 1
+MANIFEST_SCHEMA = 2
 
 
 @dataclass
@@ -62,11 +56,6 @@ class ManifestEntry:
     section: str | None = None
     cruise: str | None = None
     description: str | None = None
-    focus: list[str] | None = None
-    """Steps the diagram shows. The recipe's other steps are drawn as context,
-    for a recipe that repeats another's steps only to reuse their cache."""
-    context: str | None = None
-    """Slug of the recipe that documents the steps left out by ``focus``."""
 
 
 @dataclass
@@ -118,12 +107,6 @@ def load_manifest(path: str | Path) -> list[ManifestEntry]:
             raise ValueError(f"'{entry.slug}': recipe not found: {entry.path}")
         if not (root / entry.page).is_file():
             raise ValueError(f"'{entry.slug}': page not found: {entry.page}")
-        if entry.context is not None and entry.context not in by_slug:
-            raise ValueError(f"'{entry.slug}': unknown context '{entry.context}'")
-        if entry.focus is not None and entry.parent is not None:
-            raise ValueError(
-                f"'{entry.slug}': focus is for full recipes, not sub-recipes"
-            )
         if entry.parent is None:
             continue
         parent = by_slug.get(entry.parent)
@@ -145,8 +128,10 @@ def build_site_data(
 ) -> SiteDataResult:
     """Write every data file the site needs.
 
-    Files under ``partials/`` and ``recipes/`` for recipes the manifest no
-    longer lists are deleted, so the folder always mirrors the manifest.
+    Graphs are written for full recipes only; a sub-recipe's page draws its
+    parent's graph. Files under ``partials/``, ``recipes/`` and
+    ``notebooks/`` that this build does not write are deleted, so the folder
+    always mirrors the manifest.
 
     Args:
         manifest: The site's recipe manifest.
@@ -168,14 +153,9 @@ def build_site_data(
     registry = load_builtin_registry()
 
     recipes = {entry.slug: load_recipe(root / entry.path) for entry in entries}
-    children: dict[str, list[ManifestEntry]] = {}
-    for entry in entries:
-        if entry.parent is not None:
-            children.setdefault(entry.parent, []).append(entry)
-
     graphs = {
         entry.slug: build_recipe_graph(
-            _focused(entry, recipes[entry.slug]),
+            recipes[entry.slug],
             registry,
             slug=entry.slug,
             title=entry.title,
@@ -186,22 +166,20 @@ def build_site_data(
         )
         for entry in entries
     }
-    for entry in entries:
-        context = _context(entry, root, recipes, graphs[entry.slug], by_slug, children)
-        if context is not None:
-            graphs[entry.slug]["context"] = context
-
-    overviews = {
-        slug: overview_graph(
-            recipes[slug],
-            _step_homes(by_slug[slug], recipes, children),
-            slug=f"{slug}-overview",
-            title=by_slug[slug].title,
-            parent_slug=slug,
-            parent_inputs=declared_inputs(root / by_slug[slug].path),
-        )
-        for slug in children
+    includes = {
+        entry.slug: _include_id(entry, root, by_slug, graphs) for entry in entries
     }
+    children: dict[str, dict[str, ManifestEntry]] = {}
+    for entry in entries:
+        if entry.parent is None:
+            continue
+        include = includes[entry.slug]
+        other = children.setdefault(entry.parent, {}).setdefault(include, entry)
+        if other is not entry:
+            raise ValueError(
+                f"'{entry.slug}' and '{other.slug}' both document include "
+                f"'{include}' of '{entry.parent}'"
+            )
 
     notebooks = {
         entry.slug: generate_parent_notebook(recipes[entry.slug], registry)
@@ -213,14 +191,18 @@ def build_site_data(
     for entry in entries:
         notebook_md, note = _notebook_tab(entry, recipes, notebooks)
         yaml_text = (root / entry.path).read_text(encoding="utf-8")
-        overview = overviews.get(entry.slug)
         files[f"partials/{entry.slug}.md"] = _tabs_partial(
-            entry, graphs[entry.slug], yaml_text, notebook_md, note, overview, by_slug
+            entry,
+            graphs[entry.slug],
+            includes[entry.slug],
+            children.get(entry.slug, {}),
+            yaml_text,
+            notebook_md,
+            note,
+            by_slug,
         )
-        files[f"recipes/{entry.slug}.json"] = _dump(graphs[entry.slug])
-        if overview is not None:
-            files[f"recipes/{overview['slug']}.json"] = _dump(overview)
         if entry.parent is None:
+            files[f"recipes/{entry.slug}.json"] = _dump(graphs[entry.slug])
             files[f"notebooks/{entry.slug}.ipynb"] = _notebook_file(
                 notebooks[entry.slug]
             )
@@ -229,7 +211,9 @@ def build_site_data(
     _attach_usage(payload, entries, graphs)
     _drop_local_paths(payload)
     files["ops.json"] = _dump(payload)
-    files["manifest.json"] = _dump(_manifest_document(entries, graphs, by_slug))
+    files["manifest.json"] = _dump(
+        _manifest_document(entries, graphs, includes, by_slug)
+    )
 
     result = SiteDataResult(
         counts={
@@ -262,91 +246,49 @@ def _generated_files(out_dir: Path) -> list[Path]:
     ]
 
 
-def _focused(entry: ManifestEntry, recipe: Recipe) -> Recipe:
-    """The part of a recipe its diagram shows: every step, or its ``focus``."""
-    if not entry.focus:
-        return recipe
-    ids = {step.id for step in recipe.steps}
-    missing = sorted(set(entry.focus) - ids)
-    if missing:
-        raise ValueError(f"'{entry.slug}': focus names unknown steps {missing}")
-    steps = [step for step in recipe.steps if step.id in entry.focus]
-    outputs = {
-        name: decl
-        for name, decl in (recipe.outputs or {}).items()
-        if decl.step_id in entry.focus
-    }
-    text = " ".join(
-        value
-        for step in steps
-        for part in (step.inputs, step.params, step.map_over, step.collect)
-        for value in strings_in(part)
-    )
-    inputs = {
-        name: decl
-        for name, decl in recipe.inputs.items()
-        if "${inputs." + name + "}" in text
-    }
-    return recipe.model_copy(
-        update={"steps": steps, "outputs": outputs or None, "inputs": inputs}
-    )
+def page_url(page: str | None) -> str | None:
+    """The site URL of a docs page, relative to the site root."""
+    if page is None:
+        return None
+    path = page[:-3] if page.endswith(".md") else page
+    if path == "index":
+        return ""
+    if path.endswith("/index"):
+        return path[: -len("index")]
+    return path + "/"
 
 
-def _home(entry: ManifestEntry) -> Home:
-    return Home(entry.slug, entry.title, page_url(entry.page), entry.level, entry.page)
-
-
-def _step_homes(
-    parent: ManifestEntry,
-    recipes: dict[str, Recipe],
-    children: dict[str, list[ManifestEntry]],
-) -> dict[str, Home]:
-    """Where each step of a full recipe is documented.
-
-    A step in an included file belongs to the manifest entry for that file,
-    matched by its step ids. Anything else is the full recipe's own.
-    """
-    homes = {step.id: _home(parent) for step in recipes[parent.slug].steps}
-    for block in recipes[parent.slug].include_blocks:
-        child = next(
-            (
-                c
-                for c in children.get(parent.slug, [])
-                if {s.id for s in recipes[c.slug].steps} == set(block.step_ids)
-            ),
-            None,
-        )
-        home = _home(child) if child else Home(None, block.source, None)
-        for step_id in block.step_ids:
-            homes[step_id] = home
-    return homes
-
-
-def _context(
+def _include_id(
     entry: ManifestEntry,
     root: Path,
-    recipes: dict[str, Recipe],
-    graph: dict[str, Any],
     by_slug: dict[str, ManifestEntry],
-    children: dict[str, list[ManifestEntry]],
-) -> dict[str, Any] | None:
-    """What surrounds a recipe's diagram in the full recipe it runs in."""
-    if entry.parent is not None:
-        parent = by_slug[entry.parent]
-        return recipe_context(
-            graph,
-            recipes[parent.slug],
-            _step_homes(parent, recipes, children),
-            include_overrides(root / parent.path, root / entry.path),
+    graphs: dict[str, dict[str, Any]],
+) -> str | None:
+    """The id of this entry's include in its root graph, or None for a root.
+
+    The include of the entry's own file is preferred. Failing that, the one
+    holding exactly the entry's steps: step ids are unique across a recipe,
+    and a file that only includes another is listed after the inner one.
+
+    Raises:
+        ValueError: The parent includes no file with this entry's steps.
+    """
+    if entry.parent is None:
+        return None
+    graph = graphs[entry.parent]
+    parent_dir = (root / by_slug[entry.parent].path).parent
+    target = (root / entry.path).resolve()
+    for include in graph["includes"]:
+        if (parent_dir / include["source"]).resolve() == target:
+            return include["id"]
+    step_ids = {n["id"] for n in graphs[entry.slug]["nodes"] if n["kind"] == "step"}
+    ids = [inc["id"] for inc in graph["includes"] if set(inc["steps"]) == step_ids]
+    if not ids:
+        raise ValueError(
+            f"'{entry.slug}': parent '{entry.parent}' includes no file with steps "
+            f"{sorted(step_ids)}"
         )
-    if entry.focus:
-        documented_by = by_slug.get(entry.context, entry) if entry.context else entry
-        homes = {
-            step.id: _home(entry if step.id in entry.focus else documented_by)
-            for step in recipes[entry.slug].steps
-        }
-        return recipe_context(graph, recipes[entry.slug], homes, {})
-    return None
+    return ids[-1]
 
 
 def _notebook_file(nb: Any) -> str:
@@ -428,20 +370,8 @@ def _notebook_tab(
     if entry.parent is None:
         return notebook_to_markdown(notebooks[entry.slug], heading_shift=2), None
 
-    # The parent records each include by file name and step ids. Step ids are
-    # unique across a recipe, so they identify the include even when two
-    # included files share a name.
-    step_ids = {step.id for step in recipes[entry.slug].steps}
-    blocks = [
-        b for b in recipes[entry.parent].include_blocks if set(b.step_ids) == step_ids
-    ]
-    if not blocks:
-        raise ValueError(
-            f"'{entry.slug}': parent '{entry.parent}' includes no file with steps "
-            f"{sorted(step_ids)}"
-        )
-
-    sliced = slice_steps(notebooks[entry.parent], blocks[0].step_ids)
+    step_ids = [step.id for step in recipes[entry.slug].steps]
+    sliced = slice_steps(notebooks[entry.parent], step_ids)
     note = None
     if sliced.shared_with:
         shared = ", ".join(f"`{step}`" for step in sliced.shared_with)
@@ -455,48 +385,65 @@ def _notebook_tab(
 def _tabs_partial(
     entry: ManifestEntry,
     graph: dict[str, Any],
+    include: str | None,
+    children: dict[str, ManifestEntry],
     yaml_text: str,
     notebook_md: str,
     note: str | None,
-    overview: dict[str, Any] | None,
     by_slug: dict[str, ManifestEntry],
 ) -> str:
-    """The tabs a page pulls in with a snippet.
+    """The tabs a page pulls in with a snippet: Flow diagram, YAML, Notebook.
 
-    Every recipe gets Flow diagram, YAML and Notebook tabs. A full recipe
-    that includes others also gets a Levels tab first, drawing one box per
-    included file.
+    Args:
+        entry: The recipe the tabs document.
+        graph: The recipe's own graph, which the fallback list is drawn from.
+        include: The entry's include id in its root graph, None for a root.
+        children: For a full recipe, its sub-recipe entries by include id.
+        yaml_text: The recipe file's text.
+        notebook_md: The Notebook tab's Markdown.
+        note: A note shown above the notebook cells.
+        by_slug: Every manifest entry by slug.
     """
     page_dir = posixpath.dirname(entry.page) or "."
 
     def link(target: str) -> str:
         return posixpath.relpath(target, page_dir)
 
-    tabs: list[tuple[str, list[str]]] = []
-    if overview is not None:
-        levels = []
-        for node in overview["nodes"]:
-            if node["kind"] != "level":
-                continue
-            if node["doc"]:
-                levels.append(f"- [{node['label']}]({link(node['doc'])})")
-            else:
-                levels.append(f"- `{node['label']}`")
-        tabs.append(("Levels", _flow_div(overview["slug"], levels)))
-
-    steps = []
+    lines = []
+    # A full recipe with documented sub-recipes lists each top level include
+    # once, linked to its page, as the viewer draws it collapsed.
+    top = {
+        step: inc
+        for inc in (graph["includes"] if children else [])
+        if inc["parent"] is None
+        for step in inc["steps"]
+    }
+    listed = set()
     for node in graph["nodes"]:
         if node["kind"] != "step":
             continue
-        op = node["op"]
-        if node["custom"]:
-            label = f"custom `{node['callable_path']}`"
-        else:
-            label = f"[`{op}`]({link('ops/' + op + '.md')})"
-        steps.append(f"- `{node['id']}`: {label}")
-    tabs.append(
-        ("All steps" if overview else "Flow diagram", _flow_div(entry.slug, steps))
-    )
+        inc = top.get(node["id"])
+        if inc is None:
+            if node["custom"]:
+                label = f"custom `{node['callable_path']}`"
+            else:
+                label = f"[`{node['op']}`]({link('ops/' + node['op'] + '.md')})"
+            lines.append(f"- `{node['id']}`: {label}")
+        elif inc["id"] not in listed:
+            listed.add(inc["id"])
+            child = children.get(inc["id"])
+            if child is None:
+                lines.append(f"- `{inc['title']}`")
+            elif child.page == entry.page:
+                lines.append(f"- {child.title}")
+            else:
+                lines.append(f"- [{child.title}]({link(child.page)})")
+    tabs = [
+        (
+            "Flow diagram",
+            _viewer_div(entry.parent or entry.slug, entry.slug, include, lines),
+        )
+    ]
 
     fence = "```"
     while fence in yaml_text:
@@ -546,10 +493,14 @@ def _tabs_partial(
     return "\n".join(parts) + "\n"
 
 
-def _flow_div(slug: str, fallback: list[str]) -> list[str]:
-    """A flow diagram placeholder, with a plain list shown until it draws."""
+def _viewer_div(
+    root: str, slug: str, drill: str | None, fallback: list[str]
+) -> list[str]:
+    """The viewer placeholder, with a plain list shown until it draws."""
+    drill_attr = f' data-drill="{drill}"' if drill else ""
     return [
-        f'<div class="recipe-flow" data-recipe="{slug}" markdown>',
+        f'<div class="recipe-viewer" data-recipe="{root}" data-slug="{slug}"'
+        f"{drill_attr} markdown>",
         "",
         *fallback,
         "",
@@ -599,16 +550,19 @@ def _attach_usage(
 def _manifest_document(
     entries: list[ManifestEntry],
     graphs: dict[str, dict[str, Any]],
+    includes: dict[str, str | None],
     by_slug: dict[str, ManifestEntry],
 ) -> dict[str, Any]:
-    return {
-        "schema": MANIFEST_SCHEMA,
-        "recipes": [
+    recipes = []
+    for entry in entries:
+        root = entry.parent or entry.slug
+        recipes.append(
             {
                 "slug": entry.slug,
                 "title": entry.title,
                 "path": entry.path,
                 "page": entry.page,
+                "url": page_url(entry.page),
                 "parent": entry.parent,
                 "level": entry.level,
                 "section": entry.section,
@@ -617,10 +571,12 @@ def _manifest_document(
                 "steps": sum(
                     1 for n in graphs[entry.slug]["nodes"] if n["kind"] == "step"
                 ),
+                "root": root,
+                "include": includes[entry.slug],
+                "recipe_dir": posixpath.dirname(by_slug[root].path),
             }
-            for entry in entries
-        ],
-    }
+        )
+    return {"schema": MANIFEST_SCHEMA, "recipes": recipes}
 
 
 def _dump(document: dict[str, Any]) -> str:

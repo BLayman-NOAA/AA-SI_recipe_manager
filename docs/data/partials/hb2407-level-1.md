@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb2407-level-1" markdown>
+    <div class="recipe-viewer" data-recipe="hb2407-herring-per-file" data-slug="hb2407-level-1" data-drill="inc:sub_recipes/processing_lvl_1_per_file.yaml" markdown>
 
     - `read_raw`: [`read_raw_files`](../ops/read_raw_files.md)
     - `combine_raw`: [`combine_raw_files`](../ops/combine_raw_files.md)
@@ -12,23 +12,17 @@
     [Download `processing_lvl_1_per_file.yaml`](../recipes/HB2407/sub_recipes/processing_lvl_1_per_file.yaml)
 
     ```yaml
-    # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/sub_recipes/
-    # processing_lvl_1_per_file.yaml. Its first two steps moved to processing_lvl_0_calibration.yaml
-    # and extract_cal_params moved to the top of processing_lvl_2_per_file.yaml, so HB2407 follows the
-    # same levels as HB1603.
+    # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/
+    # sub_recipes/processing_lvl_1_per_file.yaml. Its first two steps moved to level
+    # 0 and extract_cal_params to level 2, to match the HB1603 levels.
 
-    # Processing level 1 (per-file): raw ingest.
+    # Processing level 1 (per file): raw ingest.
     #
     #   read_raw -> combine_raw
     #
-    # Each raw file is opened and materialized as its own instance, and the survey
-    # stays split until the fan-in in processing_lvl_2_per_file.yaml, which must be
-    # included immediately after this level.
-    #
-    # Per-file fan-out starts here. Every step from here through apply_mask in
-    # processing_lvl_2_per_file.yaml shares this map_over source, so each raw file
-    # runs the whole chain as its own instance under its own content-addressed
-    # hash. Adding a file to the survey later runs the chain for that file only.
+    # The per-file fan-out starts here. Each raw file runs every step through
+    # apply_mask in level 2 as its own cached instance, so adding a file later runs
+    # only that file. Include processing_lvl_2_per_file.yaml immediately after this.
 
     recipe:
       name: "processing_lvl_1_per_file"
@@ -45,16 +39,13 @@
         type: int
         default: 10000
         description: >
-          Chunk length along ping_time for each file's EchoData (and therefore its
-          zarr checkpoint). A single raw file holds far fewer pings than this, so
-          the default writes each file's checkpoint as one chunk, which is the
-          cheapest shape for a gs://-backed cache. Lower it if a per-file chunk
-          does not fit in memory.
+          Ping-time chunk length of each file's EchoData and checkpoint. The default
+          keeps each file in one chunk; lower it if a file does not fit in memory.
 
     steps:
 
-      # checkpoint: never, because the output is an exe_temp store path that is
-      # deleted at the end of the run and would dangle if cached.
+      # Never checkpointed: its output is a temporary store path deleted at the end
+      # of the run.
       - id: read_raw
         op: read_raw_files
         map_over: ${initial_setup.raw_file_paths}
@@ -70,8 +61,7 @@
           include_bot: false
           intermediate_format: "zarr"
 
-      # Materializes this file's store as an EchoData object. Not a fan-in:
-      # combine_raw_files takes a single-file list and simply opens it.
+      # Opens this file's store as an EchoData object. One file only, so not a fan-in.
       - id: combine_raw
         op: combine_raw_files
         map_over: ${initial_setup.raw_file_paths}

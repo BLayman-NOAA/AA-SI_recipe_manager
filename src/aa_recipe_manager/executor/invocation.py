@@ -321,8 +321,8 @@ def build_kwargs(
             if port_decl is not None and not port_decl.required:
                 continue
             raise KeyError(
-                f"step {node.step.id!r} input {port_name!r} references an "
-                f"unknown pipeline input"
+                f"step {node.step.id!r} input {port_name!r} needs {raw_value}, "
+                "which has no value: set it in the run config's inputs or with --input"
             )
         kwargs[callable_arg] = value
 
@@ -341,8 +341,8 @@ def build_kwargs(
             if param_decl is not None and not param_decl.required:
                 continue
             raise KeyError(
-                f"step {node.step.id!r} param {param_name!r} references an "
-                f"unknown pipeline input"
+                f"step {node.step.id!r} param {param_name!r} needs {raw_value}, "
+                "which has no value: set it in the run config's inputs or with --input"
             )
         kwargs[callable_arg] = value
 

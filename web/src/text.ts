@@ -31,6 +31,16 @@ export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
+/** Names joined as "a, b and c". */
+export function andList(names: string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join('');
+}
+
+/** Seconds as "77 s", or "1.2 s" under ten. */
+export function secondsText(seconds: number): string {
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+}
+
 /** Text with regular expression characters escaped, for use inside a RegExp. */
 export function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

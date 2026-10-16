@@ -1,6 +1,6 @@
 /** Find the drill path that shows a step or an include, and select steps through it. */
 import { findInclude, findStep, type Graph } from '../api/graph';
-import { useView } from '../state/view';
+import type { ViewStore } from '../state/view';
 
 /** An include and the includes around it, outermost first; empty for null. */
 function parentChain(graph: Graph, includeId: string | null): string[] {
@@ -37,9 +37,9 @@ export function includePath(graph: Graph, includeId: string): string[] {
   return parentChain(graph, includeId);
 }
 
-/** Select a step, drilling to the sub-recipe that shows it. */
-export function selectStep(graph: Graph | null | undefined, stepId: string): void {
-  const view = useView.getState();
+/** Select a step in a view store, drilling to the sub-recipe that shows it. */
+export function selectStep(store: ViewStore, graph: Graph | null | undefined, stepId: string): void {
+  const view = store.getState();
   if (graph) {
     const drill = includeChain(graph, stepId);
     if (drill.join('>') !== view.drill.join('>')) view.setDrill(drill);

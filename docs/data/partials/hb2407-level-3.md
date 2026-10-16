@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb2407-level-3" markdown>
+    <div class="recipe-viewer" data-recipe="hb2407-herring-per-file" data-slug="hb2407-level-3" data-drill="inc:sub_recipes/processing_lvl_3.yaml" markdown>
 
     - `mask_sparse`: [`mask_sparse_bins`](../ops/mask_sparse_bins.md)
     - `rechunk_before_mvbs`: [`rechunk_dataset`](../ops/rechunk_dataset.md)
@@ -48,10 +48,8 @@
         type: int
         default: 1000
         description: >
-          Ping-time chunk size applied before compute_mvbs, so it runs in
-          dask-parallel chunks instead of as one in-memory block. mask_sparse_bins
-          materializes Sv eagerly, so chunking has to be re-established after it by
-          a standalone rechunk step.
+          Ping-time chunk size before compute_mvbs, so it runs in dask chunks. A
+          separate rechunk step sets it, since mask_sparse_bins loads Sv into memory.
 
     steps:
 

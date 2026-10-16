@@ -13,36 +13,6 @@
   },
   "nodes": [
     {
-      "id": "in:single_channel_data",
-      "kind": "input",
-      "label": "inputs.single_channel_data",
-      "type": "dict",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "The standardized channels the mapping was built from, as returned on either phase's single_channel_data output. Read from the outputs folder when unset."
-    },
-    {
-      "id": "in:mapping_dict",
-      "kind": "input",
-      "label": "inputs.mapping_dict",
-      "type": "dict",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "Each raw file's channels mapped to their calibration key, from phase 2's mapping_dict output. Read from the outputs folder when unset."
-    },
-    {
-      "id": "in:provenance",
-      "kind": "input",
-      "label": "inputs.provenance",
-      "type": "dict",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "Phase 2's provenance output. Read from the outputs folder when unset."
-    },
-    {
       "id": "in:archive_dir",
       "kind": "input",
       "label": "inputs.archive_dir",
@@ -50,17 +20,8 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": "Directory the calibration is archived into. A local path, or a gs:// URL for a remote client that wants the outputs kept on the bucket."
-    },
-    {
-      "id": "in:output_base",
-      "kind": "input",
-      "label": "inputs.output_base",
-      "type": "path",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "Calibration outputs folder to read anything left unset from. Defaults to the folder this run's own outputs directory holds, which is what a local run straight after phase 2 wants. Set it to archive the outputs of a run that happened somewhere else."
+      "description": "Directory to archive the calibration into, a local path or a gs:// URL.",
+      "declared_in": "save_calibration.yaml"
     },
     {
       "id": "in:calibration_outputs",
@@ -70,7 +31,19 @@
       "declared": true,
       "required": false,
       "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder the earlier phases wrote to. Only consulted when an input below is left unset. Keep it the same as in the other two phase recipes."
+      "description": "Subdirectory under the outputs folder the earlier phases wrote to. Keep it the same as in the other two phase recipes.",
+      "declared_in": "save_calibration.yaml"
+    },
+    {
+      "id": "in:output_base",
+      "kind": "input",
+      "label": "inputs.output_base",
+      "type": "path",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Calibration outputs folder to read unset inputs from. Defaults to this run's own; set it to archive a run made elsewhere.",
+      "declared_in": "save_calibration.yaml"
     },
     {
       "id": "in:overwrite",
@@ -80,7 +53,41 @@
       "declared": true,
       "required": false,
       "default": false,
-      "description": "Replace an archive already in archive_dir, clearing Standardized_Reports/ first."
+      "description": "Replace an archive already in archive_dir, clearing Standardized_Reports/ first.",
+      "declared_in": "save_calibration.yaml"
+    },
+    {
+      "id": "in:single_channel_data",
+      "kind": "input",
+      "label": "inputs.single_channel_data",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Phase 2's single_channel_data output. Read from the outputs folder when unset.",
+      "declared_in": "save_calibration.yaml"
+    },
+    {
+      "id": "in:mapping_dict",
+      "kind": "input",
+      "label": "inputs.mapping_dict",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Phase 2's mapping_dict output. Read from the outputs folder when unset.",
+      "declared_in": "save_calibration.yaml"
+    },
+    {
+      "id": "in:provenance",
+      "kind": "input",
+      "label": "inputs.provenance",
+      "type": "dict",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Phase 2's provenance output. Read from the outputs folder when unset.",
+      "declared_in": "save_calibration.yaml"
     },
     {
       "id": "save_calibration",

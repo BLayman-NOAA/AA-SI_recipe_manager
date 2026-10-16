@@ -1,0 +1,319 @@
+/* The docs site viewer. main.tsx imports this file before theme.css and the
+   diagram's CSS, and MkDocs loads the bundle after Material's stylesheet, so a
+   rule here of the same specificity as a Material rule wins, and one of the
+   same specificity as a client rule loses. */
+
+/* The viewer root: the application's body and element rules (theme/app.css),
+   scoped to the viewer. */
+
+.rc-viewer {
+  display: flex;
+  flex-direction: column;
+  /* Material scales the root font to 125 to 150 percent. */
+  height: min(48rem, 82vh);
+  min-height: 20rem;
+  overflow: hidden;
+  resize: vertical;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: var(--rc-bg);
+  color: var(--rc-fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: normal;
+  line-height: normal;
+  letter-spacing: normal;
+  text-align: left;
+  overflow-wrap: normal;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  container-type: inline-size;
+}
+
+.rc-viewer:focus {
+  outline: none;
+}
+
+.rc-viewer *,
+.rc-viewer *::before,
+.rc-viewer *::after {
+  box-sizing: border-box;
+}
+
+:where(.rc-viewer) button,
+:where(.rc-viewer) input,
+:where(.rc-viewer) select,
+:where(.rc-viewer) textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Material resets buttons, inputs and tables page wide; the client expects the
+   browser's own. */
+
+:where(.rc-viewer) button {
+  margin: revert;
+  padding: revert;
+  border: revert;
+  background: revert;
+}
+
+:where(.rc-viewer) input {
+  border: revert;
+  outline: revert;
+}
+
+:where(.rc-viewer) table {
+  border-collapse: revert;
+  border-spacing: revert;
+}
+
+:where(.rc-viewer) :is(td, th) {
+  font-weight: revert;
+  vertical-align: revert;
+}
+
+/* Elements Material styles under .md-typeset. */
+
+.rc-viewer a {
+  color: var(--rc-accent);
+  text-decoration: underline;
+  word-break: normal;
+}
+
+.rc-viewer a:hover,
+.rc-viewer a:focus {
+  color: var(--rc-accent);
+}
+
+.rc-viewer code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  word-break: normal;
+}
+
+.rc-viewer pre {
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  line-height: normal;
+}
+
+.rc-viewer h3 {
+  line-height: normal;
+}
+
+.rc-viewer svg {
+  max-width: none;
+}
+
+/* Material rules more specific than the client's, restated with the client's
+   values. */
+
+.rc-viewer .rc-yaml {
+  margin: 0;
+  color: var(--rc-yaml-fg);
+}
+
+/* Every client list is unstyled; Material indents and bullets lists, with
+   [dir=ltr] .md-typeset ul (0,2,1) setting margin-left and
+   .md-typeset ul:not([hidden]) (0,2,1) display: flow-root; these are (0,2,2). */
+
+.md-typeset div.rc-viewer :is(ul, ol) {
+  display: block;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rc-viewer.rc-viewer .rc-box-rows {
+  margin-top: 4px;
+}
+
+.md-typeset div.rc-viewer :is(ul, ol) li {
+  margin: 0;
+}
+
+.md-typeset .rc-viewer .rc-row-details {
+  display: block;
+  margin: 0;
+  padding: 3px 0;
+  overflow: visible;
+  border: none;
+  border-bottom: 1px solid var(--rc-line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-size: inherit;
+}
+
+.md-typeset .rc-viewer .rc-row-details > :not(summary) {
+  margin: 4px 0 6px 14px;
+}
+
+.md-typeset .rc-viewer .rc-row-details > summary {
+  display: list-item;
+  position: static;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-weight: inherit;
+}
+
+.md-typeset .rc-viewer .rc-row-details > summary::before,
+.md-typeset .rc-viewer .rc-row-details > summary::after {
+  content: none;
+}
+
+.md-typeset .rc-viewer .rc-row-details > summary::-webkit-details-marker {
+  display: revert;
+}
+
+.md-typeset .rc-viewer summary code {
+  box-shadow: none;
+}
+
+/* Layout */
+
+.rc-viewer-root {
+  margin: 1em 0;
+}
+
+.rc-viewer-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--rc-muted);
+}
+
+.rc-viewer-toolbar select {
+  width: auto;
+  color: var(--rc-fg);
+}
+
+.rc-viewer-toolbar .rc-button[aria-pressed='true'] {
+  border-color: var(--rc-accent);
+  background: color-mix(in srgb, var(--rc-accent) 18%, var(--rc-raised));
+}
+
+.rc-viewer-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.rc-viewer-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The diagram and the YAML share the main area; the YAML covers the diagram. */
+.rc-viewer-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.rc-viewer-yaml {
+  display: flex;
+  flex-direction: column;
+  background: var(--rc-bg);
+}
+
+.rc-viewer-switch {
+  display: inline-flex;
+}
+
+.rc-viewer-switch .rc-button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.rc-viewer-switch .rc-button:last-child {
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.rc-viewer-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 340px;
+  min-height: 0;
+  border-left: 1px solid var(--rc-line);
+  background: var(--rc-bg);
+}
+
+.rc-viewer-side-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.rc-viewer-side-title {
+  font-weight: 600;
+}
+
+.rc-viewer-side-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rc-viewer .rc-viewer-link {
+  font-size: 12px;
+}
+
+@container (max-width: 700px) {
+  .rc-viewer-body {
+    flex-direction: column;
+  }
+
+  .rc-viewer-side {
+    width: auto;
+    height: 45%;
+    border-top: 1px solid var(--rc-line);
+    border-left: none;
+  }
+}
+
+/* Full screen: the page overlay, also inside the browser's full screen. The
+   height a reader dragged to is an inline style, hence !important. */
+
+.rc-viewer.rc-viewer-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: auto !important;
+  height: auto !important;
+  border: none;
+  border-radius: 0;
+  resize: none;
+}
+
+html.rc-viewer-no-scroll {
+  overflow: hidden;
+}
+
+/* The container: its step list shows until the viewer draws, and again if it fails. */
+
+.recipe-viewer[data-rv-state='ready'] > ul {
+  display: none;
+}
+
+.rc-viewer-notice {
+  font-style: italic;
+}

@@ -70,12 +70,13 @@ markdown_extensions:
         - docs
       check_paths: true
 
+# The diagram viewer is built from web/ by `npm run build:viewer`.
 extra_javascript:
-  - https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js
-  - assets/recipe-flow.js
+  - path: assets/viewer/viewer.js
+    type: module
 
 extra_css:
-  - assets/recipe-flow.css
+  - assets/viewer/viewer.css
   - assets/extra.css
 
 nav:
@@ -98,6 +99,7 @@ nav:
       - Level 4, machine learning: levels/level-4.md
       - Level 5, analysis products: levels/level-5.md
       - HB1603 dive analysis: levels/hb1603-dive-analysis.md
+      - HB1603 survey echogram pyramid: levels/hb1603-survey-echogram-pyramid.md
       - HB2407 herring, per file: levels/hb2407-herring-per-file.md
   - Calibration:
       - calibration/index.md

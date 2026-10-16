@@ -1,0 +1,106 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/sub_recipes/processing_lvl_3_viewer.yaml
+
+# Processing level 3 (viewer): sparse masking and MVBS for the whole survey.
+#
+#   [per file]  mask_sparse_bins -> compute_mvbs (pinned depth grid)
+#   [fan-in]    merge every file -> rechunk -> the survey MVBS store
+#
+# The first two steps continue the per-file chain from level 2b, so include
+# this file directly after it.
+#
+# The pyramid needs one vertical axis for the whole survey, and HB1603's
+# full-resolution Sv has none. compute_mvbs bins samples by their depth, and a
+# pinned grid_max_depth gives every file the same axis, so the files merge
+# cleanly.
+#
+# The default grid is 2 m by 10 s, the grid dive_analysis.yaml clusters on,
+# so its results line up cell for cell. A context-only store can be much
+# coarser, for example 10 m by 30 s.
+
+recipe:
+  name: "hb1603_processing_lvl_3_viewer"
+  description: "Per-file sparse masking and MVBS on a pinned depth grid, fanned in to one survey-wide store."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  range_bin:
+    type: str
+    default: "2m"
+    description: "Depth bin of the viewer grid. 2m matches the dive analysis."
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: "Ping-time bin of the viewer grid."
+  range_var:
+    type: str
+    default: "depth"
+    description: >
+      Variable the bins are built on. Leave it on depth: it gives every file
+      the same grid, and lets the store be layered with the analysis store.
+  grid_max_depth:
+    type: str
+    default: "1810m"
+    description: >
+      Deepest depth the bins cover, pinned so every file shares one axis.
+      It must clear the crop plus the transducer depth; deeper samples are
+      dropped.
+  nan_threshold:
+    type: float
+    default: .99
+    description: >
+      Fraction of a bin that may be NaN before the bin is dropped, so a single
+      noisy sample is not drawn as a speckle.
+  viewer_chunk_ping_time:
+    type: int
+    default: 2048
+    description: "Ping-time chunk of the survey MVBS store, which the pyramid build reads in segments."
+
+steps:
+
+  - id: viewer_mask_sparse
+    op: mask_sparse_bins
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      nan_threshold: ${inputs.nan_threshold}
+
+  # Checkpointed, so an interrupted run resumes from the files it finished.
+  - id: viewer_file_mvbs
+    op: compute_mvbs
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${viewer_mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.grid_max_depth}
+
+  # Fan-in: safe because every file shares one depth axis
+
+  # A file boundary inside a time bin makes both files emit that bin, so
+  # duplicates are averaged. Gaps in the recording are not filled.
+  # Not checkpointed: the rechunk below stores the result.
+  - id: merge_viewer_mvbs
+    op: merge_datasets
+    collect: ${viewer_file_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${viewer_file_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"
+      on_duplicate: "mean"
+
+  - id: rechunk_viewer_mvbs
+    op: rechunk_dataset
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_viewer_mvbs.merged}
+    params:
+      ping_time_chunk: ${inputs.viewer_chunk_ping_time}

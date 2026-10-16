@@ -3,6 +3,10 @@
     "keyed": "5f8c1c2d1f0beb66071086099f823ebc9f9946139caf29c2c40ced6058b6e5a0",
     "plain": "0b1371ea7c542be6abb724c436f28026039a95fdacfa68b6c1f7a91d33f03778"
   },
+  "failing.yaml": {
+    "blow": "03d22f43bab281b6e3374a924c5ad648553a98945011d2cd9456cac0df577925",
+    "start": "0b1371ea7c542be6abb724c436f28026039a95fdacfa68b6c1f7a91d33f03778"
+  },
   "flat.yaml": {
     "bump": "7518d8a313d155855549a5024e94cc8800eb73aa07b12f2c1ae76bae9331af1e",
     "scaled": "218b8b35c31b7e4d02936047ba0d967731b739598e7075373b26834247f96adf",
@@ -13,6 +17,15 @@
     "proc": "6bb212789858fe6f85835b36f5b109ee50bb3e7fc903bce10968e2bfc0887035",
     "proc2": "3ebdec3a555a1a3873737164adbdef6e2e19f594ed90cdfbab6e313158f60c17",
     "seg": "955f7c57eac430bdbee2616f55ddb4d49bb1fae0203c2134f67ca78a0495e741"
+  },
+  "paths.yaml": {
+    "bump": "759961f57d4f8336db659e52d3bc5a42c31f9fa63eb5f5ecc1578d406e403994",
+    "start": "9e99e0a4bb344d98cc8594f3f6ab17ddbfa45950a6c2eac19d3bc25e85a909ad"
+  },
+  "slow.yaml": {
+    "after": "dfe3ad663ad28b9385ffcbf914284b15ace3b6217ea5cee5aead1ca7fc3407ee",
+    "slow": "07dc925548249dbea6d61bb23ea1336a01dee86ea29fb1c41cf0d50c1506396a",
+    "start": "0b1371ea7c542be6abb724c436f28026039a95fdacfa68b6c1f7a91d33f03778"
   },
   "with_sub.yaml": {
     "chain_inc": "5d91ebd25fdd20f3217c575d01284f34c41bc153974efa0c07c80b1769905b64",

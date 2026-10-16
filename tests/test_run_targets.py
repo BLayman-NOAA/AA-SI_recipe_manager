@@ -415,6 +415,22 @@ def test_cli_run_to_and_only(cli_runner, tmp_path, monkeypatch):
     assert "Traceback" not in missing.output
 
 
+def test_cli_run_only_on_a_chain_member(cli_runner, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parent))
+    recipe = FIXTURES / "mapped.yaml"
+    cache = tmp_path / "cache"
+    args = ["run", str(recipe), "--user-cache-dir", str(cache)]
+    api.execute(recipe, user_cache_dir=cache, targets=["seg"])
+    refused = cli_runner.invoke(main, [*args, "--to", "proc2", "--only"])
+    assert refused.exit_code == 1
+    assert "upstream step 'proc' is not cached" in refused.output
+
+    api.execute(recipe, user_cache_dir=cache, targets=["proc"])
+    accepted = cli_runner.invoke(main, [*args, "--to", "proc2", "--only"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Targets: proc2 (run only)" in accepted.output
+
+
 def _goal_inside_chain_steps():
     """side, seg, then a chain a -> leaf, b where leaf is a goal and b reads side.
 

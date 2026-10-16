@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb2407-level-4" markdown>
+    <div class="recipe-viewer" data-recipe="hb2407-herring-per-file" data-slug="hb2407-level-4" data-drill="inc:sub_recipes/processing_lvl_4.yaml" markdown>
 
     - `reshape_ml`: [`reshape_for_ml`](../ops/reshape_for_ml.md)
     - `add_aux_features`: [`add_auxiliary_features`](../ops/add_auxiliary_features.md)
@@ -39,27 +39,22 @@
         type: echodata
         required: false
         description: >
-          EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML
-          features. Only needed when seafloor_depth below is not wired, and not at
-          all for the features list this recipe currently uses.
+          EchoData for the 'seafloor_depth' and 'altitude' features, used only when
+          seafloor_depth below is not wired. This recipe's features do not need it.
       seafloor_depth:
         type: dataarray
         required: false
         description: >
-          Pre-detected seafloor line, 1-D over ping_time, wired from a
-          detect_seafloor step. Takes precedence over echodata for the
-          'seafloor_depth' and 'altitude' features, so the ML features use the same
-          line the masking stack used. In a per-file pipeline, wire a merge_datasets
-          step that collects the per-file lines rather than the mapped step itself.
+          Seafloor line over ping_time from a detect_seafloor step, preferred over
+          echodata for the 'seafloor_depth' and 'altitude' features. In a per-file
+          pipeline, wire a merge_datasets step that collects the per-file lines.
       overlay_line_var:
         type: str
         default: "overlay_line"
         description: "Line variable to overlay on the clustering report plot."
       sv_clean_unmasked:
         type: dataset
-        description: >
-          Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
-          and cluster echogram plots.
+        description: "Pre-sparse-mask Sv, the backdrop and ping reference for the ML and cluster plots."
       cell_stats_sv:
         type: dataset
         description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
@@ -73,14 +68,10 @@
         description: "Deepest depth in meters shown by the ML and clustering echograms."
       time_min:
         type: str
-        description: >
-          Start of the window shown by the ML and clustering echograms, as a UTC
-          timestamp. Omit to start at the first ping.
+        description: "Start of the ML and clustering echograms, UTC. Omit to start at the first ping."
       time_max:
         type: str
-        description: >
-          End of the window shown by the ML and clustering echograms, as a UTC
-          timestamp. Omit to run through the last ping.
+        description: "End of the ML and clustering echograms, UTC. Omit to run to the last ping."
       x_axis_units:
         type: str
         default: "datetime"
@@ -94,20 +85,15 @@
       hdbscan_min_cluster_size_fraction:
         type: float
         default: 0.001
-        description: >
-          Smallest cluster HDBSCAN will keep, as a fraction of the sampled points.
+        description: "Smallest cluster HDBSCAN keeps, as a fraction of the sampled points."
       hdbscan_min_samples:
         type: int
         default: 7
-        description: >
-          Neighbourhood size HDBSCAN uses to judge density. Higher values leave
-          more points unclustered as noise.
+        description: "Neighbourhood size for judging density. Higher leaves more points as noise."
       hdbscan_cluster_selection_method:
         type: str
         default: "eom"
-        description: >
-          How clusters are drawn from the condensed tree: 'eom' for excess of mass,
-          'leaf' for the finest-grained leaves.
+        description: "How clusters are chosen: 'eom' for excess of mass, 'leaf' for the finest leaves."
 
     steps:
 
@@ -197,8 +183,7 @@
         params:
           dataset_name: "ml_dataset"
           ml_result_name: "hdbscan_results"
-          # [min_depth, max_depth]. time_min and time_max below window the plot
-          # horizontally, so the ping slots are left off.
+          # [min_depth, max_depth]; time_min and time_max set the horizontal window.
           plot_window:
             - ${inputs.min_depth}
             - ${inputs.max_depth}

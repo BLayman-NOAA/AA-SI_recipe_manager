@@ -402,6 +402,8 @@ def test_include_tree_from_include_blocks(registry):
                 step_ids=["x", "y"],
                 overrides={"k": 1},
                 bindings={"k": [{"step": "x", "slot": "params.k"}]},
+                inputs={"k": {"type": "int", "default": 1}},
+                promoted=[],
             ),
         ],
     )
@@ -409,6 +411,16 @@ def test_include_tree_from_include_blocks(registry):
     b, a = g["includes"]
     assert a["bindings"] == {"k": [{"step": "x", "slot": "params.k"}]}
     assert b["bindings"] == {}
+    assert a["inputs"] == [
+        {
+            "name": "k",
+            "type": "int",
+            "required": False,
+            "default": 1,
+            "description": None,
+        }
+    ]
+    assert b["inputs"] == []
     assert (b["id"], b["parent"], b["position"]) == (
         "inc:sub/b.yaml",
         "inc:sub/a.yaml",
@@ -429,6 +441,125 @@ def test_include_tree_from_include_blocks(registry):
         "sub/b.yaml",
     )
     assert (by_id["z"]["include"], by_id["z"]["document"]) == (None, "t.yaml")
+
+
+def test_input_nodes_name_the_file_that_declares_them(registry):
+    recipe = make_recipe(
+        inputs={
+            "x": InputDeclaration(type="list"),
+            "y": InputDeclaration(type="path", default="/data"),
+        },
+        steps=[
+            make_step(
+                id="a",
+                op="read",
+                params={"paths": "${inputs.x}", "folder": "${inputs.z}"},
+            ),
+            make_step(id="b", op="read", params={"folder": "${inputs.y}"}),
+        ],
+        include_blocks=[
+            IncludeBlock(
+                source="inner.yaml",
+                path="sub/inner.yaml",
+                step_ids=["b"],
+                inputs={"y": {"type": "path", "default": "/data"}},
+                promoted=["y"],
+            ),
+            IncludeBlock(
+                source="outer.yaml",
+                path="sub/outer.yaml",
+                step_ids=["b"],
+                promoted=["y"],
+            ),
+        ],
+    )
+    inputs = nodes(graph(recipe, registry), "input")
+    assert inputs["in:x"]["declared_in"] == "t.yaml"
+    assert inputs["in:y"]["declared_in"] == "sub/inner.yaml"
+    assert inputs["in:z"]["declared"] is False
+    assert inputs["in:z"]["declared_in"] is None
+
+
+def test_input_nodes_follow_declaration_order(registry):
+    recipe = make_recipe(
+        inputs={
+            "unread": InputDeclaration(type="int", default=1),
+            "late": InputDeclaration(type="list"),
+            "early": InputDeclaration(type="path", default="/data"),
+        },
+        steps=[
+            make_step(
+                id="a",
+                op="read",
+                params={"folder": "${inputs.early}", "paths": "${inputs.late}"},
+            ),
+            make_step(id="b", op="read", params={"paths": "${inputs.extra}"}),
+        ],
+    )
+    inputs = nodes(graph(recipe, registry), "input")
+    assert list(inputs) == ["in:unread", "in:late", "in:early", "in:extra"]
+
+
+def test_explicit_null_default_is_not_required(registry):
+    recipe = make_recipe(
+        inputs={
+            "nullable": InputDeclaration.model_validate(
+                {"type": "str", "default": None}
+            ),
+            "needed": InputDeclaration(type="str"),
+            "forced": InputDeclaration(type="str", default=None, required=True),
+        },
+        steps=[make_step(id="x", op="read")],
+        include_blocks=[
+            IncludeBlock(
+                source="a.yaml",
+                step_ids=["x"],
+                inputs={
+                    "nullable": {"type": "str", "default": None},
+                    "needed": {"type": "str"},
+                    "forced": {"type": "str", "default": None, "required": True},
+                },
+            ),
+        ],
+    )
+    g = graph(recipe, registry)
+    inputs = nodes(g, "input")
+    assert inputs["in:nullable"]["required"] is False
+    assert inputs["in:needed"]["required"] is True
+    assert inputs["in:forced"]["required"] is True
+    [include] = g["includes"]
+    required = {entry["name"]: entry["required"] for entry in include["inputs"]}
+    assert required == {"nullable": False, "needed": True, "forced": True}
+
+
+def test_declaration_the_model_would_reject_still_lists(registry):
+    recipe = make_recipe(
+        steps=[make_step(id="x", op="read")],
+        include_blocks=[
+            IncludeBlock(
+                source="a.yaml",
+                step_ids=["x"],
+                inputs={"bad": {"type": "int", "nonsense": 1}, "odd": "text"},
+            ),
+        ],
+    )
+    [include] = graph(recipe, registry)["includes"]
+    assert include["inputs"] == [
+        {
+            "name": "bad",
+            "type": "int",
+            "required": True,
+            "default": None,
+            "description": None,
+        },
+        {
+            "name": "odd",
+            "type": None,
+            "required": True,
+            "default": None,
+            "description": None,
+        },
+    ]
 
 
 def test_wrapper_include_with_the_same_steps_is_the_parent(registry):

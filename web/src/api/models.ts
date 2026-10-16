@@ -47,3 +47,19 @@ export const RUN_CONFIG_PREFIX = 'Run config: ';
 export function isRunConfigProblem(problem: Problem): boolean {
   return !problem.step && problem.message.startsWith(RUN_CONFIG_PREFIX);
 }
+
+export type RunRecord = Schemas['RunResponse'];
+export type RunStatus = RunRecord['status'];
+export type RunSummary = Schemas['RunSummary'];
+export type StartRunRequest = Schemas['StartRunRequest'];
+export type Preview = Schemas['PreviewResponse'];
+export type StepPreview = Schemas['StepPreviewModel'];
+export type RunLog = Schemas['LogResponse'];
+export type LogEntry = Schemas['LogEntry'];
+
+/** Run statuses of a run that has not ended. */
+export const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['queued', 'starting', 'running']);
+
+export function isActiveRun(run: RunRecord): boolean {
+  return ACTIVE_RUN_STATUSES.has(run.status);
+}

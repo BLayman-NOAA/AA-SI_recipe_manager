@@ -20,7 +20,8 @@
       "declared": true,
       "required": false,
       "default": 3,
-      "description": "Length of the seed list."
+      "description": "Length of the seed list.",
+      "declared_in": "with_sub.yaml"
     },
     {
       "id": "seed",
@@ -319,6 +320,22 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "value",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "The value to add to."
+        },
+        {
+          "name": "k",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "The constant to add."
+        }
+      ],
       "consumed": [
         {
           "step": "leaf_add",
@@ -364,6 +381,22 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "source",
+          "type": "list",
+          "required": true,
+          "default": null,
+          "description": "Items to work through."
+        },
+        {
+          "name": "k",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "Constant the leaf adds."
+        }
+      ],
       "consumed": [
         {
           "step": "leaf_add",

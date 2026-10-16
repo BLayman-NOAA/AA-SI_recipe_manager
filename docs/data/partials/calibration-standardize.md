@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="calibration-standardize" markdown>
+    <div class="recipe-viewer" data-recipe="calibration-standardize" data-slug="calibration-standardize" markdown>
 
     - `initial_setup`: [`initial_setup`](../ops/initial_setup.md)
     - `scan_raw_config`: [`read_raw_file_config`](../ops/read_raw_file_config.md)
@@ -16,49 +16,27 @@
     ```yaml
     # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/calibration_standardize.yaml
 
-    # RL2307 Calibration, phase 1: standardize
+    # RL2307 calibration, phase 1: standardize
     #
-    # Scans the raw channel configurations and turns the manufacturer calibration
-    # files into one standardized file per channel. It stops there, before the
-    # mapping, so a user can review the standardized channels and correct or
-    # discard them before anything is matched against them.
+    # Scans the raw channel configurations and writes one standardized calibration
+    # file per channel, then stops so you can review them before the mapping.
+    # Phase 2 is calibration_mapping.yaml; phase 3, save_calibration.yaml, archives.
     #
-    # Pair it with calibration_mapping.yaml, which is phase 2, and optionally
-    # save_calibration.yaml, which is phase 3 and archives the finished result.
+    #   aa-recipe run calibration_standardize.yaml
     #
-    # THE FOUR STEPS BELOW ARE COPIED VERBATIM INTO calibration_mapping.yaml, and
-    # they must stay that way. Cache entries are addressed by step hash, so the
-    # moment the two copies drift, phase 2 stops reusing the raw scan and reads
-    # every file again. Nothing in the recipe format enforces it and the symptom is
-    # a slow run rather than an error, so
-    # tests/test_calibration_phase_recipes.py asserts the hashes match. Run it
-    # after editing either file.
+    # Keep the four steps identical to calibration_mapping.yaml, or phase 2 rescans
+    # every raw file. tests/test_calibration_phase_recipes.py checks this.
+    # Both phases need the same user_cache_dir and outputs_dir: keep their config
+    # files identical or pass --config.
+    # To edit channels without the folder, change single_channel_data and pass it
+    # to phase 2 as override_channels.
     #
-    # Artifacts land under <outputs_dir>/<calibration_outputs>/:
+    # Outputs under <outputs_dir>/<calibration_outputs>/:
     #
     #   raw_file_configs/                  raw_file_configs.yaml
-    #   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
+    #   single_channel_calibration_files/  one .yaml per channel, required by NCEI
     #   logs/                              calibration_flags.json
-    #   standardization.fingerprint.json   which manufacturer files produced the
-    #                                      single-channel files above
-    #
-    # The standardized channels also come back as data on standardize_cal's
-    # single_channel_data output, which is what a caller with no access to the
-    # folder reviews. Editing a value or dropping a channel there and passing the
-    # result back as override_channels in phase 2 rewrites the folder to match, so
-    # the archived files are always the ones the mapping was built from.
-    #
-    # Both phases must resolve to the SAME user_cache_dir and outputs_dir or the
-    # sharing silently does not happen: the run config is discovered per recipe as
-    # <recipe_stem>.config.yaml, so either keep the two config files identical or
-    # pass --config explicitly.
-    #
-    # The same three recipes are what the calibration service exposes as its
-    # three HTTP calls. See calibration_service_api.md
-    # in AA-SI_calibration/recipes/documentation/.
-    #
-    # Usage:
-    #   aa-recipe run calibration_standardize.yaml
+    #   standardization.fingerprint.json   which manufacturer files were used
 
     recipe:
       name: "RL2307_calibration_standardize"
@@ -103,12 +81,8 @@
         type: dict
         required: false
         description: >
-          Standardized channels to write instead of parsing the manufacturer files,
-          as returned on standardize_cal's single_channel_data output. This is how a
-          reviewed and edited set comes back from a caller that never sees the
-          folder. Declared here, and left unset, in both phase recipes: an unset
-          value hashes identically, so standardize_cal still shares its cache entry,
-          and only a caller actually supplying edits diverges.
+          Reviewed channels from single_channel_data, written in place of the
+          manufacturer files. Unset, both phases share standardize_cal's cache.
 
     steps:
 
@@ -121,9 +95,7 @@
           file_time_start: ${inputs.file_time_start}
           file_time_end: ${inputs.file_time_end}
 
-      # One instance per raw file, content-addressed by that file's path, so an
-      # interrupted scan resumes from what it already read.
-      # verbose is off because one banner per file buries the rest of the log.
+      # One cached instance per raw file, so an interrupted scan resumes.
       - id: scan_raw_config
         op: read_raw_file_config
         map_over: ${initial_setup.raw_file_paths}
@@ -131,11 +103,8 @@
         params:
           raw_file_path: ${_item}
           verbose: false
-          # Read a growing prefix rather than all ~1 GiB: the scan starts at 8 MiB
-          # and doubles to this cap, stopping once every channel's Parameter
-          # datagram is in hand. CW files settle on the first rung; RL2307's ~1 GiB
-          # FM files sit behind much larger RAW3 payloads and climb. A file that
-          # never settles within the cap is read whole.
+          # Reads a prefix that doubles from 8 MiB up to this cap, not the whole
+          # file. A file that needs more is read whole.
           max_scan_bytes: 134217728  # 128 MiB
 
       - id: record_raw_configs
@@ -148,15 +117,8 @@
         params:
           output_base: ${initial_setup.calibration_output_dir}
 
-      # regenerate: if-missing is safe here only because this step records its
-      # output directory: wiping the folder rebuilds it, deleting one file inside
-      # it does not. The conflict workflow depends on that distinction.
-      #
-      # It is also what makes the two-phase split work across containers. A second
-      # run starting with an empty outputs directory finds the recorded folder
-      # missing and rebuilds it, from override_channels when a caller supplied
-      # edits and from the manufacturer files otherwise, so the mapping step always
-      # reads a folder that matches what it is about to map.
+      # Deleting the whole folder rebuilds it; deleting one file inside it does not,
+      # which is how the conflict workflow drops a channel.
       - id: standardize_cal
         op: standardize_calibration_files
         checkpoint: always
@@ -176,9 +138,8 @@
         step_id: standardize_cal
         output_name: single_channel_data
         description: >
-          The standardized channels, for a caller to review and edit before the
-          mapping runs. Feed the edited version back to calibration_mapping.yaml as
-          override_channels.
+          The standardized channels to review. Pass an edited copy to
+          calibration_mapping.yaml as override_channels.
       single_channel_dir:
         step_id: standardize_cal
         output_name: single_channel_dir

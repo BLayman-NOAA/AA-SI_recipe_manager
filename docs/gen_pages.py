@@ -207,7 +207,8 @@ with mkdocs_gen_files.open("ops/SUMMARY.md", "w") as f:
     f.write("\n".join(summary) + "\n")
 
 with mkdocs_gen_files.open("reference/cli.md", "w") as f:
-    f.write(build_cli_reference(main))
+    # The client server is not documented on the site yet.
+    f.write(build_cli_reference(main, exclude={"serve"}))
 
 # The recipe JSON Schema comes from the installed package at build time, so
 # it always matches the version the site documents.

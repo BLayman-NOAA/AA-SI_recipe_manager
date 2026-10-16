@@ -1,8 +1,8 @@
-=== "Levels"
+=== "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="hb1603-dive-analysis-overview" markdown>
+    <div class="recipe-viewer" data-recipe="hb1603-dive-analysis" data-slug="hb1603-dive-analysis" markdown>
 
-    - [HB1603 dive plan](hb1603-dive-analysis.md)
+    - HB1603 dive plan
     - [HB1603 level 0, NCEI catalogue and calibration mapping](level-0.md)
     - [HB1603 level 1, raw ingest](level-1.md)
     - [HB1603 level 2, calibrated Sv, masks and noise removal](level-2.md)
@@ -12,97 +12,37 @@
 
     </div>
 
-=== "All steps"
-
-    <div class="recipe-flow" data-recipe="hb1603-dive-analysis" markdown>
-
-    - `plan_dives`: custom `aa_si_utils.dive_profiles.plan_dive_datasets`
-    - `query_ncei`: [`query_ncei_data`](../ops/query_ncei_data.md)
-    - `scan_raw_config`: [`read_raw_file_config`](../ops/read_raw_file_config.md)
-    - `record_raw_configs`: [`record_raw_file_configs`](../ops/record_raw_file_configs.md)
-    - `standardize_cal`: [`standardize_calibration_files`](../ops/standardize_calibration_files.md)
-    - `build_cal_mapping`: [`build_calibration_mapping`](../ops/build_calibration_mapping.md)
-    - `read_raw`: [`read_raw_files`](../ops/read_raw_files.md)
-    - `combine_raw`: [`combine_raw_files`](../ops/combine_raw_files.md)
-    - `extract_cal_params`: [`extract_standardized_cal_params`](../ops/extract_standardized_cal_params.md)
-    - `compute_sv`: [`compute_sv`](../ops/compute_sv.md)
-    - `compute_transducer_depth`: [`compute_transducer_depth`](../ops/compute_transducer_depth.md)
-    - `ep_add_depth`: [`ep_add_depth`](../ops/ep_add_depth.md)
-    - `crop_survey_range`: [`crop_range`](../ops/crop_range.md)
-    - `dive_sv`: [`select_ping_time_range`](../ops/select_ping_time_range.md)
-    - `dive_surface_mask`: [`create_surface_mask`](../ops/create_surface_mask.md)
-    - `dive_frequency_mask`: [`create_frequency_mask`](../ops/create_frequency_mask.md)
-    - `dive_seabed_line`: [`read_seafloor_line`](../ops/read_seafloor_line.md)
-    - `dive_seabed_mask`: [`create_seafloor_mask`](../ops/create_seafloor_mask.md)
-    - `dive_combine_masks`: [`combine_masks`](../ops/combine_masks.md)
-    - `dive_apply_mask`: [`apply_sv_mask`](../ops/apply_sv_mask.md)
-    - `dive_remove_noise`: [`remove_background_noise`](../ops/remove_background_noise.md)
-    - `dive_mask_sparse`: [`mask_sparse_bins`](../ops/mask_sparse_bins.md)
-    - `dive_file_mvbs`: [`compute_mvbs`](../ops/compute_mvbs.md)
-    - `dive_cell_stats`: [`compute_per_cell_statistics`](../ops/compute_per_cell_statistics.md)
-    - `merge_dive_files_mvbs`: [`merge_datasets`](../ops/merge_datasets.md)
-    - `rechunk_dive_mvbs`: [`rechunk_dataset`](../ops/rechunk_dataset.md)
-    - `merge_dive_files_cell_stats`: [`merge_datasets`](../ops/merge_datasets.md)
-    - `reshape_ml`: [`reshape_for_ml`](../ops/reshape_for_ml.md)
-    - `add_aux_features`: [`add_auxiliary_features`](../ops/add_auxiliary_features.md)
-    - `normalize_ml`: [`normalize_ml_data`](../ops/normalize_ml_data.md)
-    - `run_hdbscan`: [`run_hdbscan`](../ops/run_hdbscan.md)
-    - `label_all_points`: [`assign_clusters_to_all_points`](../ops/assign_clusters_to_all_points.md)
-    - `embed_results`: [`embed_clustering_results`](../ops/embed_clustering_results.md)
-    - `plot_clustering_report`: [`plot_clustering_report`](../ops/plot_clustering_report.md)
-    - `generate_sv_codes`: custom `aa_si_utils.dive_profiles.generate_sv_codes`
-    - `sv_code_depth_table`: custom `aa_si_utils.dive_profiles.sv_code_depth_table`
-
-    </div>
-
 === "YAML"
 
     [Download `dive_analysis.yaml`](../recipes/HB1603/dive_analysis.yaml)
 
     ```yaml
     # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/dive_analysis.yaml,
-    # with its two level 2 includes (2a survey, 2b user) merged into processing_lvl_2_combined.yaml.
-    # Unlike the original, level 2b keeps the survey's surface-referenced depth rather than re-adding
-    # depth as range from the transducer, so the level 3 depth axis is pinned 10 m deeper.
+    # with levels 2a and 2b merged into processing_lvl_2_combined.yaml. Level 2b
+    # keeps the survey's surface-referenced depth, so the level 3 depth axis is
+    # pinned 10 m deeper than in the original.
 
     # HB1603 dive analysis: 13 dives, one clustering, per-dive SVCodes.
     #
     #   aa-recipe run dive_analysis.yaml --executor dask --dask-workers 16
     #
-    #   plan        read the dive configs, one window per dive
-    #   level 0     the survey's NCEI catalogue and calibration mapping
-    #   level 1     per file: raw ingest, streamed from NCEI
-    #   level 2     per file: calibrated Sv and depth (2a), then inside the dive
-    #               windows the surface, frequency and seabed masks and noise
-    #               removal (2b)
-    #   level 3     per file: sparse mask, grid, per-cell CV; fan in to the pooled
-    #               dive grid
-    #   level 4     pooled HDBSCAN clustering and the clustering report
-    #   level 5     per-dive SVCodes and the depth-interval tables
+    #   plan      one window per dive, from the dive configs
+    #   level 0   the survey's NCEI catalogue and calibration mapping
+    #   level 1   per file: raw ingest, streamed from NCEI
+    #   level 2   per file: calibrated Sv and depth (2a), then dive windows,
+    #             masks and noise removal (2b)
+    #   level 3   per file: sparse mask, grid and cell CV, merged into the dive grid
+    #   level 4   pooled HDBSCAN clustering and its report
+    #   level 5   per-dive SVCodes and depth-interval tables
     #
-    # WHERE THE VALUES LIVE
+    # Every value is set here, on the include that uses it. Values shared by
+    # several includes are inputs; the rest are literals you edit in this file.
+    # Levels 0 to 2a load from the survey's shared cache, so keep their overrides
+    # as survey_sv.yaml has them, and select dives in level 2b, not in the query.
+    # Levels 1 to 3 are one per-file chain: put nothing that isn't per-file
+    # between them, which is why the dive plan comes first.
     #
-    #   Each level file documents its own steps and inputs. Every value is set in
-    #   this file, on the include that uses it, so the whole analysis reads from
-    #   one place. A value more than one include needs is a recipe input below;
-    #   the rest are literals in input_overrides. A literal is not reachable with
-    #   --input: edit it here.
-    #
-    # THE SURVEY TIER
-    #
-    #   Levels 0 to 2a are the survey's: computed once per cruise by a separate
-    #   survey recipe and loaded from its shared cache here. A step's hash folds
-    #   in how its inputs are wired, and those hashes address that cache, so their
-    #   overrides must stay exactly as the survey recipe has them. Do not narrow
-    #   the catalogue query to get a subset: it is a parent of every per-file
-    #   step. The window belongs in level 2b.
-    #
-    # ORDER MATTERS BETWEEN LEVELS 1 AND 3
-    #
-    #   They are one per-file chain. Nothing non-mapped may be declared between
-    #   those includes, which is why the dive plan comes first.
-    #
-    # Sanity-check the shape before a long run:
+    # Check the shape before a long run:
     #   aa-recipe dry-run dive_analysis.yaml --visualize
 
     recipe:
@@ -114,7 +54,7 @@
 
     inputs:
 
-      # --- Survey level -----------------------------------------------------------
+      # Survey level
       cal_input_folder:
         type: path
         default: "../calibration_files/HB201607_cal"
@@ -125,18 +65,13 @@
       crop_max_range_m:
         type: float
         default: 1800.0
-        description: >
-          Range ceiling applied per file. Every consumer shares it: change it and
-          the whole survey Sv is recomputed.
+        description: "Range ceiling per file, in metres. Changing it recomputes the survey Sv."
 
-      # --- Shared by levels 2b, 3 and 5 -------------------------------------------
+      # Shared by levels 2b, 3 and 5
       ping_time_bin:
         type: str
         default: "10s"
-        description: >
-          Ping-time bin of the per-dive grid. Level 2b widens each dive window to
-          whole bins of this width, level 3 grids on it, and level 5 counts one bin
-          of this length per ping in the duration tables.
+        description: "Ping-time bin of the dive grid, used by levels 2b, 3 and 5 alike."
 
     steps:
 
@@ -194,9 +129,8 @@
           range_bin: "2m"
           range_var: "depth"
           nan_threshold: 0.99
-          # Pinned so every file shares one depth axis. HB1603 recorded to about
-          # 3003 m of range, and depth adds the transducer's own depth below the
-          # surface (about 9 m, plus heave), so 3020m clears every file.
+          # Pinned so every file shares one depth axis. It must clear the deepest
+          # range recorded (about 3003 m) plus the transducer depth (about 9 m).
           mvbs_range_var_max: "3020m"
           dive_chunk_ping_time: 1000
 

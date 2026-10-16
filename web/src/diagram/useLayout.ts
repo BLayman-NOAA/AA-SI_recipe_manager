@@ -5,7 +5,7 @@ import type { GraphEdgeKind } from '../api/graph';
 import type { Direction } from '../state/view';
 import { placeBuses } from './buses';
 import { canUseWorker, runLayout } from './elk';
-import { layoutRequest, type Positions, type Route } from './layout';
+import { layoutRequest, setTextScale, type Positions, type Route } from './layout';
 import { CONTAINER_KINDS, rowValue, type View, type ViewEdge, type ViewNode } from './buildView';
 
 /** React Flow node carrying its view node. */
@@ -40,11 +40,11 @@ export function keepInPlace(viewport: Viewport, before: XYPosition, after: XYPos
   };
 }
 
-/** Changes in the node and edge id lists or the direction call for a new layout. */
-export function layoutKey(view: View, direction: Direction): string {
+/** Changes in the node and edge id lists, the direction or the text size call for a new layout. */
+export function layoutKey(view: View, direction: Direction, textScale = 1): string {
   const nodes = view.nodes.map((node) => `${node.id}<${node.parentId ?? ''}`).join('|');
   const edges = view.edges.map((edge) => edge.id).join('|');
-  return `${direction}#${nodes}#${edges}`;
+  return `${direction}@${textScale}#${nodes}#${edges}`;
 }
 
 /** React Flow nodes for a view at the given positions; unplaced nodes stay hidden. */
@@ -79,7 +79,8 @@ export function edgeTooltip(view: View, edge: ViewEdge): string {
   if (source?.kind === 'inputsBox') {
     return edge.names
       .map((name) => {
-        const row = source.data.rows.find((candidate) => candidate.name === name);
+        const rowName = name.replace(/^item of /, '');
+        const row = source.data.rows.find((candidate) => candidate.name === rowName);
         return row ? `${name} = ${rowValue(row)}` : name;
       })
       .join('\n');
@@ -159,12 +160,12 @@ export function resized(view: View, measured: Map<string, Size>, used: Map<strin
  * changed since (a step or box expanded), runs the layout again. Selection,
  * dimming and other data changes reuse the last layout.
  */
-export function useLayout(view: View, direction: Direction): LayoutState {
+export function useLayout(view: View, direction: Direction, textScale = 1): LayoutState {
   const [measured, setMeasured] = useState<Map<string, Size>>(() => new Map());
   const [layout, setLayout] = useState<Applied>({ key: '', positions: {}, routes: {}, sizes: new Map(), version: 0 });
   const [waited, setWaited] = useState('');
   const running = useRef(false);
-  const key = useMemo(() => layoutKey(view, direction), [view, direction]);
+  const key = useMemo(() => layoutKey(view, direction, textScale), [view, direction, textScale]);
 
   const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
     const sizes = changes.filter((change) => change.type === 'dimensions' && change.dimensions);
@@ -200,6 +201,7 @@ export function useLayout(view: View, direction: Direction): LayoutState {
   useEffect(() => {
     if (!stale || running.current) return;
     running.current = true;
+    setTextScale(textScale);
     const request = layoutRequest(view, direction, measured);
     const sizes = new Map<string, Size>();
     for (const node of request.nodes) {
@@ -210,7 +212,7 @@ export function useLayout(view: View, direction: Direction): LayoutState {
       running.current = false;
       setLayout((previous) => ({ key, positions, routes, sizes, version: previous.version + 1 }));
     });
-  }, [stale, key, view, direction, measured, layout.version]);
+  }, [stale, key, view, direction, textScale, measured, layout.version]);
 
   const nodes = useMemo(
     () => toFlowNodes(view, layout.positions, measured),

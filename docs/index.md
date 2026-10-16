@@ -36,7 +36,7 @@ AA-SI utilities, the calibration package, and others. See the
 - **[Processing levels](levels/index.md)**
 
     How the recipe manager implements each level of the AA-SI data road map,
-    with an interactive diagram of every level's recipe.
+    with each level drawn as an interactive flow diagram.
 
 - **[Calibration](calibration/index.md)**
 
@@ -53,8 +53,9 @@ wired together, sub-recipes, per-file fan-out and caching.
 [Processing levels](levels/index.md) follows the
 [AA-SI data road map](https://github.com/nmfs-ost/AA-SI_DataRoadMap). Each level
 has a page showing the sub-recipe that implements it for two example surveys,
-HB1603 and HB2407, as a flow diagram you can expand step by step, as YAML, and
-as the notebook the recipe manager generates from it.
+HB1603 and HB2407, as an interactive diagram you can drill into, search and
+inspect step by step, as YAML, and as the notebook the recipe manager
+generates from it.
 
 [Op reference](ops/index.md) documents every built-in step, with links to its
 source code.

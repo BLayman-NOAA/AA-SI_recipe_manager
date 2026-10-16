@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="quickstart" markdown>
+    <div class="recipe-viewer" data-recipe="quickstart" data-slug="quickstart" markdown>
 
     - `query_ncei`: [`query_ncei_data`](ops/query_ncei_data.md)
     - `read_raw`: [`read_raw_files`](ops/read_raw_files.md)
@@ -19,15 +19,13 @@
     #
     #   query_ncei -> read_raw -> combine_raw -> compute_sv -> plot_sv
     #
-    # A small, complete recipe to experiment with. It asks the NCEI water column
-    # sonar archive for the HB1603 files that overlap a 47 minute window (four
-    # files, about 90 minutes of data), reads them straight from their NCEI URLs,
+    # A small, complete recipe to experiment with. It finds the HB1603 files that
+    # overlap a 47 minute window (four files), reads them straight from NCEI,
     # computes volume backscattering strength (Sv) and saves an echogram. Nothing
     # needs to be downloaded first.
     #
-    # Sv here uses the calibration values each raw file recorded when it was
-    # collected: compute_sv is given no cal_params, so echopype falls back to
-    # them. The processing level pages show the calibrated version.
+    # Sv uses the calibration each raw file recorded. The processing level pages
+    # show the calibrated version.
     #
     # Try:
     #   aa-recipe dry-run quickstart.yaml --visualize

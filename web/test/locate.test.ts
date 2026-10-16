@@ -44,10 +44,10 @@ describe('the drill path that shows a step', () => {
 
 describe('selectStep', () => {
   it('sets the drill path and selects the step', () => {
-    selectStep(withSubGraph, 'leaf_add');
+    selectStep(useView, withSubGraph, 'leaf_add');
     expect(useView.getState().drill).toEqual([CHAIN, LEAF]);
     expect(useView.getState().selected).toEqual({ kind: 'step', id: 'leaf_add' });
-    selectStep(withSubGraph, 'seed');
+    selectStep(useView, withSubGraph, 'seed');
     expect(useView.getState().drill).toEqual([]);
   });
 });

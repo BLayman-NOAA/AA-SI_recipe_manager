@@ -1,0 +1,193 @@
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB1603/UC1/sub_recipes/processing_lvl_2_viewer_seabed.yaml
+
+# Processing level 2b (viewer, seabed removed): angles, seabed line, masks
+# and noise removal for the whole survey.
+#
+#   split-beam angles -> crop -> seabed line -> surface + frequency + seabed
+#   masks -> apply -> remove noise
+#
+# Runs per file on every file in the catalogue. Include it directly after
+# processing_lvl_2_survey.yaml: these steps continue the same per-file chain.
+#
+# The seabed line comes from phase_detect_seafloor, which needs no .bot file,
+# Echoview line or depth window. Where a file's seabed lies below this level's
+# crop, missing: max_range keeps those pings whole. The line is not the
+# analyst line the dive analysis uses, so the two bottoms differ by a few
+# metres.
+#
+# The picker reads split-beam angles, and echopype can only add them to an
+# uncropped dataset. So this level starts from the survey's ep_add_depth
+# output, adds angles and crops for itself. The survey's steps from
+# compute_sv down still load from the cache.
+#
+# The seabed is masked on full-resolution Sv, before noise removal and MVBS,
+# so neither ever sees the bottom.
+
+recipe:
+  name: "hb1603_processing_lvl_2_viewer_seabed"
+  description: "Per file, the whole survey: split-beam angles, phase-aware seabed line, surface, frequency and seabed masks, then noise removal."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Range ceiling applied after the angles are added, independent of the
+      survey's crop. Level 3's grid_max_depth has to reach it.
+  seabed_channel:
+    type: str
+    default: "38"
+    description: "Channel the seabed is picked on, as a label or kHz. 38 kHz reaches the bottom everywhere on HB1603."
+  seabed_max_slope_deg:
+    type: float
+    default: 30.0
+    description: "Maximum plausible seabed slope, in degrees. Use 45 for canyon terrain."
+  seabed_max_gap_s:
+    type: float
+    default: 600.0
+    description: >
+      Interior gaps in the seabed line up to this many seconds are
+      interpolated. Longer gaps, and the ends of a file, are kept whole.
+  seafloor_buffer_m:
+    type: float
+    default: 10.0
+    description: >
+      Metres above the seabed line that are also masked. Raise it, or use the
+      integration line, if bottom echo is left on canyon walls.
+  seabed_line:
+    type: str
+    default: "integration"
+    description: >
+      "leading_edge" masks from the top of the seabed echo; "integration"
+      masks from the slope-corrected line above it, which clears more on
+      steep walls.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: >
+      Range from the transducer, in metres, above which samples are masked,
+      to remove the transmit pulse and ringdown.
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: >
+      Channel frequencies in kHz to blank. The default keeps 18 and 38 kHz,
+      as the dive analysis does: the high frequencies are only noise at depth.
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Range samples per noise-estimation bin."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Pings per noise-estimation bin."
+  noise_snr_threshold:
+    type: str
+    default: "3.0dB"
+    description: >
+      Samples less than this above the noise estimate are masked. Raise it
+      for a cleaner, shallower picture.
+  noise_background_max:
+    type: str
+    default: null
+    description: "Ceiling on the noise estimate, e.g. \"-160.0dB\". Null leaves it unbounded."
+
+steps:
+
+  # Angles must go on before the crop; see the header.
+  - id: viewer_splitbeam_angle
+    op: ep_add_splitbeam_angle
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${ep_add_depth.ds_Sv}
+      echodata: ${combine_raw.echodata}
+    params:
+      waveform_mode: "CW"
+      encode_mode: "power"
+      to_disk: false
+
+  # This level's own crop, on the dataset that now carries angles.
+  - id: viewer_crop
+    op: crop_range
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_splitbeam_angle.ds_Sv}
+    params:
+      max_range_m: ${inputs.crop_max_range_m}
+      drop_trailing_all_nan: false
+      outlier_sigma: null
+
+  # Checkpointed: it is small, and it records where the bottom was drawn.
+  - id: viewer_seabed_line
+    op: phase_detect_seafloor
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: save
+    inputs:
+      ds_Sv: ${viewer_crop.ds_Sv}
+    params:
+      channel: ${inputs.seabed_channel}
+      max_slope_deg: ${inputs.seabed_max_slope_deg}
+      max_gap_s: ${inputs.seabed_max_gap_s}
+      line: ${inputs.seabed_line}
+      missing: "max_range"
+
+  - id: viewer_seabed_mask
+    op: create_seafloor_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      # Must be the same dataset the line was picked on.
+      ds_Sv: ${viewer_crop.ds_Sv}
+      seafloor_depth: ${viewer_seabed_line.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: viewer_surface_mask
+    op: create_surface_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_crop.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  # All true when frequencies_to_mask is empty.
+  - id: viewer_frequency_mask
+    op: create_frequency_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_crop.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  - id: viewer_combine_masks
+    op: combine_masks
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      masks:
+        - ${viewer_surface_mask.mask}
+        - ${viewer_frequency_mask.mask}
+        - ${viewer_seabed_mask.mask}
+    params:
+      mode: "and"
+
+  - id: viewer_apply_mask
+    op: apply_sv_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_crop.ds_Sv}
+      mask: ${viewer_combine_masks.mask}
+
+  # Per file, because the estimator needs contiguous pings. The seabed is
+  # already masked, so the estimate comes from water only.
+  - id: viewer_remove_noise
+    op: remove_background_noise
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_apply_mask.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+      SNR_threshold: ${inputs.noise_snr_threshold}
+      background_noise_max: ${inputs.noise_background_max}

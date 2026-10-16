@@ -53,5 +53,12 @@ def test_examples_use_real_options(path):
                 assert word.split("=")[0] in known, f"{example}: unknown option {word}"
 
 
+def test_excluded_commands_are_left_out():
+    page = build_cli_reference(main, exclude={"serve"})
+    assert "## serve" not in page
+    assert "(#serve)" not in page
+    assert "## run {#run}" in page
+
+
 def test_page_is_stable():
     assert build_cli_reference(main) == build_cli_reference(main)

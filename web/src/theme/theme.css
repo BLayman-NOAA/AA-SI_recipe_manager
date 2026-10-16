@@ -1,7 +1,8 @@
 /* Client colors. Dark values follow the docs site's slate scheme and light
-   values its default scheme (docs/assets/recipe-flow.css). */
+   values its default scheme. The theme selectors match any element, so the
+   docs site viewer sets data-theme on its own root. */
 
-html[data-theme='dark'] {
+[data-theme='dark'] {
   color-scheme: dark;
   --rc-bg: #1e2029;
   --rc-panel: #272935;
@@ -20,6 +21,7 @@ html[data-theme='dark'] {
   --rc-error: #ef6f6c;
   --rc-warning: #f2c14e;
   --rc-ok: #81c784;
+  --rc-survey: #e3b341;
   --rc-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   /* YAML pane, Monokai */
   --rc-yaml-bg: #272822;
@@ -35,7 +37,7 @@ html[data-theme='dark'] {
   --rc-yaml-highlight: #49483e;
 }
 
-html[data-theme='light'] {
+[data-theme='light'] {
   color-scheme: light;
   --rc-bg: #ffffff;
   --rc-panel: #f5f5f7;
@@ -54,6 +56,7 @@ html[data-theme='light'] {
   --rc-error: #c62828;
   --rc-warning: #a66a00;
   --rc-ok: #2e7d32;
+  --rc-survey: #a87800;
   --rc-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   /* YAML pane, Monokai hues darkened for a light background */
   --rc-yaml-bg: #fafaf7;
@@ -73,38 +76,6 @@ html[data-theme='light'] {
   --rc-font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-
-body {
-  background: var(--rc-bg);
-  color: var(--rc-fg);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-
-a {
-  color: var(--rc-accent);
-}
-
-code,
-pre,
 .rc-mono {
   font-family: var(--rc-font-mono);
   font-size: 12px;
@@ -616,6 +587,14 @@ textarea.rc-input {
   overflow-wrap: anywhere;
 }
 
+.rc-pane h3.rc-group-head {
+  margin-top: 14px;
+  color: var(--rc-fg);
+  text-transform: none;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
 .rc-description {
   margin: 4px 0 8px;
   color: var(--rc-muted);
@@ -819,4 +798,132 @@ textarea.rc-input {
   padding: 0 3px;
   border-radius: 3px;
   background: var(--rc-line);
+}
+
+/* Toolbar dropdown (Force) */
+
+.rc-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.rc-dropdown .rc-menu-list {
+  min-width: 200px;
+}
+
+/* Logs pane */
+
+.rc-logs {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rc-logs .rc-pane-toolbar {
+  flex-wrap: wrap;
+}
+
+.rc-logs .rc-pane-toolbar .rc-input {
+  width: auto;
+  min-width: 0;
+}
+
+.rc-log-follow {
+  margin-bottom: 4px;
+}
+
+.rc-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: var(--rc-panel);
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+}
+
+.rc-log-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 6px;
+}
+
+.rc-log-step {
+  flex: none;
+  min-width: 90px;
+  color: var(--rc-muted);
+}
+
+.rc-log-text {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rc-log-stderr .rc-log-text {
+  color: var(--rc-warning);
+}
+
+.rc-log-logging .rc-log-text {
+  color: var(--rc-muted);
+}
+
+.rc-log-traceback {
+  background: color-mix(in srgb, var(--rc-error) 12%, transparent);
+}
+
+.rc-log-traceback .rc-log-text {
+  color: var(--rc-error);
+}
+
+.rc-log-hidden {
+  padding: 2px 6px;
+  color: var(--rc-faint);
+  font-style: italic;
+}
+
+/* Runs pane */
+
+.rc-runs td {
+  white-space: nowrap;
+}
+
+.rc-runs .rc-row-current {
+  background: color-mix(in srgb, var(--rc-accent) 12%, transparent);
+}
+
+.rc-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.rc-run-status-completed {
+  color: var(--rc-ok);
+}
+
+.rc-run-status-failed {
+  color: var(--rc-error);
+}
+
+.rc-run-status-cancelled,
+.rc-run-status-interrupted {
+  color: var(--rc-warning);
+}
+
+.rc-run-status-running,
+.rc-run-status-starting,
+.rc-run-status-queued {
+  color: var(--rc-accent);
+}
+
+/* Inspector: a failed step */
+
+.rc-step-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
 }

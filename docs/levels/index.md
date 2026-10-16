@@ -32,40 +32,66 @@ level 2. Its preparation runs in level 0 of these examples. See
     through. Raw files are streamed straight from NCEI. Built on a shared
     survey cache: levels 0 to 2a are computed once per cruise and reused.
 
+[HB1603 survey echogram pyramid](hb1603-survey-echogram-pyramid.md)
+:   The whole HB1603 cruise as one EchogramGL viewer store, from the same
+    shared survey cache.
+
 [HB2407 herring, per file](hb2407-herring-per-file.md)
 :   Henry B. Bigelow, 2024, Simrad EK80. Clusters a herring survey day. Raw
     files come from a Google Cloud bucket, each is calibrated and masked on its
     own, and the survey is merged before noise removal.
 
-Both are documentation copies of recipes in
+All three are documentation copies of recipes in
 [AA-SI_Full_Pipeline_Example](https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example),
-regrouped so that each level is one file. Every step is computed exactly as in
-the originals.
+the first two regrouped so that each level is one file. Every step is computed
+exactly as in the originals.
 
 ## Reading a level page
 
 Each example on a level page has three tabs:
 
 **Flow diagram**
-:   The sub-recipe as a graph. Entry points at the top are what flows in from
-    the recipe's inputs or from other levels; exit points at the bottom are
-    results nothing in this level uses, which later levels or the user pick
-    up. Click a step to expand it and see its parameters and the types of its
-    inputs and outputs; click its op name for the op's reference page.
-    Shaded groups run once per raw file. Hover over a step to highlight what
-    it connects to.
+:   An interactive, read only diagram of the recipe. A level page shows
+    the full recipe drilled into that level. The breadcrumb above names the
+    recipe and the level. The **Inputs** box has two sections: **Overrides**,
+    the values the full recipe sets where it includes the level, and
+    **Inputs**, the ones the level's own file declares, each with its value.
+    An input with no default that nothing sets reads **unset**, in red,
+    tagged **required**. The outputs box lists what the level hands on and
+    which later steps use it, and steps of other levels that this one reads
+    are drawn in dashed boxes; double click one to go to it. **Up one level**
+    shows the whole recipe, one box per level. Its **Recipe inputs** box
+    lists the inputs the full recipe's own file declares, then a count of
+    those declared in the levels, and the labels on its lines name what it
+    passes to each level. Each level's box counts its steps, overrides and
+    inputs; double click it to list the overrides and inputs, and again to
+    drill into it. Steps that run once per raw file carry a **per item**
+    badge, and the step that gathers their results a **collects** badge. A
+    level page draws its part of the per file run as a shaded group. When
+    the run maps over one of the level's inputs, that input goes on one line
+    into the group rather than on every step's line.
 
-    Drag to move around, and hold Ctrl (⌘ on a Mac) while scrolling, or
-    pinch, to zoom. The toolbar zooms, fits the whole recipe in view, expands
-    or collapses every step, and opens the diagram full screen, where plain
+    Click a node to select it; double click a step to list its parameters, or
+    use **Expand all** and **Collapse all**. The find box jumps to a step by
+    id or op name, and **Highlight connected** fades everything the selected
+    node does not connect to. **Diagram** and **YAML** switch the main view
+    between the diagram and the recipe file, with the selected step
+    highlighted. The toolbar also fits the diagram, toggles the layout
+    direction and sets the text size. **Inspector** opens a side panel that
+    describes the selected node (its op, with a link to the op's reference
+    page, parameters, and inputs and outputs), in either view. **Link to
+    this step** in the inspector gives an address, ending in
+    `#view=<recipe>:<step>`, that opens the page with that step selected.
+    The inspector starts open only when the diagram is wide (1100 px or
+    more), and **Full screen** opens it too.
+
+    Drag to move around, and hold Ctrl while scrolling, or pinch on a
+    trackpad, to zoom; plain scrolling scrolls the page. **Full screen** opens
+    the diagram with its inspector over the whole screen, where plain
     scrolling zooms and Esc returns to the page. Drag the bottom-right corner
-    of the diagram to make it taller.
-
-    Each step's recipe inputs are listed in one box above it, with what the
-    full recipe sets each one to, and its results used later in one box below
-    it. The steps of other recipes that feed this one or read what it
-    produces are drawn in pink, each linking to its own page; **Show other
-    recipe steps** hides them on every diagram at once, and the choice is
+    of the diagram to make it taller. Inside the diagram, F fits it and /
+    jumps to the find box. Colours follow the site's light and dark switch,
+    and the layout direction and text size apply to every diagram and are
     remembered.
 
 **YAML**

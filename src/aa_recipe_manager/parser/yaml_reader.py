@@ -115,6 +115,7 @@ def _resolve_includes(
         if _is_include_entry(step):
             include_path = _resolve_include_path(step["include"], path)
             child_raw = _load_raw_recipe(include_path)
+            own_inputs = _own_inputs(child_raw)
             overrides = step.get("input_overrides") or {}
             if not isinstance(overrides, dict):
                 raise RecipeParseError(
@@ -153,6 +154,7 @@ def _resolve_includes(
 
             merged_steps.extend(child_steps)
             include_blocks.extend(child_resolved.include_blocks)
+            promoted = _merge_child_inputs(raw, child_raw, overrides)
             root = stack[0] if stack else path
             info = child_resolved.raw.get("recipe") or {}
             include_blocks.append(
@@ -165,9 +167,10 @@ def _resolve_includes(
                     "overrides": dict(overrides),
                     "map_over": map_over,
                     "bindings": bindings,
+                    "inputs": own_inputs,
+                    "promoted": promoted,
                 }
             )
-            _merge_child_inputs(raw, child_raw, overrides)
             continue
 
         if isinstance(step, dict) and "id" in step:
@@ -316,21 +319,35 @@ def _collect_step_ids(steps: list[Any]) -> list[str]:
     return step_ids
 
 
+def _own_inputs(raw: dict[str, Any]) -> dict[str, Any]:
+    """The inputs a file declares itself, copied before its includes add to them."""
+    inputs = raw.get("inputs")
+    return dict(inputs) if isinstance(inputs, dict) else {}
+
+
 def _merge_child_inputs(
     parent_raw: dict[str, Any],
     child_raw: dict[str, Any],
     overrides: dict[str, Any],
-) -> None:
+) -> list[str]:
+    """Copy a child's inputs into its parent where neither sets them.
+
+    Returns:
+        The names added to the parent's inputs, in the child's order.
+    """
     child_inputs = child_raw.get("inputs") or {}
     if not isinstance(child_inputs, dict):
-        return
+        return []
     parent_inputs = parent_raw.setdefault("inputs", {})
     if not isinstance(parent_inputs, dict):
-        return
+        return []
+    promoted: list[str] = []
     for input_name, declaration in child_inputs.items():
         if input_name in overrides or input_name in parent_inputs:
             continue
         parent_inputs[input_name] = declaration
+        promoted.append(input_name)
+    return promoted
 
 
 def _flatten_recipe_yaml(raw: dict[str, Any]) -> dict[str, Any]:

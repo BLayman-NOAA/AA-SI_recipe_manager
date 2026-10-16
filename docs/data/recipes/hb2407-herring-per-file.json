@@ -20,47 +20,8 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": null
-    },
-    {
-      "id": "in:calibration_outputs",
-      "kind": "input",
-      "label": "inputs.calibration_outputs",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "calibration",
-      "description": "Subdirectory name under the pipeline outputs folder for calibration artifacts."
-    },
-    {
-      "id": "in:raw_file_names",
-      "kind": "input",
-      "label": "inputs.raw_file_names",
-      "type": "list",
-      "declared": true,
-      "required": false,
-      "default": [],
-      "description": "Optional subset of filenames within raw_input_folder to use. Empty list means \"use every .raw file in the folder\"."
-    },
-    {
-      "id": "in:file_time_start",
-      "kind": "input",
-      "label": "inputs.file_time_start",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "2024-10-15T13:38:52",
-      "description": null
-    },
-    {
-      "id": "in:file_time_end",
-      "kind": "input",
-      "label": "inputs.file_time_end",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "2024-10-15T23:43:36",
-      "description": null
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
     },
     {
       "id": "in:cal_input_folder",
@@ -70,18 +31,8 @@
       "declared": true,
       "required": false,
       "default": "./HB2407_calibration_files",
-      "description": null
-    },
-    {
-      "id": "in:ping_time_chunk",
-      "kind": "input",
-      "label": "inputs.ping_time_chunk",
-      "type": "int",
-      "declared": true,
-      "required": false,
-      "default": 10000,
-      "description": "Chunk length along ping_time for each file's EchoData (and therefore its zarr checkpoint). A single raw file holds far fewer pings than this, so the default writes each file's checkpoint as one chunk, which is the cheapest shape for a gs://-backed cache. Lower it if a per-file chunk does not fit in memory.",
-      "group": "group:0"
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
     },
     {
       "id": "in:seabed_line_folder",
@@ -92,6 +43,129 @@
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines",
       "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml",
+      "group": "group:0"
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2024-10-15T13:38:52",
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2024-10-15T23:43:36",
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:min_depth",
+      "kind": "input",
+      "label": "inputs.min_depth",
+      "type": "float",
+      "declared": true,
+      "required": false,
+      "default": 0,
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:max_depth",
+      "kind": "input",
+      "label": "inputs.max_depth",
+      "type": "float",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:time_min",
+      "kind": "input",
+      "label": "inputs.time_min",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:time_max",
+      "kind": "input",
+      "label": "inputs.time_max",
+      "type": "str",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:x_axis_units",
+      "kind": "input",
+      "label": "inputs.x_axis_units",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "datetime",
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:y_axis_units",
+      "kind": "input",
+      "label": "inputs.y_axis_units",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "meters",
+      "description": null,
+      "declared_in": "Herring_10-15_per_file.yaml"
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subfolder of the outputs folder for calibration files.",
+      "declared_in": "sub_recipes/processing_lvl_0_calibration.yaml"
+    },
+    {
+      "id": "in:raw_file_names",
+      "kind": "input",
+      "label": "inputs.raw_file_names",
+      "type": "list",
+      "declared": true,
+      "required": false,
+      "default": [],
+      "description": "Optional subset of filenames in raw_input_folder. Empty uses every .raw file.",
+      "declared_in": "sub_recipes/processing_lvl_0_calibration.yaml"
+    },
+    {
+      "id": "in:ping_time_chunk",
+      "kind": "input",
+      "label": "inputs.ping_time_chunk",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 10000,
+      "description": "Ping-time chunk length of each file's EchoData and checkpoint. The default keeps each file in one chunk; lower it if a file does not fit in memory.",
+      "declared_in": "sub_recipes/processing_lvl_1_per_file.yaml",
       "group": "group:0"
     },
     {
@@ -102,7 +176,8 @@
       "declared": true,
       "required": false,
       "default": 600,
-      "description": "Widest hole in the combined seabed line, in seconds, to interpolate across. Consecutive line files butt up against each other to within a second, so this only bites across a survey-leg gap, where interpolating would otherwise draw a straight seafloor over days of missing line.",
+      "description": "Widest gap in the combined seabed line to interpolate across, in seconds. Only a break between survey legs is this wide.",
+      "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml",
       "group": "group:0"
     },
     {
@@ -113,7 +188,8 @@
       "declared": true,
       "required": false,
       "default": 0.99,
-      "description": "Fraction of a file's pings that must land on the line before the step fails. Exposed here because the per-file split makes it stricter than it looks: a short uncovered stretch that is a rounding error against the whole survey can be a large fraction of the one file it falls in, so a threshold that passed survey-wide can fail a single file. Lower it (or widen the seabed_line window) rather than letting uncovered pings through -- create_seafloor_mask drops every sample of a ping whose seafloor is NaN.",
+      "description": "Fraction of a file's pings the line must cover, or the step fails. Per file this is stricter than it looks. Lower it or widen the window rather than let uncovered pings through, since all their samples get masked.",
+      "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml",
       "group": "group:0"
     },
     {
@@ -124,7 +200,8 @@
       "declared": true,
       "required": false,
       "default": true,
-      "description": "Drop trailing range samples that hold no finite Sv anywhere in the survey. Lossless. Ignored when crop_outlier_sigma is set. Set false with the other two unset to disable the crop step."
+      "description": "Drop trailing range samples with no finite Sv anywhere. Lossless, and ignored when crop_outlier_sigma is set. False with the other two unset disables the crop.",
+      "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml"
     },
     {
       "id": "in:crop_max_range_m",
@@ -134,7 +211,8 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Hard depth ceiling for the crop, in metres. Composes with the criteria above rather than replacing them: the shallowest cut wins. Drops samples whether or not they hold data, so a ceiling shallower than the deepest echo of interest silently discards it. Check the crop step's reported \"deepest kept\" against the seabed line before relying on a hand-picked value."
+      "description": "Hard depth ceiling for the crop, in metres; the shallowest cut wins. It drops data too, so check the crop step's \"deepest kept\" against the seabed line before choosing one.",
+      "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml"
     },
     {
       "id": "in:noise_chunk_ping_time",
@@ -144,67 +222,8 @@
       "declared": true,
       "required": false,
       "default": 1000,
-      "description": "Ping-time chunk size applied to the MERGED survey Sv before remove_noise, so its coarsen()-based noise estimate runs in dask-parallel chunks instead of as one in-memory block. Should stay a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly."
-    },
-    {
-      "id": "in:min_depth",
-      "kind": "input",
-      "label": "inputs.min_depth",
-      "type": "float",
-      "declared": true,
-      "required": false,
-      "default": 0,
-      "description": null
-    },
-    {
-      "id": "in:max_depth",
-      "kind": "input",
-      "label": "inputs.max_depth",
-      "type": "float",
-      "declared": true,
-      "required": true,
-      "default": null,
-      "description": null
-    },
-    {
-      "id": "in:time_min",
-      "kind": "input",
-      "label": "inputs.time_min",
-      "type": "str",
-      "declared": true,
-      "required": true,
-      "default": null,
-      "description": null
-    },
-    {
-      "id": "in:time_max",
-      "kind": "input",
-      "label": "inputs.time_max",
-      "type": "str",
-      "declared": true,
-      "required": true,
-      "default": null,
-      "description": null
-    },
-    {
-      "id": "in:x_axis_units",
-      "kind": "input",
-      "label": "inputs.x_axis_units",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "datetime",
-      "description": null
-    },
-    {
-      "id": "in:y_axis_units",
-      "kind": "input",
-      "label": "inputs.y_axis_units",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "meters",
-      "description": null
+      "description": "Ping-time chunk size of the merged Sv before remove_noise, so the noise estimate runs in dask chunks. Keep it a multiple of noise_ping_num.",
+      "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml"
     },
     {
       "id": "in:mvbs_chunk_ping_time",
@@ -214,7 +233,8 @@
       "declared": true,
       "required": false,
       "default": 1000,
-      "description": "Ping-time chunk size applied before compute_mvbs, so it runs in dask-parallel chunks instead of as one in-memory block. mask_sparse_bins materializes Sv eagerly, so chunking has to be re-established after it by a standalone rechunk step."
+      "description": "Ping-time chunk size before compute_mvbs, so it runs in dask chunks. A separate rechunk step sets it, since mask_sparse_bins loads Sv into memory.",
+      "declared_in": "sub_recipes/processing_lvl_3.yaml"
     },
     {
       "id": "in:echodata",
@@ -224,7 +244,8 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML features. Only needed when seafloor_depth below is not wired, and not at all for the features list this recipe currently uses."
+      "description": "EchoData for the 'seafloor_depth' and 'altitude' features, used only when seafloor_depth below is not wired. This recipe's features do not need it.",
+      "declared_in": "sub_recipes/processing_lvl_4.yaml"
     },
     {
       "id": "in:seafloor_depth",
@@ -234,7 +255,8 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Pre-detected seafloor line, 1-D over ping_time, wired from a detect_seafloor step. Takes precedence over echodata for the 'seafloor_depth' and 'altitude' features, so the ML features use the same line the masking stack used. In a per-file pipeline, wire a merge_datasets step that collects the per-file lines rather than the mapped step itself."
+      "description": "Seafloor line over ping_time from a detect_seafloor step, preferred over echodata for the 'seafloor_depth' and 'altitude' features. In a per-file pipeline, wire a merge_datasets step that collects the per-file lines.",
+      "declared_in": "sub_recipes/processing_lvl_4.yaml"
     },
     {
       "id": "initial_setup",
@@ -4560,6 +4582,64 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "raw_input_folder",
+          "type": "path",
+          "required": true,
+          "default": null,
+          "description": "Folder containing the raw acoustic files (local path or gs:// URL)."
+        },
+        {
+          "name": "cal_input_folder",
+          "type": "path",
+          "required": true,
+          "default": null,
+          "description": "Folder containing manufacturer calibration files (local path or gs:// URL)."
+        },
+        {
+          "name": "calibration_outputs",
+          "type": "str",
+          "required": false,
+          "default": "calibration",
+          "description": "Subfolder of the outputs folder for calibration files."
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "Cruise identifier used in calibration mapping."
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "required": false,
+          "default": "<Your Name>",
+          "description": null
+        },
+        {
+          "name": "raw_file_names",
+          "type": "list",
+          "required": false,
+          "default": [],
+          "description": "Optional subset of filenames in raw_input_folder. Empty uses every .raw file."
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Optional inclusive ISO start time, matched to the time in each raw filename. Limits both the processed files and the calibration scan."
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Optional inclusive ISO datetime upper bound; see file_time_start."
+        }
+      ],
       "consumed": [
         {
           "step": "initial_setup",
@@ -4608,6 +4688,22 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "sonar_model",
+          "type": "str",
+          "required": false,
+          "default": "EK80",
+          "description": null
+        },
+        {
+          "name": "ping_time_chunk",
+          "type": "int",
+          "required": false,
+          "default": 10000,
+          "description": "Ping-time chunk length of each file's EchoData and checkpoint. The default keeps each file in one chunk; lower it if a file does not fit in memory."
+        }
+      ],
       "consumed": [
         {
           "step": "combine_raw",
@@ -4766,6 +4862,148 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "echodata",
+          "type": "echodata",
+          "required": true,
+          "default": null,
+          "description": "Per-file EchoData from level 1."
+        },
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "required": true,
+          "default": null,
+          "description": "Standardized calibration data, from gen_cal_mapping."
+        },
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "required": true,
+          "default": null,
+          "description": "Raw channel to calibration key mapping, from gen_cal_mapping."
+        },
+        {
+          "name": "datum_correction_m",
+          "type": "float",
+          "required": false,
+          "default": 0.0,
+          "description": "Metres added to each file's drop keel offset to give depth below the waterline."
+        },
+        {
+          "name": "use_heave",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "description": "Add the per-ping platform heave term to transducer depth."
+        },
+        {
+          "name": "heave_sign",
+          "type": "float",
+          "required": false,
+          "default": 1.0,
+          "description": "Sign applied to platform heave. +1.0 fits the EVL seabed line best on HB2407."
+        },
+        {
+          "name": "seabed_line_folder",
+          "type": "path",
+          "required": true,
+          "default": null,
+          "description": "Folder of Echoview .evl seabed line exports. The files covering the time window are combined into the seafloor; a single .evl file is read whole."
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Optional inclusive ISO start time selecting seabed line files by the time span in their names. Pass the window that selected the raw files."
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Optional inclusive ISO datetime upper bound; see file_time_start."
+        },
+        {
+          "name": "seabed_line_max_gap_s",
+          "type": "float",
+          "required": false,
+          "default": 600,
+          "description": "Widest gap in the combined seabed line to interpolate across, in seconds. Only a break between survey legs is this wide."
+        },
+        {
+          "name": "seabed_line_min_coverage",
+          "type": "float",
+          "required": false,
+          "default": 0.99,
+          "description": "Fraction of a file's pings the line must cover, or the step fails. Per file this is stricter than it looks. Lower it or widen the window rather than let uncovered pings through, since all their samples get masked."
+        },
+        {
+          "name": "surface_mask_depth",
+          "type": "float",
+          "required": false,
+          "default": 10.0,
+          "description": "Depth in meters above which the surface mask excludes samples."
+        },
+        {
+          "name": "seafloor_buffer_m",
+          "type": "float",
+          "required": false,
+          "default": 1.0,
+          "description": "Height of buffer above seabed line to mask."
+        },
+        {
+          "name": "crop_outlier_sigma",
+          "type": "float",
+          "required": false,
+          "default": null,
+          "description": "Standard deviations above the mean deepest sample at which a ping counts as an outlier; the crop lands on the deepest kept ping. Unset falls back to the lossless trim below, which one glitch ping defeats."
+        },
+        {
+          "name": "crop_outlier_margin",
+          "type": "float",
+          "required": false,
+          "default": 1.5,
+          "description": "Multiplier on (mean + crop_outlier_sigma * sd) giving the reject threshold. Raise it to flag fewer pings."
+        },
+        {
+          "name": "crop_trailing_all_nan",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "description": "Drop trailing range samples with no finite Sv anywhere. Lossless, and ignored when crop_outlier_sigma is set. False with the other two unset disables the crop."
+        },
+        {
+          "name": "crop_max_range_m",
+          "type": "float",
+          "required": false,
+          "default": null,
+          "description": "Hard depth ceiling for the crop, in metres; the shallowest cut wins. It drops data too, so check the crop step's \"deepest kept\" against the seabed line before choosing one."
+        },
+        {
+          "name": "noise_range_sample_num",
+          "type": "int",
+          "required": false,
+          "default": 10,
+          "description": "Range samples per bin for background noise estimation."
+        },
+        {
+          "name": "noise_ping_num",
+          "type": "int",
+          "required": false,
+          "default": 5,
+          "description": "Pings per bin for background noise estimation."
+        },
+        {
+          "name": "noise_chunk_ping_time",
+          "type": "int",
+          "required": false,
+          "default": 1000,
+          "description": "Ping-time chunk size of the merged Sv before remove_noise, so the noise estimate runs in dask chunks. Keep it a multiple of noise_ping_num."
+        }
+      ],
       "consumed": [
         {
           "step": "remove_noise",
@@ -4847,6 +5085,43 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "sv_clean_unmasked",
+          "type": "dataset",
+          "required": true,
+          "default": null,
+          "description": "Clean Sv dataset after noise removal and before sparse-bin masking."
+        },
+        {
+          "name": "range_bin",
+          "type": "str",
+          "required": false,
+          "default": "20m",
+          "description": "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "required": false,
+          "default": "20s",
+          "description": "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+        },
+        {
+          "name": "nan_threshold",
+          "type": "float",
+          "required": false,
+          "default": 0.6,
+          "description": "Fraction of NaN samples in a bin above which the sparse-bin mask excludes it."
+        },
+        {
+          "name": "mvbs_chunk_ping_time",
+          "type": "int",
+          "required": false,
+          "default": 1000,
+          "description": "Ping-time chunk size before compute_mvbs, so it runs in dask chunks. A separate rechunk step sets it, since mask_sparse_bins loads Sv into memory."
+        }
+      ],
       "consumed": [
         {
           "step": "compute_mvbs",
@@ -5013,6 +5288,113 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "mvbs",
+          "type": "dataset",
+          "required": true,
+          "default": null,
+          "description": "MVBS dataset with line overlay variables added."
+        },
+        {
+          "name": "echodata",
+          "type": "echodata",
+          "required": false,
+          "default": null,
+          "description": "EchoData for the 'seafloor_depth' and 'altitude' features, used only when seafloor_depth below is not wired. This recipe's features do not need it."
+        },
+        {
+          "name": "seafloor_depth",
+          "type": "dataarray",
+          "required": false,
+          "default": null,
+          "description": "Seafloor line over ping_time from a detect_seafloor step, preferred over echodata for the 'seafloor_depth' and 'altitude' features. In a per-file pipeline, wire a merge_datasets step that collects the per-file lines."
+        },
+        {
+          "name": "overlay_line_var",
+          "type": "str",
+          "required": false,
+          "default": "overlay_line",
+          "description": "Line variable to overlay on the clustering report plot."
+        },
+        {
+          "name": "sv_clean_unmasked",
+          "type": "dataset",
+          "required": true,
+          "default": null,
+          "description": "Pre-sparse-mask Sv, the backdrop and ping reference for the ML and cluster plots."
+        },
+        {
+          "name": "cell_stats_sv",
+          "type": "dataset",
+          "required": true,
+          "default": null,
+          "description": "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+        },
+        {
+          "name": "min_depth",
+          "type": "float",
+          "required": false,
+          "default": 0,
+          "description": "Shallowest depth in meters shown by the ML and clustering echograms."
+        },
+        {
+          "name": "max_depth",
+          "type": "float",
+          "required": false,
+          "default": 100,
+          "description": "Deepest depth in meters shown by the ML and clustering echograms."
+        },
+        {
+          "name": "time_min",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "Start of the ML and clustering echograms, UTC. Omit to start at the first ping."
+        },
+        {
+          "name": "time_max",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "End of the ML and clustering echograms, UTC. Omit to run to the last ping."
+        },
+        {
+          "name": "x_axis_units",
+          "type": "str",
+          "required": false,
+          "default": "datetime",
+          "description": "Units for the x-axis of the ML and clustering echograms."
+        },
+        {
+          "name": "y_axis_units",
+          "type": "str",
+          "required": false,
+          "default": "meters",
+          "description": "Units for the y-axis of the ML and clustering echograms."
+        },
+        {
+          "name": "hdbscan_min_cluster_size_fraction",
+          "type": "float",
+          "required": false,
+          "default": 0.001,
+          "description": "Smallest cluster HDBSCAN keeps, as a fraction of the sampled points."
+        },
+        {
+          "name": "hdbscan_min_samples",
+          "type": "int",
+          "required": false,
+          "default": 7,
+          "description": "Neighbourhood size for judging density. Higher leaves more points as noise."
+        },
+        {
+          "name": "hdbscan_cluster_selection_method",
+          "type": "str",
+          "required": false,
+          "default": "eom",
+          "description": "How clusters are chosen: 'eom' for excess of mass, 'leaf' for the finest leaves."
+        }
+      ],
       "consumed": []
     }
   ]

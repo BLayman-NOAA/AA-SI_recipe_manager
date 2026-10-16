@@ -20,37 +20,8 @@
       "declared": true,
       "required": false,
       "default": "./raw",
-      "description": "Folder of .raw files, read for channel configuration only."
-    },
-    {
-      "id": "in:calibration_outputs",
-      "kind": "input",
-      "label": "inputs.calibration_outputs",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder for the calibration artifacts."
-    },
-    {
-      "id": "in:file_time_start",
-      "kind": "input",
-      "label": "inputs.file_time_start",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "Debugging knob: inclusive ISO datetime restricting the scan to raw files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Leave unset to scan from the start of the folder. On a gs:// raw folder the filter runs before any file is downloaded."
-    },
-    {
-      "id": "in:file_time_end",
-      "kind": "input",
-      "label": "inputs.file_time_end",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": null,
-      "description": "Debugging knob: inclusive ISO datetime upper bound. Leave unset to scan to the end of the folder. See file_time_start."
+      "description": "Folder of .raw files, read for channel configuration only.",
+      "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
       "id": "in:cal_input_folder",
@@ -60,7 +31,19 @@
       "declared": true,
       "required": false,
       "default": "./HB2407_calibration_files",
-      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).",
+      "declared_in": "calibration_pipeline_fused.yaml"
+    },
+    {
+      "id": "in:calibration_outputs",
+      "kind": "input",
+      "label": "inputs.calibration_outputs",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "calibration",
+      "description": "Subdirectory under the run's outputs folder for the calibration artifacts.",
+      "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
       "id": "in:cruise_id",
@@ -70,7 +53,8 @@
       "declared": true,
       "required": false,
       "default": "HB2407",
-      "description": "Recorded in every generated single-channel file so it stays traceable to the survey."
+      "description": "Recorded in every generated single-channel file so it stays traceable to the survey.",
+      "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
       "id": "in:record_author",
@@ -80,7 +64,30 @@
       "declared": true,
       "required": false,
       "default": "Brett Layman",
-      "description": null
+      "description": null,
+      "declared_in": "calibration_pipeline_fused.yaml"
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Inclusive ISO datetime lower bound on the raw file names' times, for debugging. Unset scans from the start of the folder.",
+      "declared_in": "calibration_pipeline_fused.yaml"
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Inclusive ISO datetime upper bound, for debugging. Unset scans to the end.",
+      "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
       "id": "in:conflict_resolution",
@@ -90,7 +97,8 @@
       "declared": true,
       "required": false,
       "default": "error",
-      "description": "What to do when one raw channel matches several calibration files. \"error\" lists the conflicts and stops; \"interactive\" prompts for a choice, which needs a terminal and so cannot run unattended."
+      "description": "When a raw channel matches several calibration files: \"error\" lists them and stops, and \"interactive\" prompts, which needs a terminal.",
+      "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
       "id": "initial_setup",

@@ -323,3 +323,69 @@ class TestDryRunPublicAPI:
         assert step.version_status == "ok"
         (line,) = [ln for ln in report.format_text().splitlines() if "plain" in ln]
         assert line.endswith("custom [OK]")
+
+
+UNSET_INPUT_RECIPE = """\
+    recipe: {name: unset_input, version: "1.0", schema_version: "1"}
+    inputs:
+      seconds: {type: float}
+    steps:
+      - id: start
+        op: custom
+        custom_spec:
+          description: Return the constant 7.
+          callable_path: _stage9_helpers.const7
+          outputs:
+            v: {type: int}
+          output_map: {v: __return__}
+      - id: wait
+        op: custom
+        inputs:
+          x: ${start.v}
+        params:
+          seconds: ${inputs.seconds}
+        custom_spec:
+          description: Sleep, then pass the value on.
+          callable_path: _stage9_helpers.sleep_for
+          inputs:
+            x: {type: int}
+          params:
+            seconds: {type: float, required: __REQUIRED__}
+          outputs:
+            out: {type: int}
+          output_map: {out: __return__}
+    """
+
+
+class TestUnsetRecipeInputs:
+    def test_required_param_fed_by_an_unset_input_is_an_error(self, tmp_path):
+        p = _write_recipe(tmp_path, UNSET_INPUT_RECIPE.replace("__REQUIRED__", "true"))
+        report = aa_recipe_manager.dry_run(p, check_versions=False)
+        assert not report.is_valid
+        (error,) = report.errors
+        assert "step 'wait' param 'seconds' needs recipe input 'seconds'" in error
+
+    def test_a_value_for_the_input_clears_the_error(self, tmp_path):
+        p = _write_recipe(tmp_path, UNSET_INPUT_RECIPE.replace("__REQUIRED__", "true"))
+        report = aa_recipe_manager.dry_run(p, inputs={"seconds": 0.1}, check_versions=False)
+        assert report.is_valid, report.errors
+
+    def test_optional_param_fed_by_an_unset_input_is_fine(self, tmp_path):
+        p = _write_recipe(tmp_path, UNSET_INPUT_RECIPE.replace("__REQUIRED__", "false"))
+        report = aa_recipe_manager.dry_run(p, check_versions=False)
+        assert report.is_valid, report.errors
+
+    def test_cli_dry_run_reads_the_run_config_inputs(self, tmp_path):
+        from click.testing import CliRunner
+
+        from aa_recipe_manager.cli import main
+
+        p = _write_recipe(tmp_path, UNSET_INPUT_RECIPE.replace("__REQUIRED__", "true"))
+        runner = CliRunner()
+        failed = runner.invoke(main, ["dry-run", str(p)])
+        assert failed.exit_code == 1
+        assert "needs recipe input 'seconds'" in failed.output
+        config = tmp_path / "recipe.config.yaml"
+        config.write_text("inputs:\n  seconds: 0.1\n")
+        passed = runner.invoke(main, ["dry-run", str(p)])
+        assert passed.exit_code == 0, passed.output

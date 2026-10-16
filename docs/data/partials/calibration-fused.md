@@ -1,6 +1,6 @@
 === "Flow diagram"
 
-    <div class="recipe-flow" data-recipe="calibration-fused" markdown>
+    <div class="recipe-viewer" data-recipe="calibration-fused" data-slug="calibration-fused" markdown>
 
     - `initial_setup`: [`initial_setup`](../ops/initial_setup.md)
     - `gen_cal_mapping`: [`generate_standardized_cal_mapping`](../ops/generate_standardized_cal_mapping.md)
@@ -14,54 +14,33 @@
     ```yaml
     # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/calibration_pipeline.yaml
 
-    # HB2407 Calibration Only - Standardize Calibration Files and Build the Mapping File
+    # HB2407 calibration in one step: standardize the calibration files and build
+    # the mapping.
     #
-    #   initial_setup           resolve the raw file set and the calibration
-    #                           output directory under outputs/
-    #   gen_cal_mapping         parse the .cal / .xml files, write one standardized
-    #                           single-channel file per channel, match each raw
-    #                           channel to its calibration data, write the mapping
+    # gen_cal_mapping parses the .cal and .xml files, writes one standardized file
+    # per channel, and maps each raw channel to its calibration. It is one cache
+    # entry and always re-runs; calibration_pipeline_staged.yaml splits it into
+    # separately cached steps.
     #
-    # Artifacts land under <outputs_dir>/<calibration_outputs>/:
+    #   aa-recipe run calibration_pipeline.yaml
     #
-    #   raw_file_configs/                  raw_file_configs.yaml (channel config
-    #                                      scanned out of the raw files)
-    #   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
-    #   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
+    # Set raw_input_folder and cal_input_folder in the run config rather than here.
+    # The input folders may be gs:// URLs, which needs pip install
+    # aa-si-calibration[gcs]. outputs_dir must stay local.
+    # The defaults scan the whole raw folder; set the time bounds to debug on a
+    # subset.
+    # The saved raw scan is reused while the raw folder and window are unchanged,
+    # and the manufacturer files are parsed again only when
+    # single_channel_calibration_files/ is empty.
+    #
+    # Outputs under <outputs_dir>/<calibration_outputs>/:
+    #
+    #   raw_file_configs/                  raw_file_configs.yaml
+    #   single_channel_calibration_files/  one .yaml per channel, required by NCEI
+    #   mapping_files/                     channel_mapping.yaml (required by NCEI),
     #                                      calibration_configurations.yaml
     #   unused_calibration_files/          cal files no raw channel matched
     #   logs/                              calibration_flags.json
-    #
-    # outputs_dir comes from the run config (aa-recipe.config.yaml) and must stay
-    # local. The input folders may be local paths or gs:// URLs.
-    #
-    # gen_cal_mapping is marked regenerate: always. Its real product is the files
-    # on disk, not the two dicts it returns, and a cache hit would hand back the
-    # dicts without rewriting anything. Re-running this recipe always rewrites the
-    # calibration outputs.
-    #
-    # The defaults process the WHOLE raw folder: both time bounds are unset, so no
-    # window is applied. They are here for debugging - narrowing to one day turns a
-    # survey-length scan into a couple of seconds. Every calibration file in
-    # cal_input_folder is parsed either way, and any that no scanned channel
-    # matches is moved to unused_calibration_files/.
-    #
-    # The op reuses the saved raw_file_configs.yaml only while the raw folder's contents and the window
-    # still match what produced it, and re-parses the manufacturer files only when
-    # single_channel_calibration_files/ is empty. Change raw_input_folder or a
-    # bound and the scan re-runs; leave them alone and it does not.
-    #
-    # Both input folders may be gs:// URLs. The raw folder is scanned one file at
-    # a time (download, read the channel config, delete the local copy) and the
-    # calibration folder is small enough to download whole. Remote input needs the
-    # gcs extra: pip install aa-si-calibration[gcs]. Outputs always stay local,
-    # wherever the inputs came from.
-    #
-    # Usage:
-    #   aa-recipe run calibration_pipeline.yaml 
-    #
-    # It's recommended that you use aa-calibration_pipeline.config.yaml to set
-    # the raw_file_folder and cal_input_folder locations, which override the recipe input defaults
 
 
     recipe:
@@ -94,27 +73,20 @@
         default: "Brett Layman"
       file_time_start:
         type: str
-        # Unset (the default) means no lower bound.
         required: false
         description: >
-          Debugging knob: inclusive ISO datetime restricting the scan to raw files
-          whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this
-          bound. Leave unset to scan from the start of the folder. On a gs:// raw
-          folder the filter runs before any file is downloaded.
+          Inclusive ISO datetime lower bound on the raw file names' times, for
+          debugging. Unset scans from the start of the folder.
       file_time_end:
         type: str
-        # Unset (the default) means no upper bound.
         required: false
-        description: >
-          Debugging knob: inclusive ISO datetime upper bound. Leave unset to scan
-          to the end of the folder. See file_time_start.
+        description: "Inclusive ISO datetime upper bound, for debugging. Unset scans to the end."
       conflict_resolution:
         type: str
         default: "error"
         description: >
-          What to do when one raw channel matches several calibration files.
-          "error" lists the conflicts and stops; "interactive" prompts for a
-          choice, which needs a terminal and so cannot run unattended.
+          When a raw channel matches several calibration files: "error" lists them
+          and stops, and "interactive" prompts, which needs a terminal.
 
     steps:
 
@@ -137,12 +109,10 @@
           cruise_id: ${inputs.cruise_id}
           record_author: ${inputs.record_author}
           short_filenames: true
-          # Keep unmatched calibration files rather than deleting them: they are
-          # the evidence when a channel comes out unmapped.
+          # Keep unmatched calibration files, to explain any unmapped channel.
           keep_unused: true
           conflict_resolution: ${inputs.conflict_resolution}
-          # Keep these in step with initial_setup's window so the channel-config
-          # scan covers exactly the files the run selected.
+          # Keep this window the same as initial_setup's.
           file_time_start: ${inputs.file_time_start}
           file_time_end: ${inputs.file_time_end}
     ```

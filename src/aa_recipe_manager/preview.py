@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.executor.checkpoint import (
     blockers_note,
+    check_run_only,
     check_step_ids,
     compute_step_fingerprints,
     entry_dir_parts,
@@ -232,13 +233,16 @@ def plan_preview(
     storage_options: dict[str, Any] | None = None,
     fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
     instance_probe_limit: int = 32,
+    base_dir: str | Path | None = None,
 ) -> PlanPreview:
     """Predict, per step, what a run with these arguments would do.
 
     The arguments mean what they mean to :func:`api.execute`, and the run is
     planned with the user tier as the write tier. Raises
     :class:`~aa_recipe_manager.exceptions.UpstreamNotCachedError` when
-    ``only`` cannot be satisfied, as the run would.
+    ``only`` cannot be satisfied: a step other than a target, or any instance
+    of a mapped or swept one, would compute. A mapped step whose instances are
+    not known until its source runs counts as not cached.
 
     Args:
         dag: The pipeline to preview.
@@ -260,6 +264,9 @@ def plan_preview(
         instance_probe_limit: Fanned out steps with more instances than this
             are counted from one listing of the step's cache directory per
             tier rather than probed instance by instance.
+        base_dir: Directory that relative local paths are fingerprinted under
+            (default: the working directory); the hashes do not depend on
+            which.
 
     Returns:
         The :class:`PlanPreview`.
@@ -292,6 +299,7 @@ def plan_preview(
         force_steps=force_steps,
         only=only,
         fingerprint_cache=fingerprint_cache,
+        base_dir=base_dir,
     )
     store = ctx.checkpoints
     hashes = ctx.step_hashes
@@ -302,6 +310,7 @@ def plan_preview(
             ctx.pipeline_inputs,
             storage_options=storage_options,
             path_fingerprint_cache=fingerprint_cache,
+            base_dir=base_dir,
         ).hashes
 
     plan = plan_execution(
@@ -312,7 +321,6 @@ def plan_preview(
         outputs_loc=ctx.outputs_loc,
         targets=targets,
         force_steps=force_steps,
-        only=only,
     )
 
     # Pinned steps are the ones only the target pins put in the policy.
@@ -335,6 +343,16 @@ def plan_preview(
                     dag, chain.source_ref, members, plan, hashes, forced, probe
                 )
             )
+    if only:
+        check_run_only(
+            dag,
+            targets,
+            plan.must_run,
+            fanned_out_missing=[
+                sid for sid in chain_members
+                if sid in previews and _may_compute(previews[sid])
+            ],
+        )
 
     plain = [
         sid for sid in dag.topological_order
@@ -438,6 +456,17 @@ def _recompute_reason(
     if regenerate != "off" and node.step.regenerate in ("always", "if-missing"):
         return f"recomputes: regenerate: {node.step.regenerate}"
     return None
+
+
+def _may_compute(preview: StepPreview) -> bool:
+    """Whether a fanned out step computes an instance, or may.
+
+    A step whose instances are not known before its source runs may compute
+    any of them, so a run only counts it as not cached.
+    """
+    if preview.planned == "unknown":
+        return True
+    return preview.planned == "compute" and preview.instances != 0
 
 
 def _plain_preview(

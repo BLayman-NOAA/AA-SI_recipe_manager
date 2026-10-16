@@ -27,8 +27,8 @@ Phases 1 and 2 must share the same cache and outputs folders, so keep their
 
 The recipe repeats phase 1's four steps word for word, which is what lets it
 load them from phase 1's cache instead of scanning the survey again. The
-diagram shows only the step this phase adds, `build_cal_mapping`, with the
-phase 1 steps feeding it drawn in pink.
+diagram therefore shows all five steps: the first four are phase 1's, and
+`build_cal_mapping` is the one this phase adds.
 
 A channel reviewed in phase 1 can be edited or dropped and passed back as
 `override_channels`, which rewrites the standardized folder to match, so the

@@ -22,7 +22,7 @@
 import type { Direction } from '../state/view';
 import {
   absoluteBoxes,
-  LABEL_HEIGHT,
+  labelHeight,
   labelWidth,
   type Layout,
   type LayoutBox,
@@ -73,6 +73,8 @@ const OUT_OFFSET = 32;
 const BOXES_GAP = 16;
 /** Distance of the first and last line from the end of a box side. */
 const BOX_INSET = 10;
+/** Length of the stretch of a group's edge, past its header label, a line into the group may end on. */
+const GROUP_LANDING = 80;
 /** How far a label moves at a time when its first place is taken. */
 const LABEL_SLIDE = 4;
 /** The least distance between a label and any line but its own. */
@@ -159,6 +161,11 @@ function coreExtent(boxes: LayoutBox[], points: Point[]) {
   };
 }
 
+/** The header label of a group container, in its top left corner. */
+function groupHeader(box: LayoutBox, width: number): LayoutBox {
+  return { x: box.x + 10, y: box.y + 8, width, height: 20 };
+}
+
 /** Places for a label beside each segment of its own route, as a last resort. */
 function labelPlacesAlong(points: Point[], width: number, fromEnd: boolean): LayoutBox[] {
   const legs = segments(points);
@@ -168,13 +175,13 @@ function labelPlacesAlong(points: Point[], width: number, fromEnd: boolean): Lay
     const box = segmentBox(a, b);
     if (box.height === 0) {
       for (let x = box.x + 8; x + width <= box.x + box.width - 8; x += 2 * LABEL_SLIDE) {
-        places.push({ x, y: box.y - LABEL_HEIGHT - 1, width, height: LABEL_HEIGHT });
-        places.push({ x, y: box.y + 1, width, height: LABEL_HEIGHT });
+        places.push({ x, y: box.y - labelHeight() - 1, width, height: labelHeight() });
+        places.push({ x, y: box.y + 1, width, height: labelHeight() });
       }
     } else {
-      for (let y = box.y + 8; y + LABEL_HEIGHT <= box.y + box.height - 8; y += 2 * LABEL_SLIDE) {
-        places.push({ x: box.x + 4, y, width, height: LABEL_HEIGHT });
-        places.push({ x: box.x - 4 - width, y, width, height: LABEL_HEIGHT });
+      for (let y = box.y + 8; y + labelHeight() <= box.y + box.height - 8; y += 2 * LABEL_SLIDE) {
+        places.push({ x: box.x + 4, y, width, height: labelHeight() });
+        places.push({ x: box.x - 4 - width, y, width, height: labelHeight() });
       }
     }
   }
@@ -202,7 +209,7 @@ export function routeBuses(input: BusInput): Layout {
   // Real coordinates: nodes, group headers and core labels, then core lines.
   const things: Obstacle[] = Object.entries(input.core).map(([id, box]) => ({ id, ...box }));
   for (const [id, { box, labelWidth: width }] of Object.entries(input.containers)) {
-    things.push({ id: `${id}#label`, x: box.x + 10, y: box.y + 8, width, height: 20 });
+    things.push({ id: `${id}#label`, ...groupHeader(box, width) });
   }
   input.coreRoutes.forEach((route, index) => {
     if (route.label) things.push({ id: `#core-label-${index}`, ...route.label });
@@ -220,8 +227,17 @@ export function routeBuses(input: BusInput): Layout {
     obstacles,
     input.coreRoutes.flatMap((route) => route.points.map(point)),
   );
-  /** Whether a box hits a node, group header or core label other than the line's end. */
-  const blocked = (box: LayoutBox, end?: string) => obstacles.some((o) => o.id !== end && overlaps(box, o));
+  /** The sides of each group a line crosses, which no line may run along. */
+  const walls = Object.values(input.containers).flatMap(({ box }) => {
+    const r = rect(box);
+    return [r.x, r.x + r.width].map((x) => ({ x, top: r.y, bottom: r.y + r.height }));
+  });
+  const alongWall = (box: LayoutBox) =>
+    box.width < 0.5 &&
+    walls.some((wall) => Math.abs(box.x - wall.x) < DROP_STEP && box.y < wall.bottom && box.y + box.height > wall.top);
+  /** Whether a box hits a node, group header or core label other than the line's end, or runs along a group side. */
+  const blocked = (box: LayoutBox, end?: string) =>
+    alongWall(box) || obstacles.some((o) => o.id !== end && overlaps(box, o));
   const free = (points: Point[], end: string) => segments(points).every(([a, b]) => !blocked(segmentBox(a, b), end));
 
   /** Where along a node's side a straight line to it is clear: its center first, then out from it. */
@@ -237,16 +253,28 @@ export function routeBuses(input: BusInput): Layout {
 
   /** Drops beside a column so far, by the column's rounded edge. */
   const drops = new Map<number, number>();
-  /** The first k from this column's next drop whose legs are clear, or that next drop. */
-  const dropBeside = (edge: number, legs: (k: number) => Point[], end: string): number => {
+  /** The first k from this column's next drop whose legs are clear, taken, or null when none is. */
+  const clearDrop = (edge: number, legs: (k: number) => Point[], end: string): number | null => {
     const key = Math.round(edge);
     const first = drops.get(key) ?? 0;
-    let k = first;
-    while (k < first + MAX_DROPS && !free(legs(k), end)) k += 1;
-    if (k === first + MAX_DROPS) k = first;
+    for (let k = first; k < first + MAX_DROPS; k += 1) {
+      if (free(legs(k), end)) {
+        drops.set(key, k + 1);
+        return k;
+      }
+    }
+    return null;
+  };
+  /** This column's next drop, taken. */
+  const nextDrop = (edge: number): number => {
+    const key = Math.round(edge);
+    const k = drops.get(key) ?? 0;
     drops.set(key, k + 1);
     return k;
   };
+  /** The first k from this column's next drop whose legs are clear, or that next drop. */
+  const dropBeside = (edge: number, legs: (k: number) => Point[], end: string): number =>
+    clearDrop(edge, legs, end) ?? nextDrop(edge);
 
   const positions: Positions = {};
   const routes: Record<string, Route> = {};
@@ -256,27 +284,52 @@ export function routeBuses(input: BusInput): Layout {
     pending.push({ edge, box: rect(label), ...moves, slide: point(moves.slide) });
   };
 
+  /**
+   * A target's box and the part of its top edge a line may end on: all of a
+   * node's, and for a group, near its header label so the line reads as the
+   * group's. Left to right that is a stretch just past the label; top to
+   * bottom it is level with the label, above the members and their lines.
+   */
+  const targetBox = (id: string): { t: LayoutBox; land: LayoutBox } | null => {
+    if (input.core[id]) return { t: rect(input.core[id]), land: rect(input.core[id]) };
+    const group = input.containers[id];
+    if (!group) return null;
+    const t = rect(group.box);
+    const header = rect(groupHeader(group.box, group.labelWidth));
+    if (flip) return { t, land: { ...t, x: header.x, width: header.width } };
+    const left = header.x + header.width + DROP_STEP;
+    const width = Math.min(GROUP_LANDING, t.x + t.width - BOX_INSET - left);
+    return { t, land: width >= 2 * BOX_INSET ? { ...t, x: left, width } : t };
+  };
+
   const box = input.inputsBox;
   if (box) {
     // A target whose column has a node or label above its whole top edge is
     // reached by a drop beside the column.
     const targets = box.targets
-      .filter((target) => input.core[target.id])
-      .map((target) => {
-        const t = rect(input.core[target.id]);
-        const cx = centerX(t);
+      .flatMap((target) => {
+        const found = targetBox(target.id);
+        return found ? [{ ...target, ...found }] : [];
+      })
+      .map(({ t, land, ...target }) => {
+        const cx = centerX(land);
         const width = labelWidth(target.label);
-        const x = straightAt(t, extent.top - 1, t.y, target.id);
+        const x = straightAt(land, extent.top - 1, t.y, target.id);
         if (x !== null) return { ...target, t, cx: x, width, straight: true, turnX: x, endY: t.y };
         const endY = t.y - APPROACH;
-        const at = (k: number) => t.x - DROP_IN - k * DROP_STEP;
-        const legs = (k: number) => [
+        const left = (k: number) => t.x - DROP_IN - k * DROP_STEP;
+        const right = (k: number) => t.x + t.width + DROP_IN + k * DROP_STEP;
+        const legs = (at: (k: number) => number) => (k: number) => [
           { x: at(k), y: extent.top - 1 },
           { x: at(k), y: endY },
           { x: cx, y: endY },
           { x: cx, y: t.y },
         ];
-        return { ...target, t, cx, width, straight: false, turnX: at(dropBeside(t.x, legs, target.id)), endY };
+        // Left of the column, else right of it, else the next drop left of it.
+        const k = clearDrop(t.x, legs(left), target.id);
+        const kRight = k === null ? clearDrop(t.x + t.width, legs(right), target.id) : null;
+        const turnX = k !== null ? left(k) : kRight !== null ? right(kRight) : left(nextDrop(t.x));
+        return { ...target, t, cx, width, straight: false, turnX, endY };
       })
       .sort((a, b) => b.turnX - a.turnX);
     const feeders = box.feeders.filter((feeder) => input.core[feeder.id]);
@@ -288,40 +341,56 @@ export function routeBuses(input: BusInput): Layout {
     // directly when they fit; otherwise they leave the bottom edge as a
     // nested bracket of exits.
     const direct = flip && boxSize.height >= 2 * BOX_INSET + Math.max(0, n - 1) * LANE;
+    const exitRoom = boxSize.width - 2 * BOX_INSET - feeders.length * DROP_STEP;
+    const exitStep = n > 1 ? Math.max(2, Math.min(DROP_STEP, exitRoom / (n - 1))) : DROP_STEP;
+    // Left to right the box sits beside the core, level with its top node, and
+    // the lanes rise from its top edge: the top lane leaves leftmost, so they
+    // nest. It moves right until an exit would reach its lane's label, which
+    // ends just before its own turn, but stays clear of the core's left edge.
+    const exitAt = (i: number) => (flip ? BOX_INSET : BOX_INSET + i * exitStep);
     const place = {
-      x: extent.left - BOX_GAP - (flip ? 0 : labelMax) - boxSize.width,
-      y: direct ? channelTop - BOX_INSET : channelTop - BOX_GAP - boxSize.height,
+      x: flip
+        ? extent.left - BOX_GAP - boxSize.width
+        : Math.min(
+            extent.left - BOX_GAP - boxSize.width,
+            ...targets.map((target, i) => target.turnX - 6 - target.width - 4 - exitAt(i)),
+          ),
+      y: flip
+        ? direct
+          ? channelTop - BOX_INSET
+          : channelTop - BOX_GAP - boxSize.height
+        : Math.min(...Object.values(input.core).map((node) => node.y)),
       ...boxSize,
     };
     positions[box.id] = rect(place);
     const boxRight = place.x + place.width;
     const boxBottom = place.y + place.height;
-    const exitRoom = place.width - 2 * BOX_INSET - feeders.length * DROP_STEP;
-    const exitStep = n > 1 ? Math.max(2, Math.min(DROP_STEP, exitRoom / (n - 1))) : DROP_STEP;
 
     targets.forEach((target, i) => {
       const laneY = channelTop + i * LANE;
       const { t, cx, turnX, endY, width } = target;
-      const exitX = boxRight - BOX_INSET - i * exitStep;
-      const start = direct ? [{ x: boxRight, y: laneY }] : [{ x: exitX, y: boxBottom }, { x: exitX, y: laneY }];
+      const exitX = flip ? boxRight - BOX_INSET - i * exitStep : place.x + exitAt(i);
+      const exitY = flip ? boxBottom : place.y;
+      const start = direct ? [{ x: boxRight, y: laneY }] : [{ x: exitX, y: exitY }, { x: exitX, y: laneY }];
       const points = target.straight
         ? [...start, { x: cx, y: laneY }, { x: cx, y: t.y }]
         : [...start, { x: turnX, y: laneY }, { x: turnX, y: endY }, { x: cx, y: endY }, { x: cx, y: t.y }];
       if (flip) {
-        const label = { x: turnX - LABEL_HEIGHT - 1, y: endY - 6 - width, width: LABEL_HEIGHT, height: width };
+        const label = { x: turnX - labelHeight() - 1, y: endY - 6 - width, width: labelHeight(), height: width };
         const room = label.y - laneY - 4;
         save(`e:${box.id}->${target.id}`, points, label, { slide: { x: 0, y: -LABEL_SLIDE }, room, fromEnd: true });
       } else {
-        const label = { x: turnX - 6 - width, y: laneY - LABEL_HEIGHT - 1, width, height: LABEL_HEIGHT };
+        const label = { x: turnX - 6 - width, y: laneY - labelHeight() - 1, width, height: labelHeight() };
         const room = label.x - (direct ? boxRight : exitX) - 4;
         save(`e:${box.id}->${target.id}`, points, label, { slide: { x: -LABEL_SLIDE, y: 0 }, room, fromEnd: true });
       }
     });
 
-    // Ghost lines run up to a track under the lanes, then into the box: its
-    // side when the track meets it, else its bottom left of every lane exit.
-    // The rightmost ghost takes the top track and the lower tracks enter the
-    // box further left, so ghost lines nest like the lanes.
+    // Ghost lines run up to a track under the lanes, then into the box. Top to
+    // bottom they enter its side when the track meets it, else its bottom left
+    // of every lane exit; left to right they drop into its top, right of every
+    // lane exit. The rightmost ghost takes the top track, and the tracks nest
+    // like the lanes.
     const trackTop = channelTop + n * LANE;
     feeders
       .map((feeder) => ({ ...feeder, g: rect(input.core[feeder.id]) }))
@@ -330,7 +399,9 @@ export function routeBuses(input: BusInput): Layout {
         const { g } = feeder;
         const gx = centerX(g);
         const trackY = trackTop + j * DROP_STEP;
-        const entryX = place.x + BOX_INSET + (feeders.length - 1 - j) * DROP_STEP;
+        const entryX = flip
+          ? place.x + BOX_INSET + (feeders.length - 1 - j) * DROP_STEP
+          : place.x + exitAt(Math.max(0, n - 1)) + (j + 1) * DROP_STEP;
         let points = [{ x: gx, y: g.y }, { x: gx, y: trackY }];
         let trackStart = gx;
         if (!free(points, feeder.id)) {
@@ -346,14 +417,15 @@ export function routeBuses(input: BusInput): Layout {
           trackStart = at(k);
           points = legs(k);
         }
-        const side = trackY < boxBottom - BOX_INSET / 2;
+        const side = flip && trackY < boxBottom - BOX_INSET / 2;
         const end = side ? boxRight : entryX;
-        points.push(...(side ? [{ x: boxRight, y: trackY }] : [{ x: entryX, y: trackY }, { x: entryX, y: boxBottom }]));
+        const entryY = flip ? boxBottom : place.y;
+        points.push(...(side ? [{ x: boxRight, y: trackY }] : [{ x: entryX, y: trackY }, { x: entryX, y: entryY }]));
         // Beside the track, sliding along it away from the box.
         const width = labelWidth(feeder.label);
         const label = flip
-          ? { x: end + 8, y: trackY + 4, width: LABEL_HEIGHT, height: width }
-          : { x: end + 8, y: trackY - LABEL_HEIGHT - 1, width, height: LABEL_HEIGHT };
+          ? { x: end + 8, y: trackY + 4, width: labelHeight(), height: width }
+          : { x: end + 8, y: trackY - labelHeight() - 1, width, height: labelHeight() };
         const room = trackStart - 4 - label.x - label.width;
         save(`e:${feeder.id}->${box.id}`, points, label, { slide: { x: LABEL_SLIDE, y: 0 }, room, fromEnd: true });
       });
@@ -417,10 +489,10 @@ export function routeBuses(input: BusInput): Layout {
     const edge = `e:${producer.owner}->${producer.id}`;
     // At the box end of the line, sliding back along it.
     if (flip) {
-      const label = { x: bx - LABEL_HEIGHT - 1, y: outBox.y - 8 - width, width: LABEL_HEIGHT, height: width };
+      const label = { x: bx - labelHeight() - 1, y: outBox.y - 8 - width, width: labelHeight(), height: width };
       save(edge, points, label, { slide: { x: 0, y: -LABEL_SLIDE }, room: label.y - laneY - 4, fromEnd: true });
     } else {
-      const label = { x: bx - 8 - width, y: laneY - LABEL_HEIGHT - 1, width, height: LABEL_HEIGHT };
+      const label = { x: bx - 8 - width, y: laneY - labelHeight() - 1, width, height: labelHeight() };
       const room = label.x - Math.max(turnX + 8, labelFloor.get(producer.id)!);
       save(edge, points, label, { slide: { x: -LABEL_SLIDE, y: 0 }, room, fromEnd: true });
     }

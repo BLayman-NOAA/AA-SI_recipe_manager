@@ -330,6 +330,57 @@ def test_cli_preview_text_and_json(cli_runner, tmp_path):
     assert "not cached: bump" in missing.output
 
 
+def _only_missing(recipe, cache, targets) -> list[str] | None:
+    """The steps a run only preview names as not cached, or None if it passes."""
+    try:
+        api.plan_preview(recipe, user_cache_dir=cache, targets=targets, only=True)
+    except UpstreamNotCachedError as exc:
+        assert exc.targets == targets
+        return exc.missing
+    return None
+
+
+def test_only_preview_refuses_uncached_chain_members(tmp_path):
+    recipe = FIXTURES / "mapped.yaml"
+    cache = tmp_path / "cache"
+    assert _only_missing(recipe, cache, ["proc2"]) == ["proc", "seg"]
+    # Instances are unknown until seg runs, so proc counts as not cached.
+    assert _only_missing(recipe, cache, ["seg", "proc2"]) == ["proc"]
+
+    # The map source is cached but no instance of proc is: the run would fail
+    # at proc, so the preview refuses it up front.
+    api.execute(recipe, user_cache_dir=cache, targets=["seg"])
+    assert _only_missing(recipe, cache, ["proc2"]) == ["proc"]
+    assert _only_missing(recipe, cache, ["proc"]) is None
+
+    api.execute(recipe, user_cache_dir=cache, targets=["proc"])
+    assert _only_missing(recipe, cache, ["proc2"]) is None
+    assert _only_missing(recipe, cache, ["merge"]) == ["proc2"]
+    result = api.execute(recipe, user_cache_dir=cache, targets=["proc2"], only=True)
+    assert result.executed_steps == ["proc2"]
+    assert _only_missing(recipe, cache, ["merge"]) is None
+
+
+def test_only_preview_without_a_cache_refuses_chain_members():
+    with pytest.raises(UpstreamNotCachedError) as info:
+        plan_preview(H.build(_mapped_steps()), targets=["seg", "proc2"], only=True)
+    assert info.value.missing == ["proc"]
+
+
+def test_cli_preview_only_on_a_chain_member(cli_runner, tmp_path):
+    recipe = FIXTURES / "mapped.yaml"
+    cache = tmp_path / "cache"
+    args = ["preview", str(recipe), "--user-cache-dir", str(cache)]
+    api.execute(recipe, user_cache_dir=cache, targets=["seg"])
+    refused = cli_runner.invoke(main, [*args, "--to", "proc2", "--only"])
+    assert refused.exit_code == 1
+    assert "not cached: proc;" in refused.output
+
+    api.execute(recipe, user_cache_dir=cache, targets=["proc"])
+    accepted = cli_runner.invoke(main, [*args, "--to", "proc2", "--only"])
+    assert accepted.exit_code == 0, accepted.output
+
+
 def test_preview_with_no_cache_dir_reports_compute():
     preview = plan_preview(H.build(_mapped_steps()), targets=["proc2"])
     planned = {s.step_id: s.planned for s in preview.steps}

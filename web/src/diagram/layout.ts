@@ -10,7 +10,20 @@ import type { ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api';
 import { opLabel } from '../api/graph';
 import type { Direction } from '../state/view';
 import { clip, firstSentence, plainText } from '../text';
-import { CONTAINER_KINDS, IN_HANDLE, OUT_HANDLE, rowValue, type Port, type View, type ViewNode } from './buildView';
+import {
+  CONTAINER_KINDS,
+  includeMeta,
+  IN_HANDLE,
+  moreText,
+  OUT_HANDLE,
+  rowTag,
+  rowValue,
+  splitRows,
+  type InputRow,
+  type Port,
+  type View,
+  type ViewNode,
+} from './buildView';
 
 export interface Point {
   x: number;
@@ -108,21 +121,41 @@ const CONTAINER_OPTIONS: Record<string, string> = {
   'elk.padding': `[top=${CONTAINER_HEADER},left=${PAD},bottom=${PAD},right=${PAD}]`,
 };
 
+/**
+ * The diagram's text size relative to the sizes below, as diagram.css applies
+ * it through `--rc-text-scale`. Set by useLayout before each layout.
+ */
+let textScale = 1;
+
+/** Set the text size the size estimates and edge label boxes assume. */
+export function setTextScale(scale: number): void {
+  textScale = scale;
+}
+
+/** A length that grows with the text size. */
+function scaled(px: number): number {
+  return px * textScale;
+}
+
 const CHAR_WIDTH = 7;
 const LINE_HEIGHT = 16;
 
 /** Edge labels: 10 px monospace with 4 px side padding on a 16 px line. */
 const LABEL_CHAR_WIDTH = 6.5;
-export const LABEL_HEIGHT = 16;
+
+/** The height of an edge label. */
+export function labelHeight(): number {
+  return scaled(16);
+}
 
 /** The width of a line of node text. */
 export function textWidth(text: string): number {
-  return text.length * CHAR_WIDTH;
+  return text.length * scaled(CHAR_WIDTH);
 }
 
 /** The width of an edge label. */
 export function labelWidth(text: string): number {
-  return text.length * LABEL_CHAR_WIDTH + 8;
+  return text.length * scaled(LABEL_CHAR_WIDTH) + 8;
 }
 
 /** The width of a mapped group's header label. */
@@ -136,7 +169,7 @@ export const MAX_WIDTH = { step: 360, include: 360, inputsBox: 320, outputsBox: 
 /** Horizontal padding and borders inside a node, per kind. */
 export const SIDE_PAD = { step: 32, include: 32, inputsBox: 24, outputsBox: 24 } as const;
 
-/** Room for the chevron and drill buttons beside a node's header text. */
+/** Room for one header button (chevron, drill or play) beside a node's header text. */
 const TOOLS_WIDTH = 30;
 
 type SizedKind = keyof typeof MIN_WIDTH;
@@ -167,7 +200,7 @@ export function nodeLines(node: ViewNode): NodeLine[] {
       const { step, expanded, params } = node.data;
       const names = Math.max(0, ...params.map((param) => textWidth(param.name))) + 8;
       return [
-        line(step.id, 'wrap', TOOLS_WIDTH),
+        line(step.id, 'wrap', 2 * TOOLS_WIDTH),
         line(opLabel(step), 'wrap'),
         line(firstSentence(plainText(step.description)), 'clip'),
         ...(expanded ? params.map((param) => line(clip(param.value || 'none'), 'wrap', names)) : []),
@@ -178,17 +211,15 @@ export function nodeLines(node: ViewNode): NodeLine[] {
       const widest = (ports: Port[]) => Math.max(0, ...ports.map((port) => textWidth(port.label)));
       return [
         line(include.title, 'wrap', 2 * TOOLS_WIDTH),
+        line(includeMeta(node.data), 'wrap'),
         line(include.source, 'wrap'),
         ...(inPorts.length + outPorts.length > 0 ? [line('', 'none', widest(inPorts) + widest(outPorts) + 12)] : []),
-        ...(expanded ? rows.flatMap((row) => boxRowLines(row.name, rowValue(row), row.from)) : []),
+        ...(expanded ? inputListLines(rows, true, 0) : []),
       ];
     }
     case 'inputsBox': {
-      const { title, expanded, rows } = node.data;
-      return [
-        line(title, 'clip', TOOLS_WIDTH),
-        ...(expanded ? rows.flatMap((row) => boxRowLines(row.name, rowValue(row), row.from)) : []),
-      ];
+      const { title, include, expanded, rows, more } = node.data;
+      return [line(title, 'clip', TOOLS_WIDTH), ...(expanded ? inputListLines(rows, include !== null, more) : [])];
     }
     case 'outputsBox': {
       const { ownerLabel, summary, expanded, rows } = node.data;
@@ -208,19 +239,56 @@ export function nodeLines(node: ViewNode): NodeLine[] {
   }
 }
 
-/** The lines of one row of an inputs or sub-recipe box: name, value and where it comes from. */
-function boxRowLines(name: string, value: string, from: { step: string }[]): NodeLine[] {
+/** The section headers an inputs list shows: Overrides and Inputs, each when it has rows. */
+function sectionCount(rows: InputRow[], sections: boolean): number {
+  if (!sections) return 0;
+  const { overrides, inputs } = splitRows(rows);
+  return Number(overrides.length > 0) + Number(inputs.length > 0);
+}
+
+/** The line an `other` row adds under its value. */
+function declaredLine(row: InputRow): string | null {
+  return row.source === 'other' && row.declaredIn ? `declared in ${row.declaredIn}` : null;
+}
+
+/**
+ * The lines of an inputs list (InputRows in SmallNodes): the section headers,
+ * each row's name, value with its tag and where it comes from, and the more row.
+ */
+function inputListLines(rows: InputRow[], sections: boolean, more: number): NodeLine[] {
+  const rowLines = (row: InputRow) => {
+    const tag = rowTag(row);
+    const declared = declaredLine(row);
+    return [
+      line(row.name, 'wrap'),
+      line(`${clip(rowValue(row))}${tag ? ` ${tag}` : ''}`, 'wrap'),
+      ...(row.from.length > 0 ? [line(`from ${row.from.map((ref) => ref.step).join(', ')}`, 'wrap')] : []),
+      ...(declared ? [line(declared, 'wrap')] : []),
+    ];
+  };
+  const { overrides, inputs } = splitRows(rows);
   return [
-    line(name, 'wrap'),
-    line(clip(value), 'wrap'),
-    ...(from.length > 0 ? [line(`from ${from.map((ref) => ref.step).join(', ')}`, 'wrap')] : []),
+    ...(sections && overrides.length > 0 ? [line('Overrides', 'none')] : []),
+    ...overrides.flatMap(rowLines),
+    ...(sections && inputs.length > 0 ? [line('Inputs', 'none')] : []),
+    ...inputs.flatMap(rowLines),
+    ...(more > 0 ? [line(moreText(more), 'wrap')] : []),
   ];
+}
+
+/**
+ * The height an expanded inputs list adds beyond 32 px a row: 18 px per section
+ * header and for the more row, a line per `from` and per `declared in`.
+ */
+function listExtra(rows: InputRow[], sections: boolean, more: number): number {
+  const notes = rows.filter((row) => row.from.length > 0).length + rows.filter((row) => declaredLine(row)).length;
+  return (sectionCount(rows, sections) + Number(more > 0)) * scaled(18) + notes * scaled(LINE_HEIGHT);
 }
 
 /** How wide a node grows for its lines, between its least and most width. */
 function contentWidth(kind: SizedKind, lines: NodeLine[]): number {
   const widest = Math.max(0, ...lines.map((item) => item.indent + textWidth(item.text)));
-  return Math.min(MAX_WIDTH[kind], Math.max(MIN_WIDTH[kind], widest + SIDE_PAD[kind]));
+  return Math.min(scaled(MAX_WIDTH[kind]), Math.max(scaled(MIN_WIDTH[kind]), widest + SIDE_PAD[kind]));
 }
 
 /** The extra height of the lines that wrap at a width. */
@@ -228,10 +296,10 @@ function wrapHeight(kind: SizedKind, lines: NodeLine[], width: number): number {
   let extra = 0;
   for (const item of lines) {
     if (item.overflow !== 'wrap') continue;
-    const room = Math.max(CHAR_WIDTH, width - SIDE_PAD[kind] - item.indent);
+    const room = Math.max(scaled(CHAR_WIDTH), width - SIDE_PAD[kind] - item.indent);
     extra += Math.max(1, Math.ceil(textWidth(item.text) / room)) - 1;
   }
-  return extra * LINE_HEIGHT;
+  return extra * scaled(LINE_HEIGHT);
 }
 
 /**
@@ -247,31 +315,30 @@ export function estimateSize(node: ViewNode): Size {
       const { badges, expanded, params } = node.data;
       const lines = nodeLines(node);
       const width = contentWidth('step', lines);
-      const list = expanded ? 8 + Math.max(1, params.length) * LINE_HEIGHT : 0;
-      return { width, height: 66 + (badges.length > 0 ? 20 : 0) + list + wrapHeight('step', lines, width) };
+      const list = expanded ? 8 + Math.max(1, params.length) * scaled(LINE_HEIGHT) : 0;
+      return { width, height: scaled(66) + (badges.length > 0 ? scaled(20) : 0) + list + wrapHeight('step', lines, width) };
     }
     case 'include': {
       const { inPorts, outPorts, expanded, rows } = node.data;
       const lines = nodeLines(node);
       const width = contentWidth('include', lines);
       const ports = Math.max(inPorts.length, outPorts.length);
-      const fromLines = rows.filter((row) => row.from.length > 0).length * LINE_HEIGHT;
-      const list = expanded ? 8 + Math.max(1, rows.length) * 32 + fromLines : 0;
-      return { width, height: 80 + ports * LINE_HEIGHT + list + wrapHeight('include', lines, width) };
+      const list = expanded ? 8 + Math.max(1, rows.length) * scaled(32) + listExtra(rows, true, 0) : 0;
+      return { width, height: scaled(80) + ports * scaled(LINE_HEIGHT) + list + wrapHeight('include', lines, width) };
     }
     case 'inputsBox': {
-      const { expanded, rows } = node.data;
+      const { include, expanded, rows, more } = node.data;
       const lines = nodeLines(node);
       const width = contentWidth('inputsBox', lines);
-      const list = expanded ? rows.length * 32 + rows.filter((row) => row.from.length > 0).length * LINE_HEIGHT : 0;
-      return { width, height: 44 + list + wrapHeight('inputsBox', lines, width) };
+      const list = expanded ? rows.length * scaled(32) + listExtra(rows, include !== null, more) : 0;
+      return { width, height: scaled(44) + list + wrapHeight('inputsBox', lines, width) };
     }
     case 'outputsBox': {
       const { expanded, rows } = node.data;
       const lines = nodeLines(node);
       const width = contentWidth('outputsBox', lines);
-      const list = expanded ? rows.length * 18 + rows.filter((row) => row.kind === 'exit').length * LINE_HEIGHT : 0;
-      return { width, height: 40 + list + wrapHeight('outputsBox', lines, width) };
+      const list = expanded ? rows.length * scaled(18) + rows.filter((row) => row.kind === 'exit').length * scaled(LINE_HEIGHT) : 0;
+      return { width, height: scaled(40) + list + wrapHeight('outputsBox', lines, width) };
     }
     case 'ghost':
       return { width: Math.max(textWidth(node.data.stepId) + 32, 140), height: 52 };
@@ -340,7 +407,7 @@ export function layoutRequest(
           width: 0,
           height: 0,
           container: true,
-          labelWidth: groupLabelWidth(node.data.group.label),
+          labelWidth: groupLabelWidth(node.data.label),
           ...(node.parentId ? { parent: node.parentId } : {}),
         };
       }
@@ -359,7 +426,7 @@ export function layoutRequest(
       target: edge.target,
       sourcePort: edge.sourceHandle,
       targetPort: edge.targetHandle,
-      ...(edge.label ? { label: { text: edge.label, width: labelWidth(edge.label), height: LABEL_HEIGHT } } : {}),
+      ...(edge.label ? { label: { text: edge.label, width: labelWidth(edge.label), height: labelHeight() } } : {}),
       ...(edge.bus ? { bus: edge.bus } : {}),
     })),
   };

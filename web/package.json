@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev:viewer": "vite build -c vite.viewer.config.ts --watch",
+    "build": "tsc -b && vite build && vite build -c vite.viewer.config.ts",
+    "build:viewer": "vite build -c vite.viewer.config.ts",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "gen:api": "node scripts/gen-api-types.mjs"

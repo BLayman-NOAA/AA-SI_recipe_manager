@@ -859,6 +859,11 @@ def test_map_over_plus_include_fans_out_subworkflow(helpers, tmp_path):
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "HB1603"
 
 
+def _stand_ins(recipe):
+    """Placeholder values for the inputs a run config or parent recipe supplies."""
+    return {name: name for name, decl in recipe.inputs.items() if decl.required}
+
+
 def _dry_run_example(name: str):
     from aa_recipe_manager.registry.loader import load_builtin_registry
     from aa_recipe_manager.validation import DryRunEngine
@@ -866,7 +871,9 @@ def _dry_run_example(name: str):
     registry = load_builtin_registry()
     recipe = load_recipe(_EXAMPLES / name)
     dag = build_dag(recipe, registry, check_versions=False)
-    report = DryRunEngine().run(dag, visualize=True, check_versions=False)
+    report = DryRunEngine().run(
+        dag, inputs=_stand_ins(recipe), visualize=True, check_versions=False
+    )
     return dag, report
 
 
@@ -924,7 +931,9 @@ def _dry_run_hb2407(name: str):
     registry = load_builtin_registry()
     recipe = load_recipe(_HB2407 / name)
     dag = build_dag(recipe, registry, check_versions=False)
-    report = DryRunEngine().run(dag, visualize=True, check_versions=False)
+    report = DryRunEngine().run(
+        dag, inputs=_stand_ins(recipe), visualize=True, check_versions=False
+    )
     return dag, report
 
 

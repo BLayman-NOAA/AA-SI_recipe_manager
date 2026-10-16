@@ -1,22 +1,18 @@
-# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/Herring_10-15_per_file.yaml,
-# with its level 1 include split into processing_lvl_0_calibration.yaml and processing_lvl_1_per_file.yaml,
-# and extract_cal_params moved into level 2, so HB2407 follows the same levels as HB1603. Every step is
+# Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/
+# Herring_10-15_per_file.yaml, regrouped into the HB1603 levels. Every step is
 # wired as in the original, in the same order.
 
-# HB2407 Herring 10-15, per-raw-file pipeline.
+# HB2407 Herring 10-15, processed one raw file at a time.
 #
-# Each raw file is read, calibrated, Sv-computed and masked on its own, and
-# merge_sv reassembles the survey before background noise removal. Levels 3
-# and 4 are survey-wide.
+# Each raw file is calibrated, converted to Sv and masked on its own, then
+# merge_sv joins the survey back together before noise removal.
 #
-#   level 0   select the raw files; build the calibration mapping
+#   level 0   select the raw files and build the calibration mapping
 #   level 1   per file: raw ingest
-#   level 2   per file: calibration, Sv, depth, seabed and surface masks; fan
-#             in; then crop and noise removal on the whole survey
-#   level 3   sparse mask, MVBS, per-cell statistics
-#   level 4   HDBSCAN clustering and the clustering report
+#   level 2   per file: Sv, depth and masks; then merge, crop and noise removal
+#   level 3   sparse mask, MVBS and per-cell statistics
+#   level 4   HDBSCAN clustering and its report
 #
-# Usage:
 #   aa-recipe run Herring_10-15_per_file.yaml
 #   aa-recipe run Herring_10-15_per_file.yaml --executor dask
 
@@ -38,9 +34,8 @@ inputs:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
 
-  # Data time range. Selects the raw files to process and the Echoview seabed
-  # line exports to read, and sets the fan-out width: one chain instance per
-  # selected raw file.
+  # Time window. Selects the raw files and seabed line files, and each selected
+  # raw file runs as its own chain instance.
   file_time_start:
     type: str
     default: "2024-10-15T13:38:52"
@@ -48,14 +43,13 @@ inputs:
     type: str
     default: "2024-10-15T23:43:36"
 
-  # Default display window shared by every plotting step in this pipeline.
+  # Display window shared by every plot.
   min_depth:
     type: float
     default: 0
   max_depth:
     type: float
-  # No defaults span the whole time range. Set either to a UTC timestamp to
-  # window the echograms.
+  # Unset shows the whole time range. Set a UTC timestamp to window the plots.
   time_min:
     type: str
   time_max:
@@ -89,15 +83,15 @@ steps:
       echodata: ${combine_raw.echodata}
       calibration_dict: ${gen_cal_mapping.calibration_dict}
       mapping_dict: ${gen_cal_mapping.mapping_dict}
-      # Transducer depth comes from each file's drop keel offset plus heave.
-      # datum_correction_m assumes that offset is waterline referenced.
+      # Transducer depth is each file's drop keel offset plus heave, shifted by
+      # datum_correction_m to the waterline.
       datum_correction_m: -1.0
       use_heave: true
       heave_sign: 1.0
       surface_mask_depth: 5.0
       seafloor_buffer_m: 1
-      # Range crop by outlier rejection, so one anomalously deep ping does not
-      # hold the range axis open. Add crop_max_range_m for a hard ceiling.
+      # Crop the range by outlier rejection, so one very deep ping does not hold
+      # it open. Add crop_max_range_m for a hard ceiling.
       crop_outlier_sigma: 3.0
       crop_outlier_margin: 1.5
       # Parameters for echopype's remove_background_noise.
@@ -127,7 +121,7 @@ steps:
       # MVBS bin size.
       range_bin: "4m"
       ping_time_bin: "4s"
-      nan_threshold: 0.95 # mask bin if NaNs exceed this fraction of data in the cell
+      nan_threshold: 0.95 # mask a bin when more than this fraction is NaN
 
   - id: plot_mvbs
     op: plot_sv_echogram
@@ -144,9 +138,8 @@ steps:
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
 
-  # echodata and seafloor_depth are left unwired. Level 4 only needs them for
-  # the 'seafloor_depth' and 'altitude' features, which features: [cell_cv]
-  # does not use, and this pipeline builds no survey-wide EchoData.
+  # echodata and seafloor_depth stay unwired. They only feed the seafloor_depth
+  # and altitude features, which this recipe does not use.
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
       mvbs: ${compute_mvbs.ds_MVBS}

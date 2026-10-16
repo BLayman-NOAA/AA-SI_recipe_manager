@@ -5,48 +5,15 @@
 #   reshape -> add cell_cv -> normalize -> HDBSCAN -> label every point
 #           -> embed -> clustering report
 #
-# Takes any MVBS on a shared grid plus the matching per-cell statistics. It
-# knows nothing about dives except the optional window list the report draws
-# line overlays from, so a windowed analysis can include it unchanged.
+# Clusters any MVBS on a shared grid with its per-cell statistics. The dive
+# windows only feed the report's line overlays.
 #
-# embed_results is the checkpoint the labels are read from: the report and the
-# SVCode tables both take the embedded labels from it. run_hdbscan is
-# checkpointed too, so the report's hierarchy panel gets the fitted model from
-# the cache, and rerunning the report or the tables never refits the
-# clustering. The model saves as pickle; see the note on run_hdbscan.
-#
-# THE PLOTS MUST USE x_axis_units: bins
-#
-#   The 13 dives carry 214 minutes of data spread across 38 days, and the
-#   fan-in concatenates on real ping_time, so any axis built from clock time
-#   draws 0.4% data and 99.6% whitespace: each dive becomes a hairline. That
-#   rules out "datetime" and equally "seconds". "bins" plots against MVBS bin
-#   index; the empty time between dives was never binned, so the 13 dives sit
-#   side by side, each in proportion to its own duration.
-#
-#   Cluster ids are also interpretable without any figure: generate_sv_codes
-#   writes each cell's 18 and 38 kHz Sv next to its code, so the per-cluster
-#   statistics are a group-by on the CSVs.
-#
-# SIZING HDBSCAN FOR THE POOLED SET
-#
-#   sample_size 1200000 is a ceiling that is not expected to bind: the pooled
-#   grid holds about 1.16 M cells before masking, so HDBSCAN fits every point
-#   and assign_clusters_to_all_points has nothing left to predict.
-#
-#   min_cluster_size_fraction is a fraction of the points actually fitted, so
-#   the number means the same thing whether or not the ceiling binds. 0.01 on
-#   the pooled set is a deliberate loosening against the 0.02 an earlier
-#   three-dive run used: a cluster must be about twice as large in absolute
-#   terms to survive, which is what stops one dive's local structure from being
-#   promoted to a survey-wide code.
-#
-# CLUSTER IDS ARE RUN SCOPED
-#
-#   HDBSCAN ids are not stable across runs, so an SVCode integer here does not
-#   carry the fixed meaning codes 1, 2 and 3 had in the previous analysis
-#   (gas-bearing, indeterminate, non gas-bearing). Read the tables against the
-#   per-code Sv statistics, not against the old numbering.
+# The labels are read from the embed_results checkpoint, and run_hdbscan is
+# checkpointed too, so redrawing the report or the tables never refits.
+# Plots use x_axis_units "bins": the dives span 38 days, so a clock-time axis
+# draws each dive as a hairline.
+# Cluster ids change between runs, so read the codes against their per-code
+# Sv in the level 5 CSVs, not against an earlier analysis's numbering.
 
 recipe:
   name: "hb1603_processing_lvl_4"
@@ -65,22 +32,18 @@ inputs:
   dive_windows:
     type: list
     description: >
-      Windows whose line files the report overlays, one segment per window.
-      Wire it to plan_dives.windows, or pass an empty list for no overlay.
+      Windows whose dive lines the report overlays. Wire it to
+      plan_dives.windows, or pass an empty list for no overlay.
   sample_size:
     type: int
     default: 1200000
     description: >
-      Cap on the points HDBSCAN is fitted on. Set above the expected valid-cell
-      count so it does not bind. Read the note on min_cluster_size_fraction in
-      the header before lowering it.
+      Cap on the points HDBSCAN is fitted on, set above the pooled grid's
+      roughly 1.16 M cells so every point is fitted.
   min_cluster_size_fraction:
     type: float
     default: 0.01
-    description: >
-      Minimum cluster size as a fraction of the points HDBSCAN is fitted on.
-      Half the 0.02 an earlier three-dive run used, against a pooled set several times larger, so
-      the absolute floor roughly doubles.
+    description: "Minimum cluster size as a fraction of the points HDBSCAN is fitted on."
   min_samples:
     type: int
     default: 4
@@ -119,12 +82,8 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       shift_positive: false
 
-  # Checkpointed so the report can be handed the fitted model without refitting.
-  # The labels save as Zarr; the model is a plain object and saves as PICKLE,
-  # which ties that one artifact to this environment's hdbscan and scikit-learn
-  # versions and is refused by the shared survey tier. It belongs in the user
-  # tier. If the pickle ever fails to load, delete this step's cache entry and
-  # the fit reruns once.
+  # The fitted model is cached as a pickle, tied to this environment's hdbscan
+  # and scikit-learn. If it fails to load, delete this step's cache entry.
   - id: run_hdbscan
     op: run_hdbscan
     checkpoint: always
@@ -141,16 +100,8 @@ steps:
       use_hdbscan: true
       soft_membership_threshold: .1
 
-  # Kept even though sample_size is not expected to bind: it is the guard that
-  # makes that expectation safe. If the valid count does exceed the ceiling,
-  # every cell past it would otherwise stay unlabelled and come back NaN once
-  # the result is regridded, which on a pooled survey is most of the data.
-  #
-  # checkpoint: never because nothing needs it after embed_results, which is
-  # checkpointed and holds these labels embedded in the dataset: the report
-  # and the code tables both read them from there. When it does have to rerun
-  # it is cheap, since run_hdbscan above is checkpointed and supplies the
-  # fitted model from its cache entry rather than from a new fit.
+  # Labels any points past sample_size, which would otherwise come back NaN.
+  # Not checkpointed, since embed_results holds its labels.
   - id: label_all_points
     op: assign_clusters_to_all_points
     checkpoint: never
@@ -172,12 +123,8 @@ steps:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
 
-  # The echogram and the statistics read the labels from the embed_results
-  # checkpoint, which are label_all_points' labels. clustering_results and
-  # clustering_model are here for the third panel, the HDBSCAN hierarchy: it
-  # needs the fitted model, and the result's plot_hierarchy flag to ask for it.
-  # Both come from run_hdbscan's checkpoint, so redrawing the report loads them
-  # and does not refit.
+  # Labels come from embed_results. The run_hdbscan outputs feed the hierarchy
+  # panel only.
   - id: plot_clustering_report
     op: plot_clustering_report
     regenerate: if-missing
@@ -189,23 +136,16 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # This op defaults to "datetime", which would draw the whole 38-day span
-      # with the dives as hairlines; see THE PLOTS MUST USE x_axis_units: bins.
+      # Plots against bin index so the dives sit side by side; see the header.
       x_axis_units: "bins"
-      # About 1300 bins against 2400 m of depth is a taller-than-wide data
-      # aspect, which the automatic rule turns into a panel taller than it is
-      # wide. Pin a 16:9 panel instead so the figure fits a screen.
+      # Pins a 16:9 panel so the figure fits a screen.
       y_to_x_aspect_ratio_override: 1.78
-      # Down to 2400 m: the dives use the whole water column to the seabed,
-      # which reaches 2343 m on the deepest dive, so clusters below the whales
-      # are drawn rather than cut off at the old 1500 m.
+      # Down to 2400 m, below the deepest seabed on these dives.
       plot_window: [0, 2400]
       cluster_stats_sv_data_var: "Sv"
-      # Per-dive profile and 99% bounds, each dive its own segment. See
-      # OVERLAPPING DIVES for why these are not attached upstream.
+      # Each dive's profile and 99% bounds, as its own segment.
       overlay_windows: ${inputs.dive_windows}
-      # Each style dict is merged over the op's default, so naming just one
-      # key restyles that and leaves the others. linestyle takes matplotlib's
+      # Each style merges over the op's default. linestyle takes matplotlib's
       # spellings: ":" dotted, "--" dashed, "-." dash-dot, "-" solid.
       overlay_fit_style: {color: "#23FFFF", linewidth: 3.0}
       overlay_bound_style: {color: "#D08BFF", linewidth: 1.8, linestyle: ":"}

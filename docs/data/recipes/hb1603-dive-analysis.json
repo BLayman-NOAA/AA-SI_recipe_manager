@@ -13,45 +13,15 @@
   },
   "nodes": [
     {
-      "id": "in:file_time_start",
+      "id": "in:cal_input_folder",
       "kind": "input",
-      "label": "inputs.file_time_start",
-      "type": "str",
+      "label": "inputs.cal_input_folder",
+      "type": "path",
       "declared": true,
       "required": false,
-      "default": "2016-06-01T00:00:00",
-      "description": "Lower bound of the catalogue query. Deliberately wider than the cruise, which runs 2016-06-27 to 2016-08-25, so the window states an intent rather than a measurement and does not need editing if the catalogue gains a file at either end. It must stay fixed once a scan has been cached: it is a query param, so moving it re-runs every instance."
-    },
-    {
-      "id": "in:file_time_end",
-      "kind": "input",
-      "label": "inputs.file_time_end",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "2016-09-01T00:00:00",
-      "description": "Upper bound of the catalogue query. See file_time_start."
-    },
-    {
-      "id": "in:cruise_name",
-      "kind": "input",
-      "label": "inputs.cruise_name",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "HB1603",
-      "description": "CRUISE_NAME filter for the NCEI catalogue query."
-    },
-    {
-      "id": "in:max_scan_bytes",
-      "kind": "input",
-      "label": "inputs.max_scan_bytes",
-      "type": "int",
-      "declared": true,
-      "required": false,
-      "default": 1048576,
-      "description": "Leading bytes read per raw object. See the note above before lowering.",
-      "group": "group:0"
+      "default": "../calibration_files/HB201607_cal",
+      "description": "Manufacturer .cal files.",
+      "declared_in": "dive_analysis.yaml"
     },
     {
       "id": "in:calibration_output_dir",
@@ -61,17 +31,64 @@
       "declared": true,
       "required": false,
       "default": "./outputs/calibration",
-      "description": null
+      "description": null,
+      "declared_in": "dive_analysis.yaml"
     },
     {
-      "id": "in:cal_input_folder",
+      "id": "in:crop_max_range_m",
       "kind": "input",
-      "label": "inputs.cal_input_folder",
-      "type": "path",
+      "label": "inputs.crop_max_range_m",
+      "type": "float",
       "declared": true,
       "required": false,
-      "default": "../calibration_files/HB201607_cal",
-      "description": "Manufacturer .cal files."
+      "default": 1800.0,
+      "description": "Range ceiling per file, in metres. Changing it recomputes the survey Sv.",
+      "declared_in": "dive_analysis.yaml",
+      "group": "group:1"
+    },
+    {
+      "id": "in:ping_time_bin",
+      "kind": "input",
+      "label": "inputs.ping_time_bin",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "10s",
+      "description": "Ping-time bin of the dive grid, used by levels 2b, 3 and 5 alike.",
+      "declared_in": "dive_analysis.yaml"
+    },
+    {
+      "id": "in:cruise_name",
+      "kind": "input",
+      "label": "inputs.cruise_name",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "HB1603",
+      "description": "CRUISE_NAME filter for the NCEI catalogue query.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
+    },
+    {
+      "id": "in:file_time_start",
+      "kind": "input",
+      "label": "inputs.file_time_start",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2016-06-01T00:00:00",
+      "description": "Lower bound of the catalogue query, set wider than the cruise. Moving it reruns every per-file step.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
+    },
+    {
+      "id": "in:file_time_end",
+      "kind": "input",
+      "label": "inputs.file_time_end",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": "2016-09-01T00:00:00",
+      "description": "Upper bound of the catalogue query. See file_time_start.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
     },
     {
       "id": "in:cruise_id",
@@ -81,7 +98,8 @@
       "declared": true,
       "required": false,
       "default": "HB1603",
-      "description": "Recorded in every generated single-channel file."
+      "description": "Recorded in every generated single-channel file.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
     },
     {
       "id": "in:record_author",
@@ -91,7 +109,20 @@
       "declared": true,
       "required": false,
       "default": "<Your Name>",
-      "description": "Recorded as the author of every generated single-channel file."
+      "description": "Recorded as the author of every generated single-channel file.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
+    },
+    {
+      "id": "in:max_scan_bytes",
+      "kind": "input",
+      "label": "inputs.max_scan_bytes",
+      "type": "int",
+      "declared": true,
+      "required": false,
+      "default": 1048576,
+      "description": "Leading bytes read per raw file. Read the survey variant before lowering it.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml",
+      "group": "group:0"
     },
     {
       "id": "in:match_tolerances",
@@ -103,7 +134,8 @@
       "default": {
         "transmit_power": 1001.0
       },
-      "description": "Per-field tolerances for matching a raw channel to a calibration file, merged over the matcher's exact defaults. See the note below on why transmit_power is widened for HB1603."
+      "description": "Per-field tolerances for matching a raw channel to a calibration file. transmit_power is widened for HB1603's leg 1; see processing_lvl_0_survey.yaml.",
+      "declared_in": "sub_recipes/processing_lvl_0_user.yaml"
     },
     {
       "id": "in:sonar_model",
@@ -114,28 +146,8 @@
       "required": false,
       "default": "EK60",
       "description": "Sonar model string for echopype.",
+      "declared_in": "sub_recipes/processing_lvl_1_per_file.yaml",
       "group": "group:1"
-    },
-    {
-      "id": "in:crop_max_range_m",
-      "kind": "input",
-      "label": "inputs.crop_max_range_m",
-      "type": "float",
-      "declared": true,
-      "required": false,
-      "default": 1800.0,
-      "description": "Range ceiling applied per file. Every consumer shares it: change it and the whole survey Sv is recomputed.",
-      "group": "group:1"
-    },
-    {
-      "id": "in:ping_time_bin",
-      "kind": "input",
-      "label": "inputs.ping_time_bin",
-      "type": "str",
-      "declared": true,
-      "required": false,
-      "default": "10s",
-      "description": "Ping-time bin of the per-dive grid. Level 2b widens each dive window to whole bins of this width, level 3 grids on it, and level 5 counts one bin of this length per ping in the duration tables."
     },
     {
       "id": "plan_dives",
@@ -5117,6 +5129,50 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "json_dir",
+          "type": "path",
+          "required": false,
+          "default": "./Auxiliary/JSON_Files",
+          "description": "Folder of SWD_*.json dive configs."
+        },
+        {
+          "name": "evl_root",
+          "type": "path",
+          "required": false,
+          "default": "./Auxiliary",
+          "description": "Searched recursively for the .evl files the configs name."
+        },
+        {
+          "name": "pad_minutes",
+          "type": "float",
+          "required": false,
+          "default": 0.0,
+          "description": "Minutes added either side of each dive's line span."
+        },
+        {
+          "name": "dive_labels",
+          "type": "list",
+          "required": false,
+          "default": [
+            "SWD_20160707-OE20",
+            "SWD_20160707-OE29",
+            "SWD_20160707-OE32",
+            "SWD_20160719-OE07",
+            "SWD_20160725-OE50",
+            "SWD_20160725-OE54",
+            "SWD_20160725-OE61",
+            "SWD_20160725-OE62",
+            "SWD_20160725-OE64",
+            "SWD_20160802-OE16",
+            "SWD_20160814-OE03",
+            "SWD_20160814-OE09",
+            "SWD_20160814-OE44"
+          ],
+          "description": "The 13 dives analysed: every localized HB1603 dive except SWD_20160703-OE20, whose dive data is incorrect. A label with no matching config stops the run. SWD_20160707-OE20-OE29-OE32 is a combined view of three dives listed here, not a dive of its own."
+        }
+      ],
       "consumed": [
         {
           "step": "plan_dives",
@@ -5171,6 +5227,73 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "cruise_name",
+          "type": "str",
+          "required": false,
+          "default": "HB1603",
+          "description": "CRUISE_NAME filter for the NCEI catalogue query."
+        },
+        {
+          "name": "file_time_start",
+          "type": "str",
+          "required": false,
+          "default": "2016-06-01T00:00:00",
+          "description": "Lower bound of the catalogue query, set wider than the cruise. Moving it reruns every per-file step."
+        },
+        {
+          "name": "file_time_end",
+          "type": "str",
+          "required": false,
+          "default": "2016-09-01T00:00:00",
+          "description": "Upper bound of the catalogue query. See file_time_start."
+        },
+        {
+          "name": "cal_input_folder",
+          "type": "path",
+          "required": true,
+          "default": null,
+          "description": "Folder of manufacturer calibration files (.cal for EK60), local or gs://."
+        },
+        {
+          "name": "calibration_output_dir",
+          "type": "path",
+          "required": false,
+          "default": "./outputs/calibration",
+          "description": "Root folder the calibration artifacts are written under."
+        },
+        {
+          "name": "cruise_id",
+          "type": "str",
+          "required": false,
+          "default": "HB1603",
+          "description": "Recorded in every generated single-channel file."
+        },
+        {
+          "name": "record_author",
+          "type": "str",
+          "required": false,
+          "default": "<Your Name>",
+          "description": "Recorded as the author of every generated single-channel file."
+        },
+        {
+          "name": "max_scan_bytes",
+          "type": "int",
+          "required": false,
+          "default": 1048576,
+          "description": "Leading bytes read per raw file. Read the survey variant before lowering it."
+        },
+        {
+          "name": "match_tolerances",
+          "type": "dict",
+          "required": false,
+          "default": {
+            "transmit_power": 1001.0
+          },
+          "description": "Per-field tolerances for matching a raw channel to a calibration file. transmit_power is widened for HB1603's leg 1; see processing_lvl_0_survey.yaml."
+        }
+      ],
       "consumed": [
         {
           "step": "query_ncei",
@@ -5223,6 +5346,22 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "per_file_source",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "The list the per-file steps map over, normally ${query_ncei.raw_urls}. Required, and the same value for every level in the chain."
+        },
+        {
+          "name": "sonar_model",
+          "type": "str",
+          "required": false,
+          "default": "EK60",
+          "description": "Sonar model string for echopype."
+        }
+      ],
       "consumed": [
         {
           "step": "combine_raw",
@@ -5421,6 +5560,117 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "per_file_source",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "The list the per-file steps map over, normally ${query_ncei.raw_urls}. Required, and the same value for every level in the chain."
+        },
+        {
+          "name": "calibration_dict",
+          "type": "dict",
+          "required": true,
+          "default": null,
+          "description": "Standardized calibration data, from build_cal_mapping."
+        },
+        {
+          "name": "mapping_dict",
+          "type": "dict",
+          "required": true,
+          "default": null,
+          "description": "Raw channel to calibration key mapping, from build_cal_mapping."
+        },
+        {
+          "name": "crop_max_range_m",
+          "type": "float",
+          "required": false,
+          "default": 1800.0,
+          "description": "Range ceiling of the survey Sv, in metres. Changing it recomputes the Sv."
+        },
+        {
+          "name": "dive_windows",
+          "type": "list",
+          "required": true,
+          "default": null,
+          "description": "Windows with start and end, one per dive. Wire it to plan_dives.windows."
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "required": false,
+          "default": "10s",
+          "description": "Level 3's ping-time bin. dive_sv widens each window to whole bins of it."
+        },
+        {
+          "name": "surface_depth_m",
+          "type": "float",
+          "required": false,
+          "default": 10.0,
+          "description": "Range below the transducer above which samples are masked out, in metres."
+        },
+        {
+          "name": "frequencies_to_mask",
+          "type": "list",
+          "required": false,
+          "default": [
+            70,
+            120,
+            200
+          ],
+          "description": "Channel frequencies in kHz to drop before binning."
+        },
+        {
+          "name": "seabed_lines_dir",
+          "type": "path",
+          "required": false,
+          "default": "./Auxiliary/seabed_lines",
+          "description": "Folder of half-day Echoview seabed exports."
+        },
+        {
+          "name": "seabed_min_coverage",
+          "type": "float",
+          "required": false,
+          "default": 0.99,
+          "description": "Fraction of a file's selected pings that must get a seabed depth, or the step fails."
+        },
+        {
+          "name": "seafloor_buffer_m",
+          "type": "float",
+          "required": false,
+          "default": 10.0,
+          "description": "Metres above the seabed line that are also masked out."
+        },
+        {
+          "name": "noise_range_sample_num",
+          "type": "int",
+          "required": false,
+          "default": 10,
+          "description": "Range samples per noise-estimation bin."
+        },
+        {
+          "name": "noise_ping_num",
+          "type": "int",
+          "required": false,
+          "default": 5,
+          "description": "Pings per noise-estimation bin."
+        },
+        {
+          "name": "noise_snr_threshold",
+          "type": "str",
+          "required": false,
+          "default": "3.0dB",
+          "description": "Minimum Sv margin above the noise estimate. The NEFSC reference uses 6.0dB."
+        },
+        {
+          "name": "noise_background_max",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Ceiling on the noise estimate. Null leaves it unbounded."
+        }
+      ],
       "consumed": [
         {
           "step": "dive_remove_noise",
@@ -5538,6 +5788,57 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "per_file_source",
+          "type": "str",
+          "required": true,
+          "default": null,
+          "description": "The list the per-file steps map over, normally ${query_ncei.raw_urls}. Required, and the same value for every level in the chain."
+        },
+        {
+          "name": "range_bin",
+          "type": "str",
+          "required": false,
+          "default": "2m",
+          "description": "Depth bin of the per-dive grid."
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "required": false,
+          "default": "10s",
+          "description": "Ping-time bin of the per-dive grid."
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "required": false,
+          "default": "depth",
+          "description": "Variable the bins are built on. depth keeps the grid shared across files."
+        },
+        {
+          "name": "nan_threshold",
+          "type": "float",
+          "required": false,
+          "default": 0.99,
+          "description": "Fraction of a bin that may be NaN before the bin is dropped."
+        },
+        {
+          "name": "mvbs_range_var_max",
+          "type": "str",
+          "required": false,
+          "default": "1810m",
+          "description": "Depth the MVBS grid is built out to, pinned so every file shares one depth axis. It must clear the deepest range plus the transducer depth (about 9 m), or the deepest bins are silently dropped."
+        },
+        {
+          "name": "dive_chunk_ping_time",
+          "type": "int",
+          "required": false,
+          "default": 1000,
+          "description": "Ping-time chunk of the pooled dive store, on the MVBS grid."
+        }
+      ],
       "consumed": [
         {
           "step": "rechunk_dive_mvbs",
@@ -5624,6 +5925,50 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "mvbs",
+          "type": "Dataset",
+          "required": true,
+          "default": null,
+          "description": "MVBS on one shared grid. Wire it to rechunk_dive_mvbs.ds_Sv."
+        },
+        {
+          "name": "cell_stats_sv",
+          "type": "Dataset",
+          "required": true,
+          "default": null,
+          "description": "Per-cell statistics on the same grid. Wire it to merge_dive_files_cell_stats.merged."
+        },
+        {
+          "name": "dive_windows",
+          "type": "list",
+          "required": true,
+          "default": null,
+          "description": "Windows whose dive lines the report overlays. Wire it to plan_dives.windows, or pass an empty list for no overlay."
+        },
+        {
+          "name": "sample_size",
+          "type": "int",
+          "required": false,
+          "default": 1200000,
+          "description": "Cap on the points HDBSCAN is fitted on, set above the pooled grid's roughly 1.16 M cells so every point is fitted."
+        },
+        {
+          "name": "min_cluster_size_fraction",
+          "type": "float",
+          "required": false,
+          "default": 0.01,
+          "description": "Minimum cluster size as a fraction of the points HDBSCAN is fitted on."
+        },
+        {
+          "name": "min_samples",
+          "type": "int",
+          "required": false,
+          "default": 4,
+          "description": "HDBSCAN min_samples: how conservative the density estimate is. Larger means more points called noise."
+        }
+      ],
       "consumed": [
         {
           "step": "embed_results",
@@ -5690,6 +6035,43 @@
           }
         ]
       },
+      "inputs": [
+        {
+          "name": "clustered",
+          "type": "Dataset",
+          "required": true,
+          "default": null,
+          "description": "Dataset with the embedded cluster labels. Wire it to embed_results.ds_normalized."
+        },
+        {
+          "name": "dive_windows",
+          "type": "list",
+          "required": true,
+          "default": null,
+          "description": "Windows with start and end, one per dive. Wire it to plan_dives.windows."
+        },
+        {
+          "name": "ping_time_bin",
+          "type": "str",
+          "required": false,
+          "default": "10s",
+          "description": "Level 3's ping-time bin, the time each ping adds to its code's duration. Wire both levels from one parent input."
+        },
+        {
+          "name": "code_output_dir",
+          "type": "path",
+          "required": false,
+          "default": "./outputs/sv_codes",
+          "description": "Where the per-dive CSVs and the duration tables are written."
+        },
+        {
+          "name": "depth_interval_m",
+          "type": "float",
+          "required": false,
+          "default": 200.0,
+          "description": "Depth bin of the duration table. 200 m matches the report."
+        }
+      ],
       "consumed": []
     }
   ]

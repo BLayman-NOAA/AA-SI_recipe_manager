@@ -305,6 +305,7 @@ def build_run_context(
     only: bool = False,
     fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
     publish_provenance: bool = True,
+    base_dir: str | Path | None = None,
 ) -> RunContext:
     """Validate run arguments and resolve the run-scoped execution state.
 
@@ -325,6 +326,8 @@ def build_run_context(
     ``targets``, ``force_steps`` and ``only`` are stored as given; they are
     validated by :func:`plan_execution`. ``fingerprint_cache`` memoizes path
     fingerprints across calls (see :func:`compute_step_fingerprints`).
+    Relative local paths in the recipe are fingerprinted under ``base_dir``
+    (default: the working directory); the hashes do not depend on which.
     """
     if regenerate not in REGENERATE_MODES:
         raise ValueError(
@@ -393,6 +396,7 @@ def build_run_context(
             pipeline_inputs,
             storage_options=storage_options,
             path_fingerprint_cache=fingerprint_cache,
+            base_dir=base_dir,
         )
         ctx.step_hashes = fingerprints.hashes
         ctx.payloads = dict(fingerprints.payloads)

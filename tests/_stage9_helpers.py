@@ -78,6 +78,17 @@ def boom(x: int) -> int:
     raise RuntimeError("boom")
 
 
+def sleep_for(x: int, seconds: float = 0.2) -> int:
+    """Sleep, then return ``x``: a step slow enough to cancel or kill."""
+    time.sleep(seconds)
+    return x
+
+
+def count_entries(folder: str) -> int:
+    """Return the number of entries in ``folder``."""
+    return len(os.listdir(folder))
+
+
 # A module-global counter + gate used to prove two branch steps overlap in time.
 _ENTER_LOCK = threading.Lock()
 _CONCURRENT: dict[str, int] = {"current": 0, "max": 0}

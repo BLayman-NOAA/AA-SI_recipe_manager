@@ -283,6 +283,11 @@ class IncludeBlock(BaseModel):
         bindings: For each override, the slots of the flattened steps it was
             substituted into, as ``{"step": ..., "slot": ...}`` entries.
             Metadata only; it is not part of any step's fingerprint.
+        inputs: The ``inputs`` block of the included file as written, by name,
+            before any nested include added to it. Metadata only.
+        promoted: The names the loader copied into the includer's inputs
+            because neither it nor the overrides had them, in file order.
+            Metadata only.
     """
 
     source: str
@@ -293,6 +298,8 @@ class IncludeBlock(BaseModel):
     overrides: dict[str, Any] = {}
     map_over: str | None = None
     bindings: dict[str, list[dict[str, str]]] = {}
+    inputs: dict[str, Any] = {}
+    promoted: list[str] = []
 
 
 # ---------------------------------------------------------------------------

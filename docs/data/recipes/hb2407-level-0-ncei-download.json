@@ -13,6 +13,17 @@
   },
   "nodes": [
     {
+      "id": "in:raw_input_folder",
+      "kind": "input",
+      "label": "inputs.raw_input_folder",
+      "type": "path",
+      "declared": true,
+      "required": true,
+      "default": null,
+      "description": "Destination folder for downloaded raw files.",
+      "declared_in": "processing_lvl_0_ncei_download.yaml"
+    },
+    {
       "id": "in:file_time_start",
       "kind": "input",
       "label": "inputs.file_time_start",
@@ -20,7 +31,8 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": "Inclusive start time for the NCEI query."
+      "description": "Inclusive start time for the NCEI query.",
+      "declared_in": "processing_lvl_0_ncei_download.yaml"
     },
     {
       "id": "in:file_time_end",
@@ -30,7 +42,8 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": "Inclusive end time for the NCEI query."
+      "description": "Inclusive end time for the NCEI query.",
+      "declared_in": "processing_lvl_0_ncei_download.yaml"
     },
     {
       "id": "in:cruise_name",
@@ -40,17 +53,8 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": "Cruise name filter passed to the NCEI query."
-    },
-    {
-      "id": "in:raw_input_folder",
-      "kind": "input",
-      "label": "inputs.raw_input_folder",
-      "type": "path",
-      "declared": true,
-      "required": true,
-      "default": null,
-      "description": "Destination folder for downloaded raw files."
+      "description": "Cruise name filter passed to the NCEI query.",
+      "declared_in": "processing_lvl_0_ncei_download.yaml"
     },
     {
       "id": "query_ncei",
