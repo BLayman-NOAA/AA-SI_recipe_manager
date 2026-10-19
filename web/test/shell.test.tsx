@@ -44,9 +44,21 @@ function noCommands(): Commands {
     fit: noop,
     resetLayout: noop,
     toggleTheme: noop,
+    setTextSize: noop,
     openUrl: noop,
     showShortcuts: noop,
     showAbout: noop,
+    dryRun: noop,
+    runAll: noop,
+    runToSelected: noop,
+    runSelectedOnly: noop,
+    forceRerunSelected: noop,
+    forceRerunAll: noop,
+    cancelRun: noop,
+    stopRun: noop,
+    showRunHistory: noop,
+    refreshPreview: noop,
+    toggleSurveyRegion: noop,
   };
 }
 
@@ -58,6 +70,9 @@ const STATE: MenuState = {
   direction: 'RIGHT',
   theme: 'dark',
   docsUrl: 'https://docs.example.org/',
+  run: { canRun: false, canRunSelected: false, isActive: false, isCancelling: false },
+  surveyRegion: true,
+  textSize: 1.15,
 };
 
 afterEach(() => {
@@ -151,7 +166,12 @@ describe('menu bar', () => {
     await waitFor(() => expect(useDock.getState().open).toHaveLength(PANES.length));
     await user.click(screen.getByRole('button', { name: 'View' }));
     await user.click(screen.getByRole('menuitemcheckbox', { name: /^Echogram/ }));
-    await waitFor(() => expect(window.localStorage.getItem(LAYOUT_KEY)).toContain('problems'));
+    // Wait for the save after the close, not an earlier save of the default layout.
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(LAYOUT_KEY);
+      expect(saved).toContain('problems');
+      expect(saved).not.toContain('"echogram"');
+    });
     first.unmount();
 
     renderApp();
@@ -189,7 +209,21 @@ describe('menu bar', () => {
 
 describe('buildMenus', () => {
   it('gives every item disabled for a later milestone that milestone', () => {
-    const waitingForSession = new Set(['close-session', 'find-step', 'expand-all', 'collapse-all']);
+    const waitingForSession = new Set([
+      'close-session',
+      'find-step',
+      'expand-all',
+      'collapse-all',
+      'dry-run',
+      'run-all',
+      'run-to-selected',
+      'run-selected-only',
+      'force-rerun-selected',
+      'force-rerun-all',
+      'cancel',
+      'stop-now',
+      'refresh-preview',
+    ]);
     const menus = buildMenus(STATE, noCommands());
     const disabled = menus
       .flatMap((menu) => menu.items)
@@ -217,6 +251,57 @@ describe('buildMenus', () => {
     expect(item('View', 'pane-problems').checked).toBe(false);
   });
 
+  it('enables the Run items by the run state and wires them to commands', () => {
+    const commands = noCommands();
+    commands.runToSelected = vi.fn();
+    commands.cancelRun = vi.fn();
+    commands.stopRun = vi.fn();
+    commands.showRunHistory = vi.fn();
+    const item = (state: MenuState, id: string) =>
+      buildMenus(state, commands)
+        .find((menu) => menu.label === 'Run')!
+        .items.find((entry) => entry.id === id)!;
+
+    const idle = { ...STATE, sid: 's1', run: { canRun: true, canRunSelected: false, isActive: false, isCancelling: false } };
+    expect(item(idle, 'dry-run').enabled).toBe(true);
+    expect(item(idle, 'run-all').enabled).toBe(true);
+    expect(item(idle, 'run-to-selected').enabled).toBe(false);
+    expect(item(idle, 'cancel').enabled).toBe(false);
+    expect(item(idle, 'run-history').enabled).toBe(true);
+
+    const selected = { ...idle, run: { canRun: true, canRunSelected: true, isActive: false, isCancelling: false } };
+    expect(item(selected, 'run-to-selected').enabled).toBe(true);
+    expect(item(selected, 'run-selected-only').enabled).toBe(true);
+    item(selected, 'run-to-selected').action!();
+    expect(commands.runToSelected).toHaveBeenCalledTimes(1);
+
+    const running = { ...idle, run: { canRun: false, canRunSelected: false, isActive: true, isCancelling: false } };
+    expect(item(running, 'run-all').enabled).toBe(false);
+    expect(item(running, 'cancel').enabled).toBe(true);
+    expect(item(idle, 'stop-now').enabled).toBe(false);
+    expect(item(running, 'stop-now').enabled).toBe(false);
+    const cancelling = { ...running, run: { ...running.run, isCancelling: true } };
+    expect(item(cancelling, 'stop-now')).toMatchObject({ label: 'Stop Now', enabled: true });
+    item(cancelling, 'stop-now').action!();
+    expect(commands.stopRun).toHaveBeenCalledTimes(1);
+    item(running, 'cancel').action!();
+    item(running, 'run-history').action!();
+    expect(commands.cancelRun).toHaveBeenCalledTimes(1);
+    expect(commands.showRunHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('enables the Cache items, with Explain Miss waiting for milestone 7', () => {
+    const commands = noCommands();
+    commands.toggleSurveyRegion = vi.fn();
+    const cache = buildMenus({ ...STATE, sid: 's1' }, commands).find((menu) => menu.label === 'Cache')!;
+    const byId = (id: string) => cache.items.find((entry) => entry.id === id)!;
+    expect(byId('refresh-preview').enabled).toBe(true);
+    expect(byId('explain-miss')).toMatchObject({ enabled: false, milestone: 7 });
+    expect(byId('survey-region')).toMatchObject({ enabled: true, checked: true });
+    byId('survey-region').action!();
+    expect(commands.toggleSurveyRegion).toHaveBeenCalledTimes(1);
+  });
+
   it('lists the view options and panes in the View menu', () => {
     const view = buildMenus(STATE, noCommands()).find((menu) => menu.label === 'View')!;
     expect(view.items.map((item) => item.id)).toEqual([
@@ -225,6 +310,7 @@ describe('buildMenus', () => {
       'expand-all',
       'collapse-all',
       'fit',
+      'text-size',
       'theme',
       'reset-layout',
       ...PANES.map((pane) => `pane-${pane.id}`),
@@ -235,6 +321,17 @@ describe('buildMenus', () => {
       'Expand All',
       'Collapse All',
     ]);
+  });
+
+  it('offers the diagram text sizes with the current one checked', () => {
+    const commands = noCommands();
+    commands.setTextSize = vi.fn();
+    const view = buildMenus(STATE, commands).find((menu) => menu.label === 'View')!;
+    const sizes = view.items.find((item) => item.id === 'text-size')!.items!;
+    expect(sizes.map((item) => item.label)).toEqual(['100%', '115%', '130%', '150%']);
+    expect(sizes.filter((item) => item.checked).map((item) => item.label)).toEqual(['115%']);
+    sizes[2].action!();
+    expect(commands.setTextSize).toHaveBeenCalledWith(1.3);
   });
 
   it('asks the diagram to expand or collapse everything from the View menu', () => {

@@ -1,17 +1,29 @@
 // React Flow renders in jsdom with the flowStubs measurement stand-ins; jsdom
 // has no Worker, so the diagram takes the grid layout fallback.
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Profiler, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildView } from '../src/diagram/buildView';
 import { Diagram } from '../src/diagram/Diagram';
+import { DiagramView } from '../src/diagram/DiagramView';
 import { estimateSize } from '../src/diagram/layout';
 import { arrowPath } from '../src/diagram/edges/RouteEdge';
 import { edgeTooltip, keepInPlace, layoutKey, resized } from '../src/diagram/useLayout';
+import { useRunStore } from '../src/runs/store';
+import { RunControlsContext, useRunControls } from '../src/runs/useRunControls';
 import { useSessionStore } from '../src/state/session';
-import { useView } from '../src/state/view';
+import { createViewStore, useView, ViewStoreContext } from '../src/state/view';
 import { laidOut, nodeElement, installFlowStubs } from './flowStubs';
-import { declaredGraph, makeSession, mockApi, renderWithClient, withSubGraph } from './helpers';
+import {
+  declaredGraph,
+  makeSession,
+  mappedInputGraph,
+  mockApi,
+  nestedInputGraph,
+  renderWithClient,
+  withSubGraph,
+} from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
 const CHAIN = 'inc:sub/chain.yaml';
@@ -19,11 +31,16 @@ const LEAF = 'inc:sub/leaf.yaml';
 
 installFlowStubs();
 
+/** The run controls the Shell provides. */
+function WithRunControls({ children }: { children: ReactNode }) {
+  return <RunControlsContext.Provider value={useRunControls()}>{children}</RunControlsContext.Provider>;
+}
+
 describe('Diagram', () => {
   beforeEach(() => {
     useSessionStore.getState().setSid(null);
     useView.getState().resetScope();
-    useView.setState({ connected: false, direction: 'RIGHT' });
+    useView.setState({ connected: false, direction: 'RIGHT', textSize: 1 });
   });
 
   it('asks for a recipe when no session is open', () => {
@@ -42,6 +59,8 @@ describe('Diagram', () => {
       await laidOut();
       expect(nodeElement(CHAIN)).toHaveTextContent('client_chain');
       expect(nodeElement(CHAIN)).toHaveTextContent('2 steps, 2 overrides');
+      // No preview yet: no summary element at all, rather than a blank one.
+      expect(nodeElement(CHAIN).querySelector('.rc-include-summary')).toBeNull();
       expect(nodeElement('total')).toHaveTextContent('collects');
       expect(nodeElement('inputs')).toHaveTextContent('Recipe inputs');
       expect(nodeElement('inputs')).toHaveTextContent('1 input');
@@ -52,7 +71,13 @@ describe('Diagram', () => {
       expect(screen.queryByRole('button', { name: 'Up one level' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Combine' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Expand in place' })).toBeNull();
-      expect(screen.getByLabelText('Legend')).toHaveTextContent('Recipe inputs');
+      expect(screen.getByLabelText('Legend')).toHaveTextContent('Inputs');
+    });
+
+    it('draws the play icon on every step', async () => {
+      renderWithClient(<Diagram />);
+      await laidOut();
+      expect(within(nodeElement('seed')).getByRole('button', { name: 'Run to here' })).toHaveClass('rc-play');
     });
 
     it('draws edges along routes, box lines and their labels with their own class', async () => {
@@ -94,11 +119,22 @@ describe('Diagram', () => {
       expect(document.querySelector('.rc-edge-label.rc-edge-label-muted')).toHaveTextContent('extra');
     });
 
+    it('draws the drill button like the chevron and the text at the chosen size', async () => {
+      useView.setState({ textSize: 1.3 });
+      renderWithClient(<Diagram />);
+      await laidOut();
+      const box = within(nodeElement(CHAIN));
+      expect(box.getByRole('button', { name: 'Drill in' })).toHaveClass('rc-node-button');
+      expect(box.getByRole('button', { name: 'Show inputs' })).toHaveClass('rc-node-button');
+      const canvas = document.querySelector<HTMLElement>('.rc-diagram-canvas')!;
+      expect(canvas.style.getPropertyValue('--rc-text-scale')).toBe('1.3');
+    });
+
     it('lists a sub-recipe box overrides from its chevron', async () => {
       const user = userEvent.setup();
       renderWithClient(<Diagram />);
       await laidOut();
-      await user.click(within(nodeElement(CHAIN)).getByRole('button', { name: 'Show overrides' }));
+      await user.click(within(nodeElement(CHAIN)).getByRole('button', { name: 'Show inputs' }));
       expect(useView.getState().expandedBoxes.has(CHAIN)).toBe(true);
       await waitFor(() => expect(nodeElement(CHAIN).querySelector('.rc-box-rows')).not.toBeNull());
       const rows = nodeElement(CHAIN).querySelector('.rc-box-rows')!;
@@ -106,6 +142,9 @@ describe('Diagram', () => {
       expect(rows).toHaveTextContent('${seed.items}');
       expect(rows).toHaveTextContent('from seed');
       expect(rows).toHaveTextContent('k5');
+      // Every input of chain.yaml is overridden, so only the Overrides section shows.
+      expect([...rows.querySelectorAll('.rc-box-section')].map((item) => item.textContent)).toEqual(['Overrides']);
+      expect(nodeElement(CHAIN).querySelector('.rc-include-meta')).toHaveTextContent(/^2 steps, 2 overrides$/);
     });
 
     it('expands and collapses everything in view from the bar', async () => {
@@ -191,7 +230,8 @@ describe('Diagram', () => {
       expect(useView.getState().drill).toEqual([CHAIN]);
       await waitFor(() => nodeElement('ghost:seed'));
       expect(screen.getByLabelText('Breadcrumb')).toHaveTextContent('client_with_sub>client_chain');
-      expect(nodeElement(`overrides:${CHAIN}`)).toHaveTextContent('Inputs from the parent');
+      expect(nodeElement(`overrides:${CHAIN}`).querySelector('.rc-box-title')).toHaveTextContent(/^Inputs$/);
+      expect(nodeElement(`overrides:${CHAIN}`).querySelector('.rc-box-count')).toHaveTextContent(/^2 overrides$/);
       expect(nodeElement(`cout:${LEAF}`)).toHaveTextContent('Outputs client_leaf');
 
       await user.click(screen.getByRole('button', { name: 'Up one level' }));
@@ -228,6 +268,214 @@ describe('Diagram', () => {
       act(() => useView.getState().select({ kind: 'step', id: 'seed' }));
       await waitFor(() => expect(nodeElement('total').querySelector('.rc-dimmed')).not.toBeNull());
     });
+
+    it('draws run marks from the preview and the run without moving a node, and opens a failed step log', async () => {
+      const preview = {
+        recipe: 'client_with_sub',
+        version: '1.0',
+        mode: 'all',
+        targets: [],
+        force_steps: [],
+        tiers: { user: '/u', survey: '/s' },
+        write_tier: 'user',
+        steps: ['seed', 'chain_inc', 'leaf_add', 'total'].map((id) => ({
+          step_id: id,
+          step_hash: `hash-${id}`,
+          held_by: id === 'total' ? [] : ['survey'],
+          planned: id === 'total' ? 'compute' : 'load-survey',
+          tier: id === 'total' ? null : 'survey',
+          checkpoint: id === 'total' ? 'will-save' : 'saved',
+          pinned: false,
+          recipe_checkpoint: null,
+          fanned_out: false,
+          instances: null,
+          instances_held: {},
+          note: null,
+        })),
+        blockers: [],
+        warnings: [],
+      };
+      mockApi({
+        [`GET /api/sessions/${SID}`]: makeSession(),
+        [`GET /api/sessions/${SID}/preview`]: preview,
+      });
+      useRunStore.getState().resetFor(SID);
+      renderWithClient(<Diagram />);
+      await laidOut();
+      const step = (id: string) => nodeElement(id).querySelector<HTMLElement>('.rc-step')!;
+      await waitFor(() => expect(step('seed')).toHaveClass('rc-pred-survey', 'rc-survey-backed'));
+      expect(nodeElement(CHAIN)).toHaveTextContent('2 survey');
+      expect(step('total')).toHaveClass('rc-pred-compute');
+      expect(step('total').querySelector('.rc-run-pending')).not.toBeNull();
+      expect(step('seed').querySelector('.rc-letter-S')).toHaveTextContent('S');
+      expect(screen.getByLabelText('Legend')).toHaveTextContent('Survey cache (S)');
+      const before = nodeElement('total').style.transform;
+
+      act(() => {
+        const store = useRunStore.getState();
+        store.begin('r1');
+        store.apply('r1', [
+          { seq: 1, time: 1, kind: 'step_finished', run_id: 'x', data: { step: 'seed', disposition: 'hit-survey-cache', tier: 'survey', hash: 'hash-seed', index: 1, total: 2 } },
+          { seq: 2, time: 2, kind: 'step_failed', run_id: 'x', data: { step: 'total', index: 2, total: 2, error_type: 'RuntimeError', message: 'boom', traceback: 'tb', chain: null } },
+          { seq: 3, time: 3, kind: 'run_finished', run_id: 'x', data: { status: 'failed', executed: [], skipped: [], pruned: [], untargeted: [] } },
+        ]);
+      });
+      await waitFor(() => expect(step('total')).toHaveClass('rc-actual-failed'));
+      expect(step('seed')).toHaveClass('rc-actual-hit-survey-cache');
+      expect(nodeElement('total').style.transform).toBe(before);
+      expect(screen.getByLabelText('Legend')).toHaveTextContent('Failed (click for its log)');
+
+      fireEvent.click(step('total'));
+      expect(useView.getState().selected).toEqual({ kind: 'step', id: 'total' });
+      expect(useRunStore.getState().logStep).toBe('total');
+    });
+
+    it('does not render again for a batch of log events', async () => {
+      const store = useRunStore.getState();
+      store.resetFor(SID);
+      store.begin('r1');
+      store.apply('r1', [
+        { seq: 1, time: 1, kind: 'step_started', run_id: 'x', data: { step: 'seed', index: 1, total: 1, instances: null, chain: null } },
+      ]);
+      let commits = 0;
+      renderWithClient(
+        <Profiler id="diagram" onRender={() => (commits += 1)}>
+          <Diagram />
+        </Profiler>,
+      );
+      await laidOut();
+      await waitFor(() => expect(nodeElement('seed').querySelector('.rc-running')).not.toBeNull());
+      expect(within(nodeElement('seed')).getByRole('img', { name: 'Running' })).toHaveClass('rc-run-spinner');
+      const before = commits;
+      act(() =>
+        useRunStore.getState().apply('r1', [
+          { seq: 2, time: 2, kind: 'log', run_id: 'x', data: { step: 'seed', stream: 'stdout', text: 'hi', buffered: false } },
+        ]),
+      );
+      expect(useRunStore.getState().current?.logs.map((entry) => entry.stream)).toEqual(['progress', 'stdout']);
+      expect(commits).toBe(before);
+    });
+
+    it('runs to a step from its play icon', async () => {
+      const user = userEvent.setup();
+      const fetchMock = mockApi({
+        [`GET /api/sessions/${SID}`]: makeSession(),
+        [`POST /api/sessions/${SID}/runs`]: { id: 'r5', session: SID, status: 'starting' },
+      });
+      useRunStore.getState().resetFor(SID);
+      renderWithClient(
+        <WithRunControls>
+          <Diagram />
+        </WithRunControls>,
+      );
+      await laidOut();
+      const play = within(nodeElement('seed')).getByRole('button', { name: 'Run to here' });
+      await waitFor(() => expect(play).toBeEnabled());
+      await user.click(play);
+      await waitFor(() => expect(useRunStore.getState().current?.runId).toBe('r5'));
+      const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+      expect(JSON.parse(String(post[1]!.body))).toEqual({ mode: 'to', targets: ['seed'], force: false, force_steps: [] });
+      expect(useView.getState().selected).toBeNull();
+    });
+  });
+});
+
+describe('DiagramView', () => {
+  beforeEach(() => {
+    useView.getState().resetScope();
+  });
+
+  it('draws without a session, query client or run controls, and no play icon without runToHere', async () => {
+    const store = createViewStore();
+    store.setState({ textSize: 1.5 });
+    const clicked: string[] = [];
+    render(
+      <ViewStoreContext.Provider value={store}>
+        <DiagramView graph={withSubGraph} scope="with_sub" onStepClick={(step) => clicked.push(step.id)} />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    expect(nodeElement(CHAIN)).toHaveTextContent('client_chain');
+    expect(screen.getByLabelText('Breadcrumb')).toHaveTextContent('client_with_sub');
+    expect(document.querySelector('.rc-play')).toBeNull();
+    expect(document.querySelector('.rc-run-marks')).toBeNull();
+    const canvas = document.querySelector<HTMLElement>('.rc-diagram-canvas')!;
+    expect(canvas.style.getPropertyValue('--rc-text-scale')).toBe('1.5');
+
+    fireEvent.click(nodeElement('seed').querySelector('.rc-step')!);
+    expect(store.getState().selected).toEqual({ kind: 'step', id: 'seed' });
+    expect(useView.getState().selected).toBeNull();
+    expect(clicked).toEqual(['seed']);
+  });
+
+  it('ends the recipe inputs box with a count of the inputs sub-recipes declare', async () => {
+    const store = createViewStore();
+    store.setState({ expandedBoxes: new Set(['inputs']) });
+    render(
+      <ViewStoreContext.Provider value={store}>
+        <DiagramView graph={nestedInputGraph()} scope="nested" />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    const box = nodeElement('inputs');
+    expect(box.querySelector('.rc-box-count')).toHaveTextContent(/^1 input$/);
+    expect(box.querySelectorAll('.rc-box-name')).toHaveLength(1);
+    expect(box.querySelector('.rc-box-section')).toBeNull();
+    const more = box.querySelector('.rc-box-more')!;
+    expect(more).toHaveTextContent(/^1 more input declared in sub-recipes$/);
+    expect(more.getAttribute('title')).toMatch(/^Declared in the sub-recipe files and left to their defaults\./);
+  });
+
+  it('tags a value the run sets and a required input with no value', async () => {
+    const graph = nestedInputGraph();
+    const offset = graph.nodes.find((n) => n.id === 'in:offset');
+    if (offset?.kind !== 'input') throw new Error('no in:offset');
+    Object.assign(offset, { required: true, default: null });
+    Object.assign(graph.includes.find((inc) => inc.id === LEAF)!.inputs!.at(-1)!, { required: true, default: null });
+    const store = createViewStore();
+    store.setState({ drill: [CHAIN, LEAF], expandedBoxes: new Set([`overrides:${LEAF}`]) });
+    render(
+      <ViewStoreContext.Provider value={store}>
+        <DiagramView graph={graph} scope="nested" inputValues={{ n: 9, offset: null }} inputSources={{ n: 'config' }} />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    const box = nodeElement(`overrides:${LEAF}`);
+    expect(box.querySelector('.rc-box-title')).toHaveTextContent(/^Inputs$/);
+    expect(box.querySelector('.rc-box-count')).toHaveTextContent(/^2 overrides, 1 input$/);
+    expect(box.querySelector('.rc-box-head')).toHaveAttribute('title', 'sub/leaf.yaml');
+    expect([...box.querySelectorAll('.rc-box-section')].map((item) => item.textContent)).toEqual([
+      'Overrides',
+      'Inputs',
+    ]);
+    const unset = box.querySelector('.rc-box-value-unset')!;
+    expect(unset).toHaveTextContent(/^unsetrequired$/);
+    expect(unset.querySelector('.rc-box-tag')).toHaveTextContent('required');
+    // leaf's k is chain's k, which the recipe sets to 5: an override, no tag.
+    expect(box.querySelectorAll('.rc-box-tag')).toHaveLength(1);
+
+    act(() => store.setState({ drill: [], expandedBoxes: new Set(['inputs']) }));
+    await waitFor(() => expect(nodeElement('inputs').querySelector('.rc-box-tag')).toHaveTextContent('run config'));
+  });
+
+  it('keeps two diagrams on one page apart', async () => {
+    const one = createViewStore();
+    const two = createViewStore();
+    render(
+      <>
+        <ViewStoreContext.Provider value={one}>
+          <DiagramView graph={withSubGraph} scope="one" />
+        </ViewStoreContext.Provider>
+        <ViewStoreContext.Provider value={two}>
+          <DiagramView graph={withSubGraph} scope="two" />
+        </ViewStoreContext.Provider>
+      </>,
+    );
+    await waitFor(() => expect(document.querySelectorAll('.react-flow__node[data-id="seed"]')).toHaveLength(2));
+    act(() => one.getState().drillInto(CHAIN));
+    await waitFor(() => expect(screen.getAllByLabelText('Breadcrumb')[0]).toHaveTextContent('client_chain'));
+    expect(screen.getAllByLabelText('Breadcrumb')[1]).not.toHaveTextContent('client_chain');
+    expect(two.getState().drill).toEqual([]);
   });
 });
 
@@ -252,6 +500,19 @@ describe('edge and viewport helpers', () => {
       expandedBoxes: new Set<string>(),
     });
     expect(edgeTooltip(view, view.edges.find((edge) => edge.id === 'e:inputs->seed')!)).toBe('n = unset');
+  });
+
+  it('gives a per item input line the value of the input it maps over', () => {
+    const view = buildView(mappedInputGraph(), {
+      drill: [],
+      connected: false,
+      selected: null,
+      expandedSteps: new Set<string>(),
+      expandedBoxes: new Set<string>(),
+    });
+    const line = view.edges.find((edge) => edge.id === 'e:inputs->proc')!;
+    expect(line.names).toEqual(['item of files']);
+    expect(edgeTooltip(view, line)).toBe('item of files = ["a","b"]');
   });
 });
 

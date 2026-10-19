@@ -75,3 +75,12 @@ def test_vite_origin_only_in_dev(config):
     dev_client = TestClient(create_app(replace(config, dev=True)), base_url=BASE_URL)
     response = dev_client.post("/api/sessions", json=OPEN_BODY, headers=headers)
     assert response.status_code == 201
+
+
+def test_cancel_without_client_header_is_refused(client):
+    for action in ("cancel", "stop"):
+        response = client.post(f"/api/runs/20260101-000000-abcdef/{action}")
+        assert response.status_code == 403
+        assert response.json()["error"] == "missing_client_header"
+    response = client.post("/api/sessions/20260101-000000-abcdef/runs", json={})
+    assert response.status_code == 403

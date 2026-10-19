@@ -1,6 +1,9 @@
 import { useId, useState, type FormEvent } from 'react';
+import { fieldFile, sourceLabel } from '../api/fields';
+import type { Graph } from '../api/graph';
 import type { InputField, Problem } from '../api/models';
 import { useCurrentSession, useMutationError, useSetInputs } from '../api/queries';
+import { ByFile } from '../inspector/ByFile';
 import {
   controlFor,
   fieldDraft,
@@ -36,7 +39,7 @@ export function InputControl({ field, edit, error, onEdit, idPrefix }: FieldProp
           {field.name}
         </label>
         {field.type && <span className="rc-badge">{field.type}</span>}
-        <span className={`rc-badge rc-badge-${field.source}`}>{field.source}</span>
+        <span className={`rc-badge rc-badge-${field.source}`}>{sourceLabel(field.source)}</span>
         {field.required && <span className="rc-badge">required</span>}
         {reset && <span className="rc-badge">reset on apply</span>}
         <span className="rc-spacer" />
@@ -186,28 +189,37 @@ export interface InputsFormProps {
   applyError?: string | null;
   /** Send the values; edits are cleared once the returned promise resolves. */
   onApply: (values: Record<string, unknown>) => Promise<unknown> | void;
+  /** The session graph: with it, the inputs are grouped under a header per declaring file. */
+  graph?: Graph;
 }
 
 /** One control per declared recipe input; Apply sends the session's values. */
-export function InputsForm({ declared, problems, applying, applyError, onApply }: InputsFormProps) {
+export function InputsForm({ declared, problems, applying, applyError, onApply, graph }: InputsFormProps) {
   const draft = useInputDraft(declared);
   const idPrefix = useId();
 
   if (declared.length === 0) {
     return <div className="rc-empty">This recipe declares no inputs.</div>;
   }
+  const control = (field: InputField) => (
+    <InputControl
+      key={field.name}
+      field={field}
+      edit={draft.edits[field.name]}
+      error={draft.result.errors[field.name]}
+      onEdit={(edit) => draft.setEdit(field.name, edit)}
+      idPrefix={idPrefix}
+    />
+  );
   return (
     <form onSubmit={draft.submit(onApply)}>
-      {declared.map((field) => (
-        <InputControl
-          key={field.name}
-          field={field}
-          edit={draft.edits[field.name]}
-          error={draft.result.errors[field.name]}
-          onEdit={(edit) => draft.setEdit(field.name, edit)}
-          idPrefix={idPrefix}
-        />
-      ))}
+      {graph ? (
+        <ByFile graph={graph} items={declared} fileOf={(field) => fieldFile(graph, field)}>
+          {control}
+        </ByFile>
+      ) : (
+        declared.map(control)
+      )}
       <DraftActions draft={draft} applying={applying} applyError={applyError} />
       <InputProblems problems={problems} declared={declared} />
     </form>
@@ -230,6 +242,7 @@ export function InputsPane() {
         applying={setInputs.isPending}
         applyError={applyError}
         onApply={(values) => setInputs.mutateAsync(values)}
+        graph={session.data.graph}
       />
     </div>
   );

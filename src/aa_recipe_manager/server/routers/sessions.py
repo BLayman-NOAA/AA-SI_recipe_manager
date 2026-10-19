@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
 
+from aa_recipe_manager.server.errors import ActiveRunExists
 from aa_recipe_manager.server.models import (
     FileTextResponse,
     OpenSessionRequest,
@@ -44,8 +45,17 @@ def get_session(sid: str, request: Request):
 
 @router.delete("/{sid}", status_code=204, response_class=Response)
 def close_session(sid: str, request: Request):
-    """Close a session and delete its folder. The recipe files are untouched."""
+    """Close a session and delete its folder. The recipe files are untouched.
+
+    A session with a run that has not finished is refused; cancel it first.
+    """
+    running = request.app.state.runs.active_run(sid)
+    if running is not None:
+        raise ActiveRunExists(
+            f"Session {sid!r} has an unfinished run {running}; cancel it first."
+        )
     store(request).delete(sid)
+    request.app.state.runs.forget_session(sid)
     return Response(status_code=204)
 
 

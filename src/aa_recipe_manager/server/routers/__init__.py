@@ -6,5 +6,5 @@ from aa_recipe_manager.server.models import ErrorResponse
 
 #: Error statuses every router documents, all with the same body.
 ERROR_RESPONSES = {
-    status: {"model": ErrorResponse} for status in (400, 403, 404, 422, 500)
+    status: {"model": ErrorResponse} for status in (400, 403, 404, 409, 422, 500)
 }

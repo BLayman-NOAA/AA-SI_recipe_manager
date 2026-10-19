@@ -14,12 +14,13 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
-from aa_recipe_manager.exceptions import (
+from aa_recipe_manager.api import (
     AmbiguousImplementationError,
     ImplementationNotFoundError,
     RecipeParseError,
     RecipeValidationError,
     SpecNotFoundError,
+    UpstreamNotCachedError,
 )
 
 if TYPE_CHECKING:
@@ -38,8 +39,34 @@ class PathNotAllowed(Exception):
     """A path lies outside the folders the server may read."""
 
 
+class RunNotFound(LookupError):
+    """No run has the requested id."""
+
+
+class ActiveRunExists(Exception):
+    """The session already has a run that has not finished."""
+
+
+class RunNotActive(Exception):
+    """The run has already finished, so it cannot be cancelled."""
+
+
+class InvalidRecipe(Exception):
+    """The session's recipe has validation errors, so it cannot run.
+
+    Attributes:
+        problems: The session's validation problems.
+    """
+
+    def __init__(self, message: str, problems: list[dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.problems = problems
+
+
 _STEP = re.compile(r"^Step '([^']+)'")
-NOT_FOUND = (SessionNotFound, RecipeNotFound, FileNotFoundError)
+NOT_FOUND = (SessionNotFound, RecipeNotFound, RunNotFound, FileNotFoundError)
+#: Requests that clash with a run's state.
+CONFLICT = (ActiveRunExists, RunNotActive, UpstreamNotCachedError)
 #: Recipe problems found while reading it, which the client can show.
 UNPROCESSABLE = (
     RecipeParseError,
@@ -68,6 +95,14 @@ def translate_error(exc: Exception) -> tuple[int, dict[str, Any]]:
     elif isinstance(exc, RecipeValidationError):
         status = 422
         details = exc.errors
+    elif isinstance(exc, InvalidRecipe):
+        status = 422
+        details = exc.problems
+    elif isinstance(exc, UpstreamNotCachedError):
+        status = 409
+        details = {"targets": exc.targets, "missing": exc.missing}
+    elif isinstance(exc, CONFLICT):
+        status = 409
     elif isinstance(exc, NOT_FOUND):
         status = 404
     elif isinstance(exc, PathNotAllowed):
@@ -105,6 +140,8 @@ def install_handlers(app: FastAPI) -> None:
         RequestValidationError,
         *UNPROCESSABLE,
         RecipeValidationError,
+        InvalidRecipe,
+        *CONFLICT,
         *NOT_FOUND,
         PathNotAllowed,
         ValueError,

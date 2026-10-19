@@ -1,0 +1,11 @@
+{"seq": 1, "time": 10.0, "kind": "run_started", "run_id": "t", "data": {"recipe": "timed", "mode": "only", "targets": ["sink", "proc"], "only": true, "force": true, "force_steps": ["proc"], "step_count": 4, "total_steps": 5}}
+{"seq": 2, "time": 10.0, "kind": "step_started", "run_id": "t", "data": {"step": "proc", "index": 1, "total": 4, "instances": 3, "chain": ["proc"]}}
+{"seq": 3, "time": 10.5, "kind": "log", "run_id": "t", "data": {"step": "proc", "stream": "stdout", "text": "working\n", "buffered": false, "instance": 1}}
+{"seq": 4, "time": 16.0, "kind": "step_finished", "run_id": "t", "data": {"step": "proc", "disposition": "computed", "tier": "user", "seconds": 6.0, "hash": "h1", "index": 1, "total": 4, "instances": {"count": 3, "computed": 1, "cached": 2, "skipped": 0}, "instance_seconds": [1.0, 2.0, 3.0]}}
+{"seq": 5, "time": 16.0, "kind": "step_started", "run_id": "t", "data": {"step": "one", "index": 2, "total": 4, "instances": 1, "chain": ["one"]}}
+{"seq": 6, "time": 28.0, "kind": "step_finished", "run_id": "t", "data": {"step": "one", "disposition": "hit-survey-cache", "tier": "survey", "seconds": 12.3456, "hash": "h2", "index": 2, "total": 4, "instances": {"count": 1, "computed": 0, "cached": 1, "skipped": 0}, "instance_seconds": [12.3456]}}
+{"seq": 7, "time": 28.0, "kind": "step_started", "run_id": "t", "data": {"step": "sink", "index": 3, "total": 4, "instances": null, "chain": null}}
+{"seq": 8, "time": 28.1, "kind": "step_finished", "run_id": "t", "data": {"step": "sink", "disposition": "marker", "tier": "user", "seconds": 0.0371, "hash": "h3", "index": 3, "total": 4, "instances": null, "instance_seconds": []}}
+{"seq": 9, "time": 28.1, "kind": "step_started", "run_id": "t", "data": {"step": "slow", "index": 4, "total": 4, "instances": null, "chain": null}}
+{"seq": 10, "time": 90.0, "kind": "step_failed", "run_id": "t", "data": {"step": "slow", "index": 4, "total": 4, "seconds": null, "error_type": "KeyboardInterrupt", "message": "stopped", "traceback": null, "chain": null, "instance": null, "item": null}}
+{"seq": 11, "time": 90.0, "kind": "run_finished", "run_id": "t", "data": {"status": "cancelled", "seconds": null, "manifest": null, "executed": ["proc"], "skipped": ["one", "sink"], "pruned": [], "untargeted": [], "error_type": null, "message": "Cancelled by the user."}}

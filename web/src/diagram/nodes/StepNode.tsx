@@ -1,6 +1,6 @@
 import { opLabel } from '../../api/graph';
 import { Prose } from '../../Prose';
-import { tierLetter, type StepBadge } from '../../runs/badges';
+import { NOT_NEEDED_TITLE, notNeeded, tierLetter, type StepBadge } from '../../runs/badges';
 import { clip, firstSentence, plainText } from '../../text';
 import type { Badge } from '../buildView';
 import {
@@ -98,7 +98,9 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
     title: `${port.name}${port.type ? ` (${port.type})` : ''}`,
   }));
   const checkpointed = step.checkpoint === 'always';
-  const title = badge?.note ?? (badge?.actual === 'failed' ? 'Failed: click to open its log' : undefined);
+  const title =
+    badge?.note ??
+    (badge?.actual === 'failed' ? 'Failed: click to open its log' : badge && notNeeded(badge) ? NOT_NEEDED_TITLE : undefined);
 
   return (
     <div

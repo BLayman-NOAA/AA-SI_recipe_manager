@@ -14,7 +14,15 @@ from ruamel.yaml import YAML
 
 ENV_VAR = "AA_RECIPE_SERVER_CONFIG"
 DEFAULT_STATE_DIR = Path.home() / ".aa-recipe" / "client"
-FILE_KEYS = {"recipe_roots", "data_roots", "port", "host", "run_config", "docs_url"}
+FILE_KEYS = {
+    "recipe_roots",
+    "data_roots",
+    "port",
+    "host",
+    "run_config",
+    "docs_url",
+    "cancel_grace_seconds",
+}
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 VITE_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
@@ -32,6 +40,8 @@ class ServerConfig:
         run_config: An explicit ``aa-recipe`` run config file, as ``--config``.
         docs_url: Base URL of the documentation site.
         dev: Accept the Vite dev server origin and reload on code changes.
+        cancel_grace_seconds: How long a cancelled run may take to stop by
+            itself before the server kills its process tree.
     """
 
     host: str = "127.0.0.1"
@@ -42,6 +52,7 @@ class ServerConfig:
     run_config: Path | None = None
     docs_url: str = "https://blayman-noaa.github.io/AA-SI_recipe_manager/"
     dev: bool = False
+    cancel_grace_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         # Op links are built as docs_url + "ops/...", so it ends in a slash.
@@ -142,6 +153,13 @@ def _read_file(path: Path) -> dict[str, Any]:
         elif key == "port":
             expected = "a whole number"
             valid = isinstance(value, int) and not isinstance(value, bool)
+        elif key == "cancel_grace_seconds":
+            expected = "a number of seconds, zero or more"
+            valid = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value >= 0
+            )
         else:
             expected = "a string"
             valid = isinstance(value, str) or (key == "run_config" and value is None)

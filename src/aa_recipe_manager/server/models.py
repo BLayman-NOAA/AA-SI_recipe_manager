@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RequestBody(BaseModel):
@@ -130,6 +130,104 @@ class SetRunConfigRequest(RequestBody):
     dask_scheduler: str | None = None
     dask_workers: int | None = None
     storage_options: dict[str, Any] | None = None
+
+
+RunStatus = Literal[
+    "queued", "starting", "running", "completed", "failed", "cancelled", "interrupted"
+]
+
+
+class StartRunRequest(RequestBody):
+    """What to run: everything, up to the targets, or the targets alone."""
+
+    mode: Literal["all", "to", "only"] = "all"
+    targets: list[str] = []
+    force: bool = False
+    force_steps: list[str] = []
+
+
+class RunSummary(BaseModel):
+    executed: int = 0
+    skipped: int = 0
+    pruned: int = 0
+    untargeted: int = 0
+    failed_step: str | None = None
+    error_type: str | None = None
+    message: str | None = None
+    seconds: float | None = None
+
+
+class RunResponse(BaseModel):
+    schema_: int = Field(1, alias="schema")
+    id: str
+    session: str
+    created: str
+    started: str | None
+    finished: str | None
+    status: RunStatus
+    pid: int | None
+    pid_created: float | None
+    exit_code: int | None
+    mode: Literal["all", "to", "only"]
+    targets: list[str]
+    force: bool
+    force_steps: list[str]
+    executor: str | None
+    cancel_requested_at: str | None
+    stop_requested_at: str | None = None
+    killed: bool
+    summary: RunSummary | None
+    manifest: str | None
+    outputs_dir: str | None
+    log: str
+    cwd: str | None = None
+    last_seq: int
+
+
+class StepPreviewModel(BaseModel):
+    step_id: str
+    step_hash: str
+    held_by: list[str]
+    planned: str
+    tier: str | None
+    checkpoint: str
+    pinned: bool
+    recipe_checkpoint: str | None
+    fanned_out: bool
+    instances: int | None
+    instances_held: dict[str, int]
+    note: str | None
+
+
+class PreviewResponse(BaseModel):
+    recipe: str
+    version: str
+    mode: str
+    targets: list[str]
+    force_steps: list[str]
+    tiers: dict[str, str]
+    write_tier: str | None
+    steps: list[StepPreviewModel]
+    blockers: list[str]
+    warnings: list[str]
+
+
+class LogEntry(BaseModel):
+    seq: int
+    time: float
+    step: str | None
+    stream: str
+    text: str
+    buffered: bool
+    instance: Any = None
+
+
+class LogResponse(BaseModel):
+    run_id: str
+    step: str | None
+    stream: str | None
+    entries: list[LogEntry]
+    truncated: bool
 
 
 class ErrorResponse(BaseModel):

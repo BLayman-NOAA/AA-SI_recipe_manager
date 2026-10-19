@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,7 +14,8 @@ from aa_recipe_manager import __version__
 from aa_recipe_manager.server.config import ServerConfig
 from aa_recipe_manager.server.errors import install_handlers
 from aa_recipe_manager.server.models import HealthResponse
-from aa_recipe_manager.server.routers import ops, recipes, sessions
+from aa_recipe_manager.server.routers import ops, recipes, runs, sessions
+from aa_recipe_manager.server.runs import RunManager
 from aa_recipe_manager.server.security import LocalOnlyMiddleware
 from aa_recipe_manager.server.sessions import SessionStore
 
@@ -34,15 +36,26 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         at ``/``.
     """
     config = config or ServerConfig.from_env()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.runs.recover()
+        try:
+            yield
+        finally:
+            app.state.runs.shutdown()
+
     app = FastAPI(
         title="AA-SI recipe manager client",
         version=__version__,
         openapi_url="/api/openapi.json",
         docs_url="/api/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.config = config
     app.state.sessions = SessionStore(config)
+    app.state.runs = RunManager(app.state.sessions, config)
     app.state.ops = None
     app.state.recipe_cache = {}
     app.add_middleware(LocalOnlyMiddleware, config=config)
@@ -59,7 +72,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
             "docs_url": config.docs_url,
         }
 
-    for module in (recipes, ops, sessions):
+    for module in (recipes, ops, sessions, runs):
         app.include_router(module.router, prefix="/api")
 
     if (STATIC_DIR / "index.html").is_file():

@@ -17,6 +17,7 @@ import { OutputsPane } from '../outputs/OutputsPane';
 import { ProblemsPane } from '../problems/ProblemsPane';
 import { RecipesPane } from '../recipes/RecipesPane';
 import { RunSettingsPane } from '../runs/RunSettingsPane';
+import { RunsPane } from '../runs/RunsPane';
 import { useView } from '../state/view';
 import { YamlPane } from '../yaml/YamlPane';
 import { persistLayout, restoreLayout, syncOpenPanes, useDock } from './dock';
@@ -38,6 +39,7 @@ export const PANE_COMPONENTS: Record<PaneId, FunctionComponent<IDockviewPanelPro
   inputs: pane(InputsPane),
   runSettings: pane(RunSettingsPane),
   logs: pane(LogsPane),
+  runs: pane(RunsPane),
   outputs: pane(OutputsPane),
   problems: pane(ProblemsPane),
   echogram: pane(EchogramPane),

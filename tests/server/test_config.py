@@ -78,6 +78,9 @@ def test_docs_url_always_ends_in_a_slash(tmp_path):
         "run_config: 3\n",
         "port: '8000'\n",
         "port: true\n",
+        "cancel_grace_seconds: soon\n",
+        "cancel_grace_seconds: -1\n",
+        "cancel_grace_seconds: true\n",
     ],
 )
 def test_server_yaml_values_are_type_checked(tmp_path, text):
@@ -90,3 +93,13 @@ def test_empty_recipe_roots_are_refused(tmp_path):
     (tmp_path / "server.yaml").write_text("recipe_roots: []\n", encoding="utf-8")
     with pytest.raises(ValueError, match="recipe root"):
         ServerConfig.load(tmp_path)
+
+
+def test_cancel_grace_seconds_from_server_yaml(tmp_path):
+    assert ServerConfig().cancel_grace_seconds == 30.0
+    (tmp_path / "server.yaml").write_text("cancel_grace_seconds: 5\n", encoding="utf-8")
+    assert ServerConfig.load(tmp_path).cancel_grace_seconds == 5
+    (tmp_path / "server.yaml").write_text(
+        "cancel_grace_seconds: 2.5\n", encoding="utf-8"
+    )
+    assert ServerConfig.load(tmp_path).cancel_grace_seconds == 2.5

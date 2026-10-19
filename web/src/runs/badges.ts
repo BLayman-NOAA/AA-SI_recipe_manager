@@ -11,7 +11,10 @@ import { type RunState, type StepRunState, type StepStatus } from './reducer';
 export type Predicted = 'survey' | 'user' | 'marker' | 'compute' | 'skipped' | 'pruned' | 'untargeted' | 'unknown';
 
 export interface StepBadge {
-  /** Outline, from the preview, or from the run's plan while it runs. */
+  /**
+   * Outline, from the preview; while a run goes, from the preview it was
+   * started with, else from its plan event.
+   */
   predicted: Predicted | null;
   /** Fill, from the run shown. */
   actual: StepStatus | null;
@@ -50,6 +53,22 @@ export function predictedOf(planned: string, tier: string | null): Predicted {
   }
 }
 
+/** How the client names the pruned and skipped statuses. */
+export const NOT_NEEDED = 'not needed';
+
+/** The tooltip of a step the run does not need. */
+export const NOT_NEEDED_TITLE = "Not needed: a later step's result is cached";
+
+/** A planned disposition or step status as the client words it. */
+export function statusText(status: string): string {
+  return status === 'pruned' || status === 'skipped' ? NOT_NEEDED : status;
+}
+
+/** The step is not needed by the run, predicted or actual. */
+export function notNeeded(badge: StepBadge): boolean {
+  return [badge.predicted, badge.actual].some((status) => status === 'pruned' || status === 'skipped');
+}
+
 /** Steps the survey tier holds. */
 export function surveyBackedSteps(preview: Preview | null): Set<string> {
   return new Set(
@@ -78,12 +97,17 @@ function savedLetter(step: StepPreview | undefined): 'S' | 'U' | null {
  */
 export interface RunMarks {
   steps: Record<string, StepRunState>;
-  /** The run has no run_finished yet; its plan then gives the outline. */
+  /** The run has no run_finished yet; its start preview, else its plan, then gives the outline. */
   live: boolean;
+  /**
+   * The preview the client started the run with. It resolves mapped steps
+   * per instance, which the plan event cannot, so its outline wins.
+   */
+  preview: Preview | null;
 }
 
-export function runMarks(run: RunState | null): RunMarks | null {
-  return run && { steps: run.steps, live: run.finished === null };
+export function runMarks(run: RunState | null, preview: Preview | null = null): RunMarks | null {
+  return run && { steps: run.steps, live: run.finished === null, preview };
 }
 
 /**
@@ -97,12 +121,16 @@ export function runMarks(run: RunState | null): RunMarks | null {
 export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks | null): Record<string, StepBadge> {
   const previews = new Map((preview?.steps ?? []).map((step) => [step.step_id, step]));
   const live = run?.live ?? false;
+  const started = new Map(live ? (run?.preview?.steps ?? []).map((step) => [step.step_id, step]) : []);
   const badges: Record<string, StepBadge> = {};
   for (const node of stepNodes(graph)) {
     const ahead = previews.get(node.id);
     const actual = run?.steps[node.id];
+    const atStart = started.get(node.id);
     let predicted: Predicted | null = ahead ? predictedOf(ahead.planned, ahead.tier) : null;
-    if (live && actual?.planned) predicted = predictedOf(actual.planned, actual.tier);
+    if (atStart) predicted = predictedOf(atStart.planned, atStart.tier);
+    else if (live && actual?.planned) predicted = predictedOf(actual.planned, actual.tier);
+    const planned = atStart ?? ahead;
     const saved = savedLetter(ahead);
     const counts = actual?.instances;
     badges[node.id] = {
@@ -110,11 +138,11 @@ export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks 
       actual: actual ? actual.status : null,
       progress: counts && counts.count !== null ? { done: counts.done, count: counts.count } : null,
       saved,
-      willSave: saved === null && Boolean(ahead && (ahead.pinned || ahead.checkpoint === 'will-save')),
+      willSave: saved === null && Boolean(planned && (planned.pinned || planned.checkpoint === 'will-save')),
       checkpointed: node.checkpoint === 'always',
       stale: staleResult(ahead, actual),
       surveyBacked: Boolean(ahead?.held_by.includes('survey')),
-      note: ahead?.note ?? null,
+      note: planned?.note ?? null,
     };
   }
   return badges;

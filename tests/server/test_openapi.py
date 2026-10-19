@@ -22,6 +22,13 @@ PATHS = {
     "/api/sessions/{sid}/files/{path}",
     "/api/sessions/{sid}/inputs",
     "/api/sessions/{sid}/config",
+    "/api/sessions/{sid}/runs",
+    "/api/sessions/{sid}/preview",
+    "/api/runs/{rid}",
+    "/api/runs/{rid}/events",
+    "/api/runs/{rid}/log",
+    "/api/runs/{rid}/cancel",
+    "/api/runs/{rid}/stop",
 }
 
 
@@ -32,6 +39,10 @@ def test_export_is_json_with_every_route(tmp_path):
     assert set(document["paths"]) == PATHS
     assert "SessionResponse" in document["components"]["schemas"]
     assert "ErrorResponse" in document["components"]["schemas"]
+    assert "RunResponse" in document["components"]["schemas"]
+    assert "PreviewResponse" in document["components"]["schemas"]
+    events = document["paths"]["/api/runs/{rid}/events"]["get"]["responses"]["200"]
+    assert "text/event-stream" in events["content"]
     assert out.read_text(encoding="utf-8") == openapi_text()
 
 

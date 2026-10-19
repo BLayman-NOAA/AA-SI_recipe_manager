@@ -1,8 +1,8 @@
 /** Documentation links, from the server's docs_url (GET /api/health). */
 import { useHealth } from '../api/queries';
+import { FALLBACK_DOCS_URL } from '../env';
 
-/** Used only until /api/health has answered: the server's default docs_url. */
-export const FALLBACK_DOCS_URL = 'https://blayman-noaa.github.io/AA-SI_recipe_manager/';
+export { FALLBACK_DOCS_URL } from '../env';
 
 /** The docs site root, always ending in "/". */
 export function useDocsUrl(): string {

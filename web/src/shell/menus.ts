@@ -1,6 +1,6 @@
 /** The menu bar's menus as data, built from the client state and its commands. */
 import type { SessionSummary } from '../api/models';
-import type { Direction, Theme } from '../state/view';
+import { TEXT_SIZES, type Direction, type Theme } from '../state/view';
 import { opsUrl } from './links';
 import { PANES, type PaneId } from './panes';
 
@@ -36,6 +36,22 @@ export interface MenuState {
   theme: Theme;
   /** Docs site root, ending in "/". */
   docsUrl: string;
+  /** What the run items may do now. */
+  run: RunMenuState;
+  surveyRegion: boolean;
+  /** Diagram text size, one of TEXT_SIZES. */
+  textSize: number;
+}
+
+export interface RunMenuState {
+  /** A valid session is open and no run is active. */
+  canRun: boolean;
+  /** canRun, and a step is selected. */
+  canRunSelected: boolean;
+  /** A run is going. */
+  isActive: boolean;
+  /** Cancel was asked for and the run is still going. */
+  isCancelling: boolean;
 }
 
 /** What the menus do. */
@@ -53,9 +69,21 @@ export interface Commands {
   fit: () => void;
   resetLayout: () => void;
   toggleTheme: () => void;
+  setTextSize: (size: number) => void;
   openUrl: (url: string) => void;
   showShortcuts: () => void;
   showAbout: () => void;
+  dryRun: () => void;
+  runAll: () => void;
+  runToSelected: () => void;
+  runSelectedOnly: () => void;
+  forceRerunSelected: () => void;
+  forceRerunAll: () => void;
+  cancelRun: () => void;
+  stopRun: () => void;
+  showRunHistory: () => void;
+  refreshPreview: () => void;
+  toggleSurveyRegion: () => void;
 }
 
 export function milestoneTooltip(milestone: number): string {
@@ -87,6 +115,7 @@ function sessionItems(state: MenuState, commands: Commands): MenuItem[] {
 
 export function buildMenus(state: MenuState, commands: Commands): Menu[] {
   const hasSession = state.sid !== null;
+  const { canRun, canRunSelected, isActive, isCancelling } = state.run;
   const directionLabel = state.direction === 'RIGHT' ? 'left to right' : 'top to bottom';
   return [
     {
@@ -157,14 +186,38 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
       id: 'run',
       label: 'Run',
       items: [
-        later('dry-run', 'Dry Run', 3),
-        later('run-all', 'Run All', 3),
-        later('run-to-selected', 'Run to Selected', 3, 'Ctrl+Enter'),
-        later('run-selected-only', 'Run Selected Only', 3, 'Ctrl+Shift+Enter'),
-        later('force-rerun-selected', 'Force Rerun Selected', 3),
-        later('force-rerun-all', 'Force Rerun All', 3),
-        later('cancel', 'Cancel', 3),
-        { ...later('run-history', 'Run History', 3), separator: true },
+        { id: 'dry-run', label: 'Dry Run', enabled: hasSession, action: commands.dryRun },
+        { id: 'run-all', label: 'Run All', enabled: canRun, action: commands.runAll },
+        {
+          id: 'run-to-selected',
+          label: 'Run to Selected',
+          shortcut: 'Ctrl+Enter',
+          enabled: canRunSelected,
+          action: commands.runToSelected,
+        },
+        {
+          id: 'run-selected-only',
+          label: 'Run Selected Only',
+          shortcut: 'Ctrl+Shift+Enter',
+          enabled: canRunSelected,
+          action: commands.runSelectedOnly,
+        },
+        {
+          id: 'force-rerun-selected',
+          label: 'Force Rerun Selected',
+          enabled: canRunSelected,
+          action: commands.forceRerunSelected,
+        },
+        { id: 'force-rerun-all', label: 'Force Rerun All', enabled: canRun, action: commands.forceRerunAll },
+        { id: 'cancel', label: 'Cancel', enabled: isActive, action: commands.cancelRun },
+        { id: 'stop-now', label: 'Stop Now', enabled: isCancelling, action: commands.stopRun },
+        {
+          id: 'run-history',
+          label: 'Run History',
+          enabled: true,
+          separator: true,
+          action: commands.showRunHistory,
+        },
       ],
     },
     {
@@ -188,6 +241,18 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
         { id: 'collapse-all', label: 'Collapse All', enabled: hasSession, action: commands.collapseAll },
         { id: 'fit', label: 'Fit', shortcut: 'F', enabled: true, action: commands.fit },
         {
+          id: 'text-size',
+          label: 'Diagram Text Size',
+          enabled: true,
+          items: TEXT_SIZES.map((size) => ({
+            id: `text-size-${Math.round(size * 100)}`,
+            label: `${Math.round(size * 100)}%`,
+            enabled: true,
+            checked: state.textSize === size,
+            action: () => commands.setTextSize(size),
+          })),
+        },
+        {
           id: 'theme',
           label: 'Light Theme',
           enabled: true,
@@ -210,9 +275,15 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
       id: 'cache',
       label: 'Cache',
       items: [
-        later('refresh-preview', 'Refresh Preview', 3),
-        later('explain-miss', 'Explain Miss for Selected', 3),
-        later('survey-region', 'Show Survey Backed Region', 3),
+        { id: 'refresh-preview', label: 'Refresh Preview', enabled: hasSession, action: commands.refreshPreview },
+        later('explain-miss', 'Explain Miss for Selected', 7),
+        {
+          id: 'survey-region',
+          label: 'Show Survey Backed Region',
+          enabled: true,
+          checked: state.surveyRegion,
+          action: commands.toggleSurveyRegion,
+        },
       ],
     },
     {

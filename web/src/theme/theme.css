@@ -870,6 +870,11 @@ textarea.rc-input {
   color: var(--rc-muted);
 }
 
+.rc-log-progress .rc-log-text {
+  color: var(--rc-muted);
+  font-weight: 600;
+}
+
 .rc-log-traceback {
   background: color-mix(in srgb, var(--rc-error) 12%, transparent);
 }

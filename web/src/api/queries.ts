@@ -1,13 +1,18 @@
 /** TanStack Query hooks for every server endpoint the client uses. */
-import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useMutationState, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useSessionStore } from '../state/session';
 import { ApiError, apiGet, apiSend, isClientError, isNetworkError } from './client';
+import { previewQuery, toStartRequest, type RunIntent } from '../runs/intent';
+import { isActiveRun } from './models';
 import type {
   FileText,
   Health,
   OpCatalog,
+  Preview,
   RecipesResponse,
+  RunLog,
+  RunRecord,
   SessionDocument,
   SessionSummary,
   SetRunConfigRequest,
@@ -20,7 +25,18 @@ export const queryKeys = {
   sessions: ['sessions'] as const,
   session: (sid: string) => ['session', sid] as const,
   file: (sid: string, path: string) => ['session', sid, 'file', path] as const,
+  /** Every preview of a session, for invalidation. */
+  previews: (sid: string) => ['preview', sid] as const,
+  preview: (sid: string, targets: string[], only: boolean, force: boolean, forceSteps: string[]) =>
+    ['preview', sid, { targets, only, force, forceSteps }] as const,
+  runs: (sid: string) => ['runs', sid] as const,
+  run: (rid: string) => ['run', rid] as const,
+  runLog: (rid: string, step: string | null) => ['run', rid, 'log', step] as const,
 };
+
+/** How long a preview is fresh; runs and edits refetch it sooner. */
+const PREVIEW_STALE_MS = 10000;
+const ACTIVE_RUNS_POLL_MS = 5000;
 
 const OPEN_SESSION_KEY = ['open-session'] as const;
 
@@ -131,6 +147,7 @@ export function useSetInputs(sid: string | null) {
       apiSend<SessionDocument>('PUT', `${sessionPath(sid ?? '')}/inputs`, { values }),
     onSuccess: (session) => {
       client.setQueryData(queryKeys.session(session.id), session);
+      client.invalidateQueries({ queryKey: queryKeys.previews(session.id) });
     },
   });
 }
@@ -142,8 +159,99 @@ export function useSetRunConfig(sid: string | null) {
       apiSend<SessionDocument>('PUT', `${sessionPath(sid ?? '')}/config`, overrides),
     onSuccess: (session) => {
       client.setQueryData(queryKeys.session(session.id), session);
+      client.invalidateQueries({ queryKey: queryKeys.previews(session.id) });
     },
   });
+}
+
+function previewKey(sid: string, intent: RunIntent) {
+  return queryKeys.preview(sid, intent.targets, intent.mode === 'only', intent.force, intent.forceSteps);
+}
+
+/** The preview of an intent the client holds, or null when it has none or it was invalidated since. */
+export function cachedPreview(client: QueryClient, sid: string, intent: RunIntent): Preview | null {
+  const state = client.getQueryState<Preview>(previewKey(sid, intent));
+  return state?.data && !state.isInvalidated ? state.data : null;
+}
+
+/** What a run with an intent would do, step by step. */
+export function usePreview(sid: string | null, intent: RunIntent | null, enabled = true) {
+  const args = intent ?? { mode: 'all', targets: [], force: false, forceSteps: [] };
+  return useQuery({
+    queryKey: previewKey(sid ?? '', args),
+    queryFn: () => apiGet<Preview>(`${sessionPath(sid ?? '')}/preview${previewQuery(args)}`),
+    enabled: sid !== null && intent !== null && enabled,
+    staleTime: PREVIEW_STALE_MS,
+    // Keep the last preview of the same session on screen while the next one loads.
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === sid ? previous : undefined),
+  });
+}
+
+/** The session's runs, newest first; polled while one is active. */
+export function useRuns(sid: string | null) {
+  return useQuery({
+    queryKey: queryKeys.runs(sid ?? ''),
+    queryFn: () => apiGet<RunRecord[]>(`${sessionPath(sid ?? '')}/runs`),
+    enabled: sid !== null,
+    refetchInterval: (query) => (query.state.data?.some(isActiveRun) ? ACTIVE_RUNS_POLL_MS : false),
+  });
+}
+
+export function useRun(rid: string | null) {
+  return useQuery({
+    queryKey: queryKeys.run(rid ?? ''),
+    queryFn: () => apiGet<RunRecord>(`/api/runs/${encodeURIComponent(rid ?? '')}`),
+    enabled: rid !== null,
+  });
+}
+
+/** A run's log from the server, for runs the client does not hold. */
+export function useRunLog(rid: string | null, step: string | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runLog(rid ?? '', step),
+    queryFn: () => {
+      const query = step ? `?step=${encodeURIComponent(step)}` : '';
+      return apiGet<RunLog>(`/api/runs/${encodeURIComponent(rid ?? '')}/log${query}`);
+    },
+    enabled: rid !== null && enabled,
+  });
+}
+
+/** Start a run; the run controls follow it (runs/useRunControls.ts). */
+export function useStartRun(sid: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (intent: RunIntent) =>
+      apiSend<RunRecord>('POST', `${sessionPath(sid ?? '')}/runs`, toStartRequest(intent)),
+    onSuccess: (run) => {
+      client.invalidateQueries({ queryKey: queryKeys.runs(run.session) });
+    },
+  });
+}
+
+/**
+ * Ask a run to stop after its running steps (`cancel`), or stop it now,
+ * killing its process (`stop`).
+ */
+function useRunAction(action: 'cancel' | 'stop') {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (rid: string) => apiSend<RunRecord>('POST', `/api/runs/${encodeURIComponent(rid)}/${action}`),
+    onSuccess: (run) => {
+      client.setQueryData(queryKeys.run(run.id), run);
+      client.invalidateQueries({ queryKey: queryKeys.runs(run.session) });
+    },
+  });
+}
+
+/** Ask a run to stop once the steps running now finish. */
+export function useCancelRun() {
+  return useRunAction('cancel');
+}
+
+/** Stop a run now; the step running is not saved. */
+export function useStopRun() {
+  return useRunAction('stop');
 }
 
 /** The path of the recipe being opened as a session, or null. */

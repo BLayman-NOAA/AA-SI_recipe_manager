@@ -19,6 +19,7 @@ import type {
   StepStartedData,
   WarningData,
 } from './events';
+import { PROGRESS_STREAM, progressText } from './progress';
 
 export type StepStatus =
   | 'queued'
@@ -67,7 +68,7 @@ export interface RunState {
   seen: Set<number>;
   started: RunStartedData | null;
   steps: Record<string, StepRunState>;
-  /** Log events, plus one `traceback` entry per failed step. */
+  /** Log events, a `progress` line per run and step start and finish, and a `traceback` entry per failed step. */
   logs: LogEntry[];
   warnings: WarningData[];
   finished: RunFinishedData | null;
@@ -194,6 +195,19 @@ class Draft {
     if (state.seen.has(event.seq)) return;
     state.seen.add(event.seq);
     state.lastSeq = Math.max(state.lastSeq, event.seq);
+    const progress = progressText(event);
+    if (progress !== null) {
+      const step = event.kind === 'run_started' || event.kind === 'run_finished' ? null : event.data.step;
+      this.addLog({
+        seq: event.seq,
+        time: event.time,
+        step: typeof step === 'string' ? step : null,
+        stream: PROGRESS_STREAM,
+        text: progress,
+        buffered: false,
+        instance: null,
+      });
+    }
     switch (event.kind) {
       case 'run_started':
         state.started = event.data as unknown as RunStartedData;

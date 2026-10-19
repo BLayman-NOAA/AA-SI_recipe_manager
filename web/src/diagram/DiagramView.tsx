@@ -27,7 +27,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Graph, StepNode as GraphStep } from '../api/graph';
-import type { StepBadge } from '../runs/badges';
+import { notNeeded, type StepBadge } from '../runs/badges';
 import { useViewStore } from '../state/view';
 import { selectStep } from './locate';
 import { RouteEdge } from './edges/RouteEdge';
@@ -91,7 +91,7 @@ const STATUS_LEGEND: { swatch: string; label: string; has: (badge: StepBadge) =>
     has: (b) => b.predicted === 'compute' || b.actual === 'computed',
   },
   { swatch: 'rc-key-running', label: 'Running', has: (b) => b.actual === 'running' },
-  { swatch: 'rc-key-pruned', label: 'Not needed (pruned)', has: (b) => b.predicted === 'pruned' || b.actual === 'pruned' },
+  { swatch: 'rc-key-pruned', label: 'Not needed (a later step is cached)', has: notNeeded },
   { swatch: 'rc-key-untargeted', label: 'Outside the run target', has: (b) => b.predicted === 'untargeted' },
   { swatch: 'rc-key-unknown', label: 'Instances not yet known', has: (b) => b.predicted === 'unknown' },
   { swatch: 'rc-key-failed', label: 'Failed (click for its log)', has: (b) => b.actual === 'failed' },

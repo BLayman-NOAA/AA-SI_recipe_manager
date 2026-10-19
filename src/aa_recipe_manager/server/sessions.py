@@ -9,8 +9,6 @@ In this milestone a session is read only: it never changes the recipe files.
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import secrets
 import shutil
@@ -26,12 +24,16 @@ from aa_recipe_manager.server.errors import (
     RecipeNotFound,
     SessionNotFound,
 )
+from aa_recipe_manager.server.files import read_json, write_json
 
 if TYPE_CHECKING:
     from aa_recipe_manager.server.config import ServerConfig
 
 SESSION_SCHEMA = 1
 SESSION_FILE = "session.json"
+RUNS_FOLDER = "runs"
+#: Run settings that name a folder, resolved beside the recipe for the server.
+PATH_FIELDS = ("user_cache_dir", "survey_cache_dir", "outputs_dir", "temp_dir")
 RUN_CONFIG_FIELDS = (
     "user_cache_dir",
     "survey_cache_dir",
@@ -57,6 +59,8 @@ class Session:
         record: The contents of ``session.json``.
         folder: The session's folder.
         config: The server config.
+        fingerprint_cache: File and folder fingerprints kept between previews,
+            so remote folders are listed once per session.
     """
 
     def __init__(self, record: dict[str, Any], folder: Path, config: ServerConfig):
@@ -67,6 +71,7 @@ class Session:
         self._run_config: dict[str, Any] | None = None
         self._config_error: str | None = None
         self._validation: dict[str, Any] | None = None
+        self.fingerprint_cache: dict[tuple[str, str], Any] = {}
 
     @property
     def origin(self) -> Path:
@@ -107,7 +112,11 @@ class Session:
         ]
 
     def effective_inputs(self) -> dict[str, Any]:
-        """Input values: recipe defaults, then the run config, then the session."""
+        """Input values shown: recipe defaults, then the run config, then the session.
+
+        For display only. A run gets :meth:`explicit_inputs`, since a default
+        passed as a value changes the step hashes.
+        """
         values = {
             node["id"].removeprefix("in:"): node["default"]
             for node in self.declared_inputs()
@@ -117,12 +126,38 @@ class Session:
         values.update(self.record["inputs"])
         return values
 
+    def explicit_inputs(self) -> dict[str, Any]:
+        """Input values a run passes, as the CLI does: run config, then session.
+
+        Declared defaults are left out. The recipe applies them itself, and
+        passing one as a value would give different step hashes from the CLI's.
+        """
+        return {**self._run_config["inputs"], **self.record["inputs"]}
+
     def effective_run_config(self) -> dict[str, Any]:
         """Run settings: the run config file, then the session's overrides."""
         values = {name: self._run_config[name] for name in RUN_CONFIG_FIELDS}
         values.update(self.record["run_config"])
         values["source"] = self._run_config["source"]
         values["overrides"] = dict(self.record["run_config"])
+        return values
+
+    def resolved_run_config(self) -> dict[str, Any]:
+        """Run settings with relative local folders joined onto the recipe's folder.
+
+        The run process works in the recipe's folder, so these are the folders
+        it reads and writes. An unset user cache is the CLI default,
+        ``recipe_cache`` beside the recipe.
+        """
+        effective = self.effective_run_config()
+        values = {name: effective[name] for name in RUN_CONFIG_FIELDS}
+        if values["user_cache_dir"] is None:
+            values["user_cache_dir"] = f"./{api.DEFAULT_OUTPUT_ROOT}"
+        for name in PATH_FIELDS:
+            value = values[name]
+            if value is None or "://" in str(value) or Path(value).is_absolute():
+                continue
+            values[name] = (self.origin_dir / value).resolve().as_posix()
         return values
 
     def document(self) -> dict[str, Any]:
@@ -154,10 +189,7 @@ class Session:
 
     def save(self) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
-        path = self.folder / SESSION_FILE
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(self.record, indent=2), encoding="utf-8")
-        os.replace(temporary, path)
+        write_json(self.folder / SESSION_FILE, self.record)
 
     def _load_run_config(self) -> None:
         """Find the run config as the CLI would when run from the recipe's folder.
@@ -211,7 +243,7 @@ class Session:
         problems: list[dict[str, Any]] = []
         if self._config_error is not None:
             problems.append(_problem("error", f"Run config: {self._config_error}"))
-        explicit = {**self._run_config["inputs"], **self.record["inputs"]}
+        explicit = self.explicit_inputs()
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             try:
@@ -307,7 +339,7 @@ class SessionStore:
             summaries = []
             folders = self.root.iterdir() if self.root.is_dir() else []
             for folder in folders:
-                record = _read_record(folder / SESSION_FILE)
+                record = read_json(folder / SESSION_FILE)
                 if record is None:
                     continue
                 summaries.append(
@@ -343,7 +375,13 @@ class SessionStore:
             unknown = sorted(set(values) - declared)
             if unknown:
                 raise ValueError(f"The recipe declares no input {', '.join(unknown)}.")
-            session.record["inputs"] = dict(values)
+            types = {
+                node["id"].removeprefix("in:"): node["type"]
+                for node in session.declared_inputs()
+            }
+            session.record["inputs"] = {
+                name: _typed(value, types[name]) for name, value in values.items()
+            }
             return self._changed(session)
 
     def set_run_config(self, sid: str, overrides: dict[str, Any]) -> dict[str, Any]:
@@ -376,6 +414,87 @@ class SessionStore:
                 raise PathNotAllowed(f"{relative!r} is outside the recipe roots.")
             return target.read_text(encoding="utf-8")
 
+    def runs_dir(self, sid: str) -> Path:
+        """The folder holding a session's runs, which may not exist yet.
+
+        Raises:
+            SessionNotFound: No such session.
+        """
+        folder = self._folder(sid)
+        if not (folder / SESSION_FILE).is_file():
+            raise SessionNotFound(f"No session {sid!r}.")
+        return folder / RUNS_FOLDER
+
+    def preview_args(
+        self,
+        sid: str,
+        *,
+        targets: list[str],
+        only: bool,
+        force: bool,
+        force_steps: list[str],
+    ) -> dict[str, Any]:
+        """Keyword arguments for ``api.plan_preview`` of a run of this session.
+
+        Relative paths are resolved as the run process resolves them from the
+        recipe's folder.
+
+        Raises:
+            SessionNotFound: No such session.
+        """
+        with self._lock:
+            session = self._get(sid)
+            config = session.resolved_run_config()
+            return {
+                "recipe": session.origin,
+                "inputs": session.explicit_inputs() or None,
+                "targets": targets or None,
+                "only": only,
+                "force": force,
+                "force_steps": force_steps,
+                "user_cache_dir": config["user_cache_dir"],
+                "survey_cache_dir": config["survey_cache_dir"],
+                "outputs_dir": config["outputs_dir"],
+                "storage_options": config["storage_options"],
+                "fingerprint_cache": session.fingerprint_cache,
+                "base_dir": session.origin_dir,
+            }
+
+    def run_job(self, sid: str) -> dict[str, Any]:
+        """What a run of this session needs: recipe, folder, inputs and settings.
+
+        Returns:
+            ``origin`` and ``cwd`` (absolute), explicit ``inputs``, the
+            ``run_config`` fields as written, ``files`` (each session file's
+            modification time in nanoseconds), ``step_ids`` and ``validation``.
+
+        Raises:
+            SessionNotFound: No such session.
+        """
+        with self._lock:
+            session = self._get(sid)
+            document = session.document()
+            files = {}
+            for name in session.record["files"]:
+                try:
+                    files[name] = (session.origin_dir / name).stat().st_mtime_ns
+                except OSError:
+                    files[name] = None
+            run_config = session.effective_run_config()
+            return {
+                "origin": session.origin.as_posix(),
+                "cwd": session.origin_dir.as_posix(),
+                "inputs": session.explicit_inputs(),
+                "run_config": {name: run_config[name] for name in RUN_CONFIG_FIELDS},
+                "files": files,
+                "step_ids": [
+                    node["id"]
+                    for node in document["graph"]["nodes"]
+                    if node["kind"] == "step"
+                ],
+                "validation": document["validation"],
+            }
+
     def _readable(self, session: Session) -> list[Path]:
         """Folders a session's files may be read from."""
         roots = [Path(root).resolve() for root in self.config.recipe_roots]
@@ -390,7 +509,7 @@ class SessionStore:
         if sid in self._sessions:
             return self._sessions[sid]
         folder = self._folder(sid)
-        record = _read_record(folder / SESSION_FILE)
+        record = read_json(folder / SESSION_FILE)
         if record is None:
             raise SessionNotFound(f"No session {sid!r}.")
         session = Session(record, folder, self.config)
@@ -434,12 +553,15 @@ def _session_files(origin: Path, graph: dict[str, Any]) -> list[str]:
     return files
 
 
-def _read_record(path: Path) -> dict[str, Any] | None:
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return record if isinstance(record, dict) else None
+def _typed(value: Any, declared: str | None) -> Any:
+    """A value as the recipe's YAML would hold it for the declared type.
+
+    JSON does not keep ``1800.0`` apart from ``1800``, and the two hash
+    differently, so a whole number for a float input becomes a float.
+    """
+    if declared == "float" and isinstance(value, int) and not isinstance(value, bool):
+        return float(value)
+    return value
 
 
 def _split_problems(text: str, severity: str) -> list[dict[str, Any]]:

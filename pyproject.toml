@@ -51,13 +51,16 @@ dev = [
     "pre-commit>=3.0.0",
     "jsonschema>=4.0",
     "httpx>=0.27",
-    # The client server tests import FastAPI.
+    # The client server tests import FastAPI and psutil.
     "fastapi>=0.115",
+    "psutil>=5.9",
 ]
 # FastAPI server for the browser client (aa-recipe serve).
 server = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    # Run process liveness checks and process tree kills.
+    "psutil>=5.9",
 ]
 # Google Cloud Storage backend for checkpoint cache / exe_temp / outputs on
 # gs:// URLs. gcsfs registers the fsspec "gs" protocol; credentials come from
