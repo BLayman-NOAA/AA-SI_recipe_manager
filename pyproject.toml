@@ -67,7 +67,7 @@ server = [
 # web build is packed into web/vendor/, so the Python and TypeScript halves
 # match; the same reference is in all-builtin-specs.
 echogram = [
-    "aa-si-echogram-gl[server] @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@main",
+    "aa-si-echogram-gl[server] @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@d03a4c23ad94c3e44e1ba5404e73cc20ce806512",
 ]
 # Google Cloud Storage backend for checkpoint cache / exe_temp / outputs on
 # gs:// URLs. gcsfs registers the fsspec "gs" protocol; credentials come from
@@ -105,7 +105,7 @@ all-builtin-specs = [
     "aa-si-calibration @ git+https://github.com/BLayman-NOAA/AA-SI_calibration.git",
     "aa-si-ml @ git+https://github.com/BLayman-NOAA/AA-SI_ML.git",
     "aa-si-visualization @ git+https://github.com/BLayman-NOAA/AA-SI_Visualization.git",
-    "aa-si-echogram-gl @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@main",
+    "aa-si-echogram-gl @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@d03a4c23ad94c3e44e1ba5404e73cc20ce806512",
     "ipykernel",
     "ipywidgets",
 ]
