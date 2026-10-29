@@ -82,7 +82,8 @@ inputs:
     required: false
     description: >
       Answers to a "report" run: each conflict id maps to the calibration key to
-      keep, or a list of keys to average. Unanswered conflicts are reported again.
+      keep, a list of keys to average, or {"merge": [keys]} to merge them in
+      priority order, EK80 style. Unanswered conflicts are reported again.
 
 steps:
 
@@ -169,7 +170,7 @@ outputs:
     output_name: single_channel_data
     description: >
       The standardized channels the mapping was built from, including any
-      averaged records. Every key in mapping_dict names one of these.
+      averaged or merged records. Every key in mapping_dict names one of these.
   provenance:
     step_id: build_cal_mapping
     output_name: provenance

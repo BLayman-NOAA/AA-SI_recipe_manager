@@ -30,6 +30,10 @@ export interface StepBadge {
   stale: boolean;
   /** The survey tier holds the step (FR-52). */
   surveyBacked: boolean;
+  /** A result for the current hash is on disk (savedOnDisk), so the echogram pane can draw it. */
+  onDisk: boolean;
+  /** Some instances of a fanned out step are held and not all, as "2 of 3". */
+  partly: { count: number; of: number | null } | null;
   note: string | null;
 }
 
@@ -84,6 +88,44 @@ export function staleResult(ahead: StepPreview | undefined, actual: StepRunState
   return Boolean(ahead && actual?.hash && RESULT_STATUSES.has(actual.status) && actual.hash !== ahead.step_hash);
 }
 
+/** Instances of a fanned out step some tier holds, when no tier holds them all. */
+export function partlyHeld(ahead: StepPreview | undefined): { count: number; of: number | null } | null {
+  if (!ahead || ahead.held_by.length > 0) return null;
+  const count = Math.max(0, ...Object.values(ahead.instances_held));
+  return count > 0 ? { count, of: ahead.instances } : null;
+}
+
+/**
+ * Whether a step's result for the current hash is on disk, so the echogram
+ * pane can draw it.
+ *
+ * A tier holds it (the current preview's held_by), or some of its instances
+ * (partlyHeld), or the run shown read it from one, or computed it and wrote
+ * it. Whether the run wrote it comes from the preview it was started with
+ * (pinned, will-save or saved); only without one is a target taken as
+ * saved, since a run pins its target unless the recipe says checkpoint:
+ * never. A result computed in memory only does not count, and nothing from a
+ * run whose hash differs from the preview's does.
+ *
+ * Args:
+ *   ahead: The step in the current preview.
+ *   actual: The step in the run shown.
+ *   start: The step in the preview the run was started with.
+ *   targeted: The run was asked to run to the step.
+ */
+export function savedOnDisk(
+  ahead: StepPreview | undefined,
+  actual: StepRunState | undefined,
+  start?: StepPreview,
+  targeted = false,
+): boolean {
+  if (ahead && (ahead.held_by.length > 0 || partlyHeld(ahead))) return true;
+  if (!actual || staleResult(ahead, actual)) return false;
+  if (actual.status === 'hit-user-cache' || actual.status === 'hit-survey-cache') return true;
+  const written = start ? start.pinned || start.checkpoint !== 'memory-only' : targeted;
+  return actual.status === 'computed' && written;
+}
+
 function savedLetter(step: StepPreview | undefined): 'S' | 'U' | null {
   const tier = step?.held_by[0];
   if (tier === 'survey') return 'S';
@@ -104,10 +146,12 @@ export interface RunMarks {
    * per instance, which the plan event cannot, so its outline wins.
    */
   preview: Preview | null;
+  /** The steps the run was asked to run to, which it pins; absent when not known. */
+  targets?: string[];
 }
 
 export function runMarks(run: RunState | null, preview: Preview | null = null): RunMarks | null {
-  return run && { steps: run.steps, live: run.finished === null, preview };
+  return run && { steps: run.steps, live: run.finished === null, preview, targets: run.started?.targets ?? [] };
 }
 
 /**
@@ -121,7 +165,8 @@ export function runMarks(run: RunState | null, preview: Preview | null = null): 
 export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks | null): Record<string, StepBadge> {
   const previews = new Map((preview?.steps ?? []).map((step) => [step.step_id, step]));
   const live = run?.live ?? false;
-  const started = new Map(live ? (run?.preview?.steps ?? []).map((step) => [step.step_id, step]) : []);
+  const startPreview = new Map((run?.preview?.steps ?? []).map((step) => [step.step_id, step]));
+  const started = live ? startPreview : new Map<string, StepPreview>();
   const badges: Record<string, StepBadge> = {};
   for (const node of stepNodes(graph)) {
     const ahead = previews.get(node.id);
@@ -142,6 +187,8 @@ export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks 
       checkpointed: node.checkpoint === 'always',
       stale: staleResult(ahead, actual),
       surveyBacked: Boolean(ahead?.held_by.includes('survey')),
+      onDisk: savedOnDisk(ahead, actual, startPreview.get(node.id), run?.targets?.includes(node.id) ?? false),
+      partly: partlyHeld(ahead),
       note: planned?.note ?? null,
     };
   }
@@ -173,6 +220,36 @@ export function includeSummary(include: GraphInclude, badges: Record<string, Ste
   if (counts.size === 0) return '';
   const parts = SUMMARY.filter(([kind]) => counts.get(kind)).map(([kind, text]) => text(counts.get(kind)!));
   return parts.length > 0 ? parts.join(', ') : NOT_IN_RUN;
+}
+
+/** Statuses of a step the run does not use. */
+const OUT_OF_RUN: ReadonlySet<StepStatus> = new Set(['untargeted', 'pruned']);
+
+/** Statuses of a step the run has done: computed, loaded, or skipped at run time. */
+const DONE: ReadonlySet<StepStatus> = new Set(['computed', 'hit-user-cache', 'hit-survey-cache', 'marker', 'skipped']);
+
+/**
+ * A sub-recipe's progress in a run: "5 of 13 done", "complete" once every
+ * member the run uses is done, or "failed"; null when the run uses none.
+ * While mapped members run, their items are added, as "2 of 8 done, 150 of
+ * 300 items".
+ *
+ * Args:
+ *   include: The sub-recipe.
+ *   steps: The run's step states by id.
+ */
+export function includeProgress(include: GraphInclude, steps: Record<string, StepRunState>): string | null {
+  const members = include.steps.map((id) => steps[id]).filter((step) => step && !OUT_OF_RUN.has(step.status));
+  if (members.length === 0) return null;
+  if (members.some((step) => step.status === 'failed')) return 'failed';
+  const done = members.filter((step) => DONE.has(step.status)).length;
+  if (done === members.length) return 'complete';
+  const text = `${done} of ${members.length} done`;
+  const mapped = members.filter((step) => step.status === 'running' && step.instances.count !== null);
+  if (mapped.length === 0) return text;
+  const items = mapped.reduce((sum, step) => sum + step.instances.done, 0);
+  const count = mapped.reduce((sum, step) => sum + step.instances.count!, 0);
+  return `${text}, ${items} of ${count} items`;
 }
 
 /** The letter a status or prediction shows: S survey, U user, M marker. */

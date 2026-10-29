@@ -1,4 +1,4 @@
-import { opLabel } from '../../api/graph';
+import { echogramCandidate, opLabel, type StepNode as GraphStep } from '../../api/graph';
 import { Prose } from '../../Prose';
 import { NOT_NEEDED_TITLE, notNeeded, tierLetter, type StepBadge } from '../../runs/badges';
 import { clip, firstSentence, plainText } from '../../text';
@@ -82,11 +82,27 @@ function RunMarks({ badge }: { badge: StepBadge }) {
   );
 }
 
+/** The eye icon's look and tooltip: saved, partly saved, never saved, or saved by a run first. */
+export function eyeLook(badge: StepBadge | null, checkpoint: GraphStep['checkpoint']): { title: string; className: string } {
+  const partly = badge?.partly;
+  if (partly) {
+    return {
+      title: `${partly.count} of ${partly.of ?? '?'} instances saved: show draws them`,
+      className: 'rc-eye-saved rc-eye-part',
+    };
+  }
+  if (badge?.onDisk) return { title: 'Show in the echogram pane', className: 'rc-eye-saved' };
+  if (checkpoint === 'never') {
+    return { title: "Never saved (checkpoint: never in the recipe), so it can't be drawn", className: 'rc-eye-off' };
+  }
+  return { title: 'Not saved: show runs to this step first and saves it', className: 'rc-eye-off' };
+}
+
 /** A recipe step: id and op, ports, badges, run marks and, expanded, its parameters. */
 export function StepNode({ data }: ViewNodeProps<'step'>) {
   const { node } = data;
   const { step, badges, expanded, params, badge } = node.data;
-  const { toggleStepExpanded, runToHere, canRun } = useDiagram();
+  const { toggleStepExpanded, runToHere, canRun, showEchogram } = useDiagram();
   const inPorts = step.inputs.map((port) => ({
     id: `in:${port.name}`,
     label: port.name,
@@ -98,6 +114,7 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
     title: `${port.name}${port.type ? ` (${port.type})` : ''}`,
   }));
   const checkpointed = step.checkpoint === 'always';
+  const eye = eyeLook(badge, step.checkpoint);
   const title =
     badge?.note ??
     (badge?.actual === 'failed' ? 'Failed: click to open its log' : badge && notNeeded(badge) ? NOT_NEEDED_TITLE : undefined);
@@ -119,6 +136,14 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
             className="rc-node-tool rc-play"
             disabled={!canRun}
             onClick={() => runToHere(step.id)}
+          />
+        )}
+        {showEchogram && echogramCandidate(step) && (
+          <IconButton
+            icon="eye"
+            title={eye.title}
+            className={`rc-node-tool rc-eye ${eye.className}`}
+            onClick={() => showEchogram(step.id)}
           />
         )}
         <ExpandButton expanded={expanded} what="parameters" onClick={() => toggleStepExpanded(step.id)} />

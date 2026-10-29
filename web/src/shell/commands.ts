@@ -1,7 +1,10 @@
 /** The client's commands, shared by the menu bar, the toolbar and the shortcuts. */
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
+import { findStep } from '../api/graph';
+import type { SessionDocument } from '../api/models';
 import { queryKeys, useCloseSession } from '../api/queries';
+import { showEchogram } from '../echogram/show';
 import type { RunControls } from '../runs/useRunControls';
 import { useSessionStore } from '../state/session';
 import { useView } from '../state/view';
@@ -63,6 +66,14 @@ export function useCommands(run: RunControls): Commands {
         if (sid) void client.invalidateQueries({ queryKey: queryKeys.previews(sid) });
       },
       toggleSurveyRegion: () => view().setSurveyRegion(!view().surveyRegion),
+      showEchogramForSelected: () => {
+        const sid = useSessionStore.getState().sid;
+        const selected = view().selected;
+        if (!sid || selected?.kind !== 'step') return;
+        const graph = client.getQueryData<SessionDocument>(queryKeys.session(sid))?.graph;
+        const step = graph && findStep(graph, selected.id);
+        if (step) showEchogram(sid, step);
+      },
     };
   }, [closeSession, client, run]);
 }

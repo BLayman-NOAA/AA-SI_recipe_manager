@@ -84,3 +84,11 @@ def test_cancel_without_client_header_is_refused(client):
         assert response.json()["error"] == "missing_client_header"
     response = client.post("/api/sessions/20260101-000000-abcdef/runs", json={})
     assert response.status_code == 403
+
+
+def test_echogram_routes_check_the_host(config):
+    client = TestClient(create_app(config), base_url="http://evil:8765")
+    for path in ("/echogram/api/describe/x", "/echogram/mount/x/Sv/.zarray"):
+        response = client.get(path)
+        assert response.status_code == 403
+        assert response.json()["error"] == "forbidden_host"

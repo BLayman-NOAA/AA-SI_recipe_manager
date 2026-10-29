@@ -16,6 +16,7 @@ import type {
   SessionDocument,
   SessionSummary,
   SetRunConfigRequest,
+  StepArtifacts,
 } from './models';
 
 export const queryKeys = {
@@ -32,6 +33,7 @@ export const queryKeys = {
   runs: (sid: string) => ['runs', sid] as const,
   run: (rid: string) => ['run', rid] as const,
   runLog: (rid: string, step: string | null) => ['run', rid, 'log', step] as const,
+  artifacts: (sid: string, step: string) => ['session', sid, 'artifacts', step] as const,
 };
 
 /** How long a preview is fresh; runs and edits refetch it sooner. */
@@ -108,6 +110,42 @@ export function useFileText(sid: string | null, path: string | null) {
     queryKey: queryKeys.file(sid ?? '', path ?? ''),
     queryFn: () => apiGet<FileText>(fileUrl(sid ?? '', path ?? '')),
     enabled: sid !== null && path !== null,
+  });
+}
+
+/**
+ * Which output and variable of a step to draw; absent fields take the
+ * server's default. `resolve: false` only lists the artifacts, reading and
+ * mounting nothing.
+ */
+export interface ArtifactChoice {
+  output?: string | null;
+  var?: string | null;
+  resolve?: boolean;
+}
+
+/** The URL of a step's artifacts, resolving an output and variable for the echogram. */
+export function artifactsUrl(sid: string, step: string, choice: ArtifactChoice = {}): string {
+  const query = new URLSearchParams();
+  if (choice.output) query.set('output', choice.output);
+  if (choice.var) query.set('var', choice.var);
+  if (choice.resolve === false) query.set('resolve', 'false');
+  const text = query.toString();
+  return `${sessionPath(sid)}/steps/${encodeURIComponent(step)}/artifacts${text ? `?${text}` : ''}`;
+}
+
+/** Where a step's saved outputs are, and what the echogram pane can draw of them. */
+export function fetchStepArtifacts(sid: string, step: string, choice: ArtifactChoice = {}): Promise<StepArtifacts> {
+  return apiGet<StepArtifacts>(artifactsUrl(sid, step, choice));
+}
+
+/** A step's saved outputs, listed without resolving them, for the inspector; fetched only while enabled. */
+export function useStepArtifacts(sid: string | null, step: string | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.artifacts(sid ?? '', step ?? ''),
+    queryFn: () => fetchStepArtifacts(sid ?? '', step ?? '', { resolve: false }),
+    enabled: sid !== null && step !== null && enabled,
+    staleTime: 0,
   });
 }
 

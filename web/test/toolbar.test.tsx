@@ -5,6 +5,7 @@ import type { Graph } from '../src/api/graph';
 import type { Preview } from '../src/api/models';
 import { queryKeys } from '../src/api/queries';
 import { RunHint } from '../src/runs/RunHint';
+import { useCurrentPreview, usePreviewIntent } from '../src/runs/usePreviewIntent';
 import { useRunStore } from '../src/runs/store';
 import {
   HINT_KEY,
@@ -29,6 +30,13 @@ function Harness() {
       <Toolbar run={run} onFit={() => {}} onToggleDirection={() => {}} />
     </>
   );
+}
+
+/** The run controls, as the echogram pane gets them from the Shell. */
+let controls: ReturnType<typeof useRunControls> | null = null;
+function ControlsProbe() {
+  controls = useRunControls();
+  return <RunHint />;
 }
 
 function runRecord(id: string, body: Record<string, unknown>) {
@@ -73,15 +81,19 @@ describe('Toolbar', () => {
     }
   });
 
-  it('needs a selected step for the selected actions', async () => {
+  it('needs a selected step for the selected actions, or a sub-recipe for Run to selected', async () => {
     openSession();
     renderWithClient(<Harness />);
     await waitFor(() => expect(button('Run all')).toBeEnabled());
     expect(button('Dry run')).toBeEnabled();
     expect(button('Run to selected')).toBeDisabled();
-    act(() => useView.getState().select({ kind: 'include', id: 'inc:sub/chain.yaml' }));
+    expect(button('Run to selected')).toHaveAttribute('title', 'Select a step or a sub-recipe in the diagram first');
+    act(() => useView.getState().select({ kind: 'input', id: 'in:n' }));
     expect(button('Run to selected')).toBeDisabled();
+    act(() => useView.getState().select({ kind: 'include', id: 'inc:sub/chain.yaml' }));
+    expect(button('Run to selected')).toBeEnabled();
     expect(button('Run selected')).toBeDisabled();
+    expect(button('Run selected')).toHaveAttribute('title', 'Select a step in the diagram first');
     act(() => useView.getState().select({ kind: 'step', id: 'seed' }));
     expect(button('Run to selected')).toBeEnabled();
     expect(button('Run selected')).toBeEnabled();
@@ -106,6 +118,56 @@ describe('Toolbar', () => {
     await user.click(button('Run to selected'));
     await waitFor(() => expect(useRunStore.getState().current?.runId).toBe('r7'));
     expect(bodies(fetchMock, RUNS)).toEqual([{ mode: 'to', targets: ['seed'], force: false, force_steps: [] }]);
+  });
+
+  it('runs through a selected sub-recipe to its exit steps, with no hint', async () => {
+    const user = userEvent.setup();
+    const fetchMock = openSession(withSubGraph, { [RUNS]: runRecord('r9', { mode: 'to' }) });
+    useView.getState().select({ kind: 'include', id: 'inc:sub/chain.yaml' });
+    renderWithClient(<Harness />);
+    await waitFor(() => expect(button('Run to selected')).toBeEnabled());
+    await user.click(button('Run to selected'));
+    await waitFor(() => expect(useRunStore.getState().current?.runId).toBe('r9'));
+    expect(bodies(fetchMock, RUNS)).toEqual([{ mode: 'to', targets: ['leaf_add'], force: false, force_steps: [] }]);
+    // leaf_add is no checkpoint, so as the target step it would get the FR-57 hint.
+    expect(useRunStore.getState().hint).toBeNull();
+  });
+
+  it('does nothing for Run selected only or Force rerun selected on a sub-recipe', async () => {
+    const fetchMock = openSession(withSubGraph, { [RUNS]: runRecord('r9', {}) });
+    useView.getState().select({ kind: 'include', id: 'inc:sub/chain.yaml' });
+    function Exposed() {
+      controls = useRunControls();
+      return null;
+    }
+    renderWithClient(<Exposed />);
+    await waitFor(() => expect(controls?.canRunSelected).toBe(true));
+    expect(controls?.canRunStep).toBe(false);
+    act(() => {
+      controls?.runSelectedOnly();
+      controls?.forceSelected();
+    });
+    expect(bodies(fetchMock, RUNS)).toEqual([]);
+  });
+
+  it('previews a run through a selected sub-recipe', async () => {
+    const fetchMock = openSession();
+    useView.getState().select({ kind: 'include', id: 'inc:sub/chain.yaml' });
+    function Probe() {
+      const intent = usePreviewIntent();
+      useCurrentPreview();
+      return <div data-testid="intent">{JSON.stringify(intent)}</div>;
+    }
+    renderWithClient(<Probe />);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId('intent').textContent!)).toMatchObject({
+        mode: 'to',
+        targets: ['leaf_add'],
+        include: 'inc:sub/chain.yaml',
+      }),
+    );
+    const urls = () => fetchMock.mock.calls.map(([url]) => String(url));
+    await waitFor(() => expect(urls()).toContain(`/api/sessions/${SID}/preview?targets=leaf_add`));
   });
 
   it('keeps the preview of the run started, and none for an intent not previewed', async () => {
@@ -292,6 +354,37 @@ describe('RunHint', () => {
       ),
     );
     expect(screen.queryByText(/is not a checkpoint in the recipe/)).toBeNull();
+  });
+
+  it('is not shown for a run the echogram pane waits on, which still hears its id', async () => {
+    openSession(checkpointedTotal(), { [RUNS]: runRecord('r1', {}) });
+    renderWithClient(<ControlsProbe />);
+    await waitFor(() => expect(controls?.canRun).toBe(true));
+    const started = vi.fn();
+    act(() => controls!.runToHere('seed', started));
+    await waitFor(() => expect(started).toHaveBeenCalledWith('r1'));
+    expect(useRunStore.getState().hint).toBeNull();
+    expect(screen.queryByText(/is not a checkpoint in the recipe/)).toBeNull();
+  });
+
+  it('does not claim a target is saved when its start preview does not pin it', async () => {
+    const user = userEvent.setup();
+    const graph = checkpointedTotal();
+    const seed = graph.nodes.find((node) => node.id === 'seed');
+    if (seed?.kind === 'step') seed.checkpoint = 'never';
+    openSession(graph, { [RUNS]: runRecord('r1', {}) });
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    const { client } = renderWithClient(<Harness />);
+    const preview = {
+      recipe: 'client_with_sub',
+      steps: [{ step_id: 'seed', pinned: false, checkpoint: 'memory-only', held_by: [] }],
+    } as unknown as Preview;
+    client.setQueryData(queryKeys.preview(SID, ['seed'], false, false, []), preview);
+    await waitFor(() => expect(button('Run to selected')).toBeEnabled());
+    await user.click(button('Run to selected'));
+    const hint = await screen.findByText(/is not a checkpoint in the recipe/);
+    expect(hint).toHaveTextContent('This run does not save it (checkpoint: never in the recipe).');
+    expect(hint).not.toHaveTextContent('It is saved now');
   });
 
   it('is not shown for a checkpointed target, nor once turned off', async () => {

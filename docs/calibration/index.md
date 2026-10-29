@@ -9,16 +9,16 @@ different settings.
 
 ```mermaid
 flowchart TB
-    raw[("Raw files")]
     cal[("Manufacturer calibration files<br/>.cal (EK60) / .xml (EK80)")]
-    scan["read_raw_file_config<br/>each file's channel settings"]
+    raw[("Raw files")]
     std["standardize_calibration_files<br/>one standard file per channel"]
+    scan["read_raw_file_config<br/>each file's channel settings"]
     map["build_calibration_mapping<br/>match each raw channel to a calibration"]
     archive[("Archive for NCEI<br/>channel_mapping.yaml<br/>calibration_provenance.yaml<br/>standardized channel files")]
     extract["Level 2: extract_standardized_cal_params<br/>this file's calibration"]
     sv["Level 2: compute_sv"]
-    raw --> scan --> map
     cal --> std --> map
+    raw --> scan --> map
     map -->|"calibration_dict, mapping_dict"| extract --> sv
     raw -->|"levels 0 and 1"| sv
     map -.->|"save_calibration_archive"| archive
@@ -45,7 +45,8 @@ pulse length, transmit power and the rest. Matches are exact unless
   `error` lists the conflicts and stops, so you delete the calibration files
   you do not want and re-run; `interactive` asks on the terminal; `report`
   returns the conflicts for a caller to resolve with `calibration_choices`,
-  which can also average several candidates.
+  which can also average several candidates, or merge calibrations made with
+  different spheres the way the EK80 software does.
 
 `calibration_provenance.yaml` records, for every channel, which calibration
 was applied over which stretch of time and why.

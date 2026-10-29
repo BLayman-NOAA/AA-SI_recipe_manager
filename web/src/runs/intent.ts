@@ -1,4 +1,5 @@
 /** What a run or a preview is asked to do, from a toolbar action and the selection. */
+import { includeTargets, type Graph } from '../api/graph';
 import type { StartRunRequest } from '../api/models';
 import type { Selection } from '../state/view';
 
@@ -9,6 +10,8 @@ export interface RunIntent {
   targets: string[];
   force: boolean;
   forceSteps: string[];
+  /** The sub-recipe run through, whose exit steps are the targets; absent for a step. */
+  include?: string;
 }
 
 export type RunAction = 'all' | 'to' | 'only' | 'forceSelected' | 'forceAll';
@@ -21,32 +24,40 @@ export function selectedStep(selection: Selection | null): string | null {
   return selection?.kind === 'step' ? selection.id : null;
 }
 
-/** Whether an action needs a selected step. */
-export function needsStep(action: RunAction): boolean {
-  return action === 'to' || action === 'only' || action === 'forceSelected';
+/** The targets of Run to selected: the selected step, or a selected sub-recipe's exit steps. */
+export function selectionTargets(selection: Selection | null, graph?: Graph | null): string[] {
+  if (selection?.kind === 'step') return [selection.id];
+  if (selection?.kind === 'include' && graph) return includeTargets(graph, selection.id);
+  return [];
 }
 
-/** The intent of an action on the selection, or null when it needs a step and none is selected. */
-export function intentFor(action: RunAction, selection: Selection | null): RunIntent | null {
+/**
+ * The intent of an action on the selection, or null when it needs a step and
+ * none is selected. Run to selected also takes a sub-recipe, given the graph.
+ */
+export function intentFor(action: RunAction, selection: Selection | null, graph?: Graph | null): RunIntent | null {
+  if (action === 'to') {
+    const targets = selectionTargets(selection, graph);
+    if (targets.length === 0) return null;
+    const intent: RunIntent = { ...RUN_ALL, mode: 'to', targets };
+    return selection?.kind === 'include' ? { ...intent, include: selection.id } : intent;
+  }
   const step = selectedStep(selection);
-  if (needsStep(action) && step === null) return null;
   switch (action) {
     case 'all':
       return RUN_ALL;
     case 'forceAll':
       return { ...RUN_ALL, force: true };
-    case 'to':
-      return { ...RUN_ALL, mode: 'to', targets: [step!] };
     case 'only':
-      return { ...RUN_ALL, mode: 'only', targets: [step!] };
+      return step ? { ...RUN_ALL, mode: 'only', targets: [step] } : null;
     case 'forceSelected':
-      return { ...RUN_ALL, mode: 'to', targets: [step!], forceSteps: [step!] };
+      return step ? { ...RUN_ALL, mode: 'to', targets: [step], forceSteps: [step] } : null;
   }
 }
 
-/** The preview shown for a selection: run to the selected step, else run all. */
-export function previewIntent(selection: Selection | null): RunIntent {
-  return intentFor('to', selection) ?? RUN_ALL;
+/** The preview shown for a selection: run to the selected step or through the sub-recipe, else run all. */
+export function previewIntent(selection: Selection | null, graph?: Graph | null): RunIntent {
+  return intentFor('to', selection, graph) ?? RUN_ALL;
 }
 
 export function toStartRequest(intent: RunIntent): StartRunRequest {

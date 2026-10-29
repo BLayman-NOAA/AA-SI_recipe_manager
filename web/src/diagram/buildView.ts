@@ -27,7 +27,8 @@ import {
   type StepNode,
 } from '../api/graph';
 import type { InputSource } from '../api/models';
-import { includeSummary, type StepBadge } from '../runs/badges';
+import { includeProgress, includeSummary, type StepBadge } from '../runs/badges';
+import type { StepRunState } from '../runs/reducer';
 import type { Selection } from '../state/view';
 import { andList, plural, showValue, valueText } from '../text';
 import { includeChain } from './locate';
@@ -50,6 +51,8 @@ export interface ViewOptions {
   expandedBoxes: Set<string>;
   /** Run status marks by step id (runs/badges.ts). */
   badges?: Record<string, StepBadge>;
+  /** The step states of the run going, by id; absent or null when none is. */
+  runSteps?: Record<string, StepRunState> | null;
 }
 
 export type Badge = 'per item' | 'collects' | 'sweep' | 'checkpoint' | 'writes files' | 'custom';
@@ -97,6 +100,8 @@ export interface IncludeData {
   surveyBacked: boolean;
   /** A member is running, or failed, in the run shown. */
   status: 'running' | 'failed' | null;
+  /** While a run goes: "5 of 13 done", "complete" or "failed"; null when it uses no member. */
+  progress: string | null;
 }
 
 export interface MapGroupData {
@@ -463,6 +468,7 @@ function placeSteps(ctx: Context): Map<string, ViewNode> {
           expanded: ctx.options.expandedBoxes.has(rep),
           rows: [...overrides, ...own],
           ...includeMarks(include, ctx.options.badges),
+          progress: ctx.options.runSteps ? includeProgress(include, ctx.options.runSteps) : null,
         },
       });
     }

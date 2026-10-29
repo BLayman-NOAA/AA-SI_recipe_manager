@@ -1,0 +1,32 @@
+# One saved Sv dataset, for the echogram pane.
+recipe:
+  name: client_sv
+  version: "1.0"
+  description: Make a small gridded Sv dataset and save it.
+  schema_version: "1"
+
+steps:
+  - id: start
+    op: custom
+    custom_spec:
+      description: Return the constant 7.
+      callable_path: _stage9_helpers.const7
+      outputs:
+        v: {type: int}
+      output_map: {v: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: sv
+    op: custom
+    checkpoint: always
+    inputs:
+      x: ${start.v}
+    custom_spec:
+      description: A synthetic Sv dataset starting x minutes in.
+      callable_path: _stage9_helpers.sv_dataset
+      inputs:
+        x: {type: int}
+      outputs:
+        ds_Sv: {type: Dataset}
+      output_map: {ds_Sv: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

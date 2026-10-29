@@ -1,0 +1,170 @@
+{
+ "step_id": "sv",
+ "step_hash": "2584ef66bf0186b9f93cc80c3e329048647a106885b991a64cea66277a765424",
+ "fanned_out": true,
+ "held_by": [
+  "user"
+ ],
+ "instances": 3,
+ "found": 3,
+ "marker": false,
+ "note": null,
+ "artifacts": [
+  {
+   "output": "ds_Sv",
+   "url": "C:/cache/sv_mapped/sv/4a1ef52e/174930-5e5f14/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "4a1ef52eb5a5c3b2cffd33be6f4b165e1015ced244ae94b348740524e217eec6",
+   "instance_index": 0,
+   "item": 10,
+   "created_at": "2026-10-19T17:49:31.441908+00:00",
+   "run_id": "174930-5e5f14",
+   "size_bytes": null
+  },
+  {
+   "output": "ds_Sv",
+   "url": "C:/cache/sv_mapped/sv/c0b7305b/174930-5e5f14/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "c0b7305b07f8e2271130f29caa4bceb4446b3af82987b74f81863d11e810b266",
+   "instance_index": 1,
+   "item": 20,
+   "created_at": "2026-10-19T17:49:31.568383+00:00",
+   "run_id": "174930-5e5f14",
+   "size_bytes": null
+  },
+  {
+   "output": "ds_Sv",
+   "url": "C:/cache/sv_mapped/sv/c1a23626/174930-5e5f14/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "c1a23626ed1ab6af08509daa8adae497fd6671d227b5559a77036b9663faef4c",
+   "instance_index": 2,
+   "item": 30,
+   "created_at": "2026-10-19T17:49:31.694756+00:00",
+   "run_id": "174930-5e5f14",
+   "size_bytes": null
+  }
+ ],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": {
+   "mode": "artifacts",
+   "step": "sv",
+   "fannedOut": true,
+   "stepHash": "2584ef66bf0186b9f93cc80c3e329048647a106885b991a64cea66277a765424",
+   "status": "found",
+   "outputs": [
+    {
+     "name": "ds_Sv",
+     "format": "zarr",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "Sv",
+       "kind": "mvbs",
+       "dims": [
+        "channel",
+        "ping_time",
+        "range_sample"
+       ],
+       "channels": 2,
+       "samples": 20
+      }
+     ],
+     "default": "Sv"
+    }
+   ],
+   "output": "ds_Sv",
+   "createdAt": "2026-10-19T17:49:31.694756+00:00",
+   "entries": 3,
+   "kind": "dataset",
+   "var": "Sv",
+   "instances": [
+    {
+     "id": "4a1ef52eb5a5c3b2cffd33be6f4b165e1015ced244ae94b348740524e217eec6",
+     "item": 10,
+     "index": 0,
+     "store": "C:/cache/sv_mapped/sv/4a1ef52e/174930-5e5f14/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "174930-5e5f14@2026-10-19T17:49:31.441908+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      2,
+      12,
+      20
+     ],
+     "start": 1717200600000000000,
+     "end": 1717200611000000000,
+     "pings": 12,
+     "channels": 2,
+     "samples": 20,
+     "bytes": 1336,
+     "mount": "07d097873df81de3"
+    },
+    {
+     "id": "c0b7305b07f8e2271130f29caa4bceb4446b3af82987b74f81863d11e810b266",
+     "item": 20,
+     "index": 1,
+     "store": "C:/cache/sv_mapped/sv/c0b7305b/174930-5e5f14/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "174930-5e5f14@2026-10-19T17:49:31.568383+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      2,
+      12,
+      20
+     ],
+     "start": 1717201200000000000,
+     "end": 1717201211000000000,
+     "pings": 12,
+     "channels": 2,
+     "samples": 20,
+     "bytes": 1336,
+     "mount": "1acf6506c1a67ebb"
+    },
+    {
+     "id": "c1a23626ed1ab6af08509daa8adae497fd6671d227b5559a77036b9663faef4c",
+     "item": 30,
+     "index": 2,
+     "store": "C:/cache/sv_mapped/sv/c1a23626/174930-5e5f14/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "174930-5e5f14@2026-10-19T17:49:31.694756+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      2,
+      12,
+      20
+     ],
+     "start": 1717201800000000000,
+     "end": 1717201811000000000,
+     "pings": 12,
+     "channels": 2,
+     "samples": 20,
+     "bytes": 1336,
+     "mount": "e91999a3f4bd8592"
+    }
+   ],
+   "skipped": [],
+   "empty": 0,
+   "bytes": 4008
+  }
+ }
+}

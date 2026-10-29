@@ -1025,6 +1025,16 @@
   color: var(--rc-accent);
 }
 
+.rc-include-complete {
+  border-color: var(--rc-ok);
+  color: var(--rc-ok);
+}
+
+.rc-include-failed {
+  border-color: var(--rc-error);
+  color: var(--rc-error);
+}
+
 /* The play icon: always on steps the recipe checkpoints, else on hover or selection.
    visibility keeps its space, so showing it does not resize the node. */
 .rc-step .rc-play {
@@ -1045,6 +1055,33 @@
 
 .rc-step.rc-checkpointed .rc-play:not(:disabled) {
   color: var(--rc-ok);
+}
+
+/* The eye icon (echogram pane): always on a step whose result is saved, else on
+   hover or selection, dimmed, since showing it runs to the step first. */
+.rc-step .rc-eye {
+  flex: none;
+  visibility: hidden;
+}
+
+.rc-step .rc-eye.rc-eye-saved,
+.rc-step:hover .rc-eye,
+.rc-step.rc-node-selected .rc-eye {
+  visibility: visible;
+}
+
+.rc-step .rc-eye.rc-eye-saved {
+  color: var(--rc-accent);
+}
+
+.rc-step .rc-eye.rc-eye-off {
+  opacity: 0.45;
+}
+
+/* Some instances of a mapped step are saved: drawable, with a dashed underline. */
+.rc-step .rc-eye.rc-eye-part {
+  opacity: 0.8;
+  border-bottom: 1px dashed currentColor;
 }
 
 /* The FR-57 hint bar above the diagram. */

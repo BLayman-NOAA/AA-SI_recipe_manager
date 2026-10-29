@@ -77,7 +77,7 @@ export const DEFAULT_PREFERENCES: ViewPreferences = {
   direction: 'RIGHT',
   theme: 'dark',
   surveyRegion: true,
-  textSize: 1.15,
+  textSize: 1.3,
 };
 
 /**

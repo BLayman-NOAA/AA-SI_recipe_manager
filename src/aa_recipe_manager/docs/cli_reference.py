@@ -69,6 +69,10 @@ EXAMPLES: dict[str, list[str]] = {
         "aa-recipe preview quickstart.yaml --json",
         "aa-recipe preview sub/recipe.yaml --base-dir sub",
     ],
+    "artifacts": [
+        "aa-recipe artifacts dive_analysis.yaml dive_file_mvbs",
+        "aa-recipe artifacts dive_analysis.yaml embed_results --json",
+    ],
 }
 
 _WIDTH = 100

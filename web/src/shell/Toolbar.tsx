@@ -9,6 +9,7 @@ interface ToolbarProps {
 }
 
 const SELECT_FIRST = 'Select a step in the diagram first';
+const SELECT_TARGET_FIRST = 'Select a step or a sub-recipe in the diagram first';
 
 /** The Force button: a two item menu. */
 function ForceMenu({ run }: { run: RunControls }) {
@@ -45,9 +46,9 @@ function ForceMenu({ run }: { run: RunControls }) {
             <button
               type="button"
               role="menuitem"
-              aria-disabled={!run.canRunSelected}
-              title={run.canRunSelected ? undefined : SELECT_FIRST}
-              onClick={() => run.canRunSelected && choose(run.forceSelected)}
+              aria-disabled={!run.canRunStep}
+              title={run.canRunStep ? undefined : SELECT_FIRST}
+              onClick={() => run.canRunStep && choose(run.forceSelected)}
             >
               <span className="rc-menu-label">Force Rerun Selected</span>
             </button>
@@ -66,7 +67,8 @@ function ForceMenu({ run }: { run: RunControls }) {
 /** Run controls and diagram view controls. */
 export function Toolbar({ run, onFit, onToggleDirection }: ToolbarProps) {
   const direction = useView((state) => state.direction);
-  const selectedTitle = (title: string) => (run.canRunSelected || !run.canRun ? title : SELECT_FIRST);
+  const targetTitle = (title: string) => (run.canRunSelected || !run.canRun ? title : SELECT_TARGET_FIRST);
+  const stepTitle = (title: string) => (run.canRunStep || !run.canRun ? title : SELECT_FIRST);
   return (
     <div className="rc-toolbar" role="toolbar" aria-label="Run and view">
       <button
@@ -85,7 +87,9 @@ export function Toolbar({ run, onFit, onToggleDirection }: ToolbarProps) {
         type="button"
         className="rc-button"
         disabled={!run.canRunSelected}
-        title={selectedTitle('Run the selected step and everything it needs (Ctrl+Enter)')}
+        title={targetTitle(
+          'Run to the selected step, or through the selected sub-recipe, and everything it needs (Ctrl+Enter)',
+        )}
         onClick={run.runToSelected}
       >
         Run to selected
@@ -93,8 +97,8 @@ export function Toolbar({ run, onFit, onToggleDirection }: ToolbarProps) {
       <button
         type="button"
         className="rc-button"
-        disabled={!run.canRunSelected}
-        title={selectedTitle('Run only the selected step, loading its parents from the cache (Ctrl+Shift+Enter)')}
+        disabled={!run.canRunStep}
+        title={stepTitle('Run only the selected step, loading its parents from the cache (Ctrl+Shift+Enter)')}
         onClick={run.runSelectedOnly}
       >
         Run selected

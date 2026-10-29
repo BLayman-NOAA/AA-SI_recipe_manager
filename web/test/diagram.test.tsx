@@ -3,13 +3,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Profiler, type ReactNode } from 'react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildView } from '../src/diagram/buildView';
 import { Diagram } from '../src/diagram/Diagram';
-import { DiagramView } from '../src/diagram/DiagramView';
+import { DiagramView, type DiagramViewProps } from '../src/diagram/DiagramView';
+import { eyeLook } from '../src/diagram/nodes/StepNode';
 import { estimateSize } from '../src/diagram/layout';
 import { arrowPath } from '../src/diagram/edges/RouteEdge';
 import { edgeTooltip, keepInPlace, layoutKey, resized } from '../src/diagram/useLayout';
+import type { StepBadge } from '../src/runs/badges';
 import { useRunStore } from '../src/runs/store';
 import { RunControlsContext, useRunControls } from '../src/runs/useRunControls';
 import { useSessionStore } from '../src/state/session';
@@ -330,6 +332,57 @@ describe('Diagram', () => {
       expect(useRunStore.getState().logStep).toBe('total');
     });
 
+    it("shows a sub-recipe's progress in the run going without moving a node", async () => {
+      useRunStore.getState().resetFor(SID);
+      renderWithClient(<Diagram />);
+      await laidOut();
+      const mark = () => nodeElement(CHAIN).querySelector('.rc-include-summary');
+      expect(mark()).toBeNull();
+      // The layout from estimates is redone once the nodes are measured; wait for it to settle.
+      const transforms = () => [CHAIN, 'total'].map((id) => nodeElement(id).style.transform).join(' ');
+      let before = '';
+      await waitFor(
+        () => {
+          const now = transforms();
+          const settled = now === before;
+          before = now;
+          expect(settled).toBe(true);
+        },
+        { interval: 100 },
+      );
+      const finished = (seq: number, step: string) => ({
+        seq,
+        time: seq,
+        kind: 'step_finished',
+        run_id: 'x',
+        data: { step, disposition: 'computed', tier: null, hash: `h-${step}`, index: seq, total: 4 },
+      });
+
+      act(() => {
+        const store = useRunStore.getState();
+        store.begin('r1');
+        store.apply('r1', [
+          finished(1, 'seed'),
+          finished(2, 'chain_inc'),
+          { seq: 3, time: 3, kind: 'step_started', run_id: 'x', data: { step: 'leaf_add', index: 3, total: 4, instances: null, chain: null } },
+        ]);
+      });
+      await waitFor(() => expect(mark()).toHaveTextContent('1 of 2 done'));
+      expect(mark()?.querySelector('.rc-run-progress')).not.toBeNull();
+
+      act(() => useRunStore.getState().apply('r1', [finished(4, 'leaf_add')]));
+      await waitFor(() => expect(mark()).toHaveTextContent('complete'));
+      expect(mark()?.querySelector('.rc-include-complete')).not.toBeNull();
+      expect(transforms()).toBe(before);
+
+      act(() =>
+        useRunStore.getState().apply('r1', [
+          { seq: 5, time: 5, kind: 'run_finished', run_id: 'x', data: { status: 'completed', executed: [], skipped: [], pruned: [], untargeted: [] } },
+        ]),
+      );
+      await waitFor(() => expect(mark()).toBeNull());
+    });
+
     it('does not render again for a batch of log events', async () => {
       const store = useRunStore.getState();
       store.resetFor(SID);
@@ -406,6 +459,77 @@ describe('DiagramView', () => {
     expect(store.getState().selected).toEqual({ kind: 'step', id: 'seed' });
     expect(useView.getState().selected).toBeNull();
     expect(clicked).toEqual(['seed']);
+  });
+
+  describe('the eye icon', () => {
+    /** with_sub with `total` writing a Dataset, so it is a step the echogram pane may draw. */
+    function datasetGraph() {
+      const graph = structuredClone(withSubGraph);
+      const total = graph.nodes.find((node) => node.id === 'total');
+      if (total?.kind === 'step') total.outputs = total.outputs.map((output) => ({ ...output, type: 'Dataset' }));
+      return graph;
+    }
+
+    const badge: StepBadge = {
+      predicted: 'user',
+      actual: null,
+      progress: null,
+      saved: 'U',
+      willSave: false,
+      checkpointed: false,
+      stale: false,
+      surveyBacked: false,
+      onDisk: true,
+      partly: null,
+      note: null,
+    };
+
+    function renderView(props: Partial<DiagramViewProps>) {
+      const store = createViewStore();
+      render(
+        <ViewStoreContext.Provider value={store}>
+          <DiagramView graph={datasetGraph()} scope="with_sub" {...props} />
+        </ViewStoreContext.Provider>,
+      );
+    }
+
+    it('draws on a Dataset step, dimmed when nothing is saved, and shows it on click', async () => {
+      const show = vi.fn();
+      renderView({ echogram: { show } });
+      await laidOut();
+      const eye = within(nodeElement('total')).getByRole('button', { name: /^Not saved: show runs to this step/ });
+      expect(eye).toHaveClass('rc-eye', 'rc-eye-off');
+      expect(nodeElement('seed').querySelector('.rc-eye')).toBeNull();
+      await userEvent.setup().click(eye);
+      expect(show).toHaveBeenCalledWith('total');
+    });
+
+    it('draws filled on a step whose result is saved', async () => {
+      renderView({ echogram: { show: vi.fn() }, badges: { total: badge } });
+      await laidOut();
+      const eye = within(nodeElement('total')).getByRole('button', { name: 'Show in the echogram pane' });
+      expect(eye).toHaveClass('rc-eye-saved');
+      expect(eye).not.toHaveClass('rc-eye-off');
+    });
+
+    it('says when a step is partly saved, or never saved', () => {
+      expect(eyeLook({ ...badge, onDisk: true, partly: { count: 2, of: 3 } }, null)).toEqual({
+        title: '2 of 3 instances saved: show draws them',
+        className: 'rc-eye-saved rc-eye-part',
+      });
+      expect(eyeLook({ ...badge, onDisk: false }, 'never')).toEqual({
+        title: "Never saved (checkpoint: never in the recipe), so it can't be drawn",
+        className: 'rc-eye-off',
+      });
+      expect(eyeLook(null, null).title).toBe('Not saved: show runs to this step first and saves it');
+      expect(eyeLook(badge, null)).toEqual({ title: 'Show in the echogram pane', className: 'rc-eye-saved' });
+    });
+
+    it('is absent without the echogram action, as on the docs site', async () => {
+      renderView({ badges: { total: badge } });
+      await laidOut();
+      expect(document.querySelector('.rc-eye')).toBeNull();
+    });
   });
 
   it('ends the recipe inputs box with a count of the inputs sub-recipes declare', async () => {

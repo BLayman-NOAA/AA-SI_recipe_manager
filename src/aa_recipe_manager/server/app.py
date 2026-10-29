@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from aa_recipe_manager import __version__
 from aa_recipe_manager.server.config import ServerConfig
+from aa_recipe_manager.server.echogram import EchogramService
 from aa_recipe_manager.server.errors import install_handlers
 from aa_recipe_manager.server.models import HealthResponse
 from aa_recipe_manager.server.routers import ops, recipes, runs, sessions
@@ -32,8 +33,9 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
             reloader builds the app.
 
     Returns:
-        The application, serving the API under ``/api`` and the built client
-        at ``/``.
+        The application, serving the API under ``/api``, EchogramGL's
+        catalog and data routes under ``/echogram`` when it is installed, and
+        the built client at ``/``.
     """
     config = config or ServerConfig.from_env()
 
@@ -58,6 +60,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.state.runs = RunManager(app.state.sessions, config)
     app.state.ops = None
     app.state.recipe_cache = {}
+    app.state.echogram = EchogramService()
     app.add_middleware(LocalOnlyMiddleware, config=config)
     install_handlers(app)
 
@@ -74,6 +77,10 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
 
     for module in (recipes, ops, sessions, runs):
         app.include_router(module.router, prefix="/api")
+
+    echogram = app.state.echogram.router()
+    if echogram is not None:
+        app.include_router(echogram, prefix="/echogram", include_in_schema=False)
 
     if (STATIC_DIR / "index.html").is_file():
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="client")

@@ -41,13 +41,17 @@ export interface MenuState {
   surveyRegion: boolean;
   /** Diagram text size, one of TEXT_SIZES. */
   textSize: number;
+  /** The selected step has an output the echogram pane may draw (the eye icon's rule). */
+  echogramSelected: boolean;
 }
 
 export interface RunMenuState {
   /** A valid session is open and no run is active. */
   canRun: boolean;
-  /** canRun, and a step is selected. */
+  /** canRun, and a step or a sub-recipe is selected. */
   canRunSelected: boolean;
+  /** canRun, and a step is selected. */
+  canRunStep: boolean;
   /** A run is going. */
   isActive: boolean;
   /** Cancel was asked for and the run is still going. */
@@ -84,6 +88,7 @@ export interface Commands {
   showRunHistory: () => void;
   refreshPreview: () => void;
   toggleSurveyRegion: () => void;
+  showEchogramForSelected: () => void;
 }
 
 export function milestoneTooltip(milestone: number): string {
@@ -115,7 +120,7 @@ function sessionItems(state: MenuState, commands: Commands): MenuItem[] {
 
 export function buildMenus(state: MenuState, commands: Commands): Menu[] {
   const hasSession = state.sid !== null;
-  const { canRun, canRunSelected, isActive, isCancelling } = state.run;
+  const { canRun, canRunSelected, canRunStep, isActive, isCancelling } = state.run;
   const directionLabel = state.direction === 'RIGHT' ? 'left to right' : 'top to bottom';
   return [
     {
@@ -199,13 +204,13 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
           id: 'run-selected-only',
           label: 'Run Selected Only',
           shortcut: 'Ctrl+Shift+Enter',
-          enabled: canRunSelected,
+          enabled: canRunStep,
           action: commands.runSelectedOnly,
         },
         {
           id: 'force-rerun-selected',
           label: 'Force Rerun Selected',
-          enabled: canRunSelected,
+          enabled: canRunStep,
           action: commands.forceRerunSelected,
         },
         { id: 'force-rerun-all', label: 'Force Rerun All', enabled: canRun, action: commands.forceRerunAll },
@@ -277,6 +282,12 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
       items: [
         { id: 'refresh-preview', label: 'Refresh Preview', enabled: hasSession, action: commands.refreshPreview },
         later('explain-miss', 'Explain Miss for Selected', 7),
+        {
+          id: 'show-echogram',
+          label: 'Show Selected in Echogram',
+          enabled: hasSession && state.echogramSelected,
+          action: commands.showEchogramForSelected,
+        },
         {
           id: 'survey-region',
           label: 'Show Survey Backed Region',

@@ -22,6 +22,7 @@ PATHS = {
     "/api/sessions/{sid}/files/{path}",
     "/api/sessions/{sid}/inputs",
     "/api/sessions/{sid}/config",
+    "/api/sessions/{sid}/steps/{step}/artifacts",
     "/api/sessions/{sid}/runs",
     "/api/sessions/{sid}/preview",
     "/api/runs/{rid}",
@@ -41,8 +42,17 @@ def test_export_is_json_with_every_route(tmp_path):
     assert "ErrorResponse" in document["components"]["schemas"]
     assert "RunResponse" in document["components"]["schemas"]
     assert "PreviewResponse" in document["components"]["schemas"]
+    assert "StepArtifactsResponse" in document["components"]["schemas"]
     events = document["paths"]["/api/runs/{rid}/events"]["get"]["responses"]["200"]
     assert "text/event-stream" in events["content"]
+    found = document["paths"]["/api/sessions/{sid}/steps/{step}/artifacts"]["get"]
+    params = {param["name"]: param for param in found["parameters"]}
+    assert {"output", "var", "start", "end", "resolve"} <= set(params)
+    assert params["resolve"]["schema"] == {
+        "type": "boolean",
+        "default": True,
+        "title": "Resolve",
+    }
     assert out.read_text(encoding="utf-8") == openapi_text()
 
 

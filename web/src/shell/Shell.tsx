@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ApiError } from '../api/client';
+import { echogramCandidate, findStep } from '../api/graph';
 import { useCurrentSession, useRecoverWhenServerAnswers, useSessions } from '../api/queries';
+import { useEchogramStore } from '../echogram/store';
+import { EchogramWatcher } from '../echogram/useEchogramStaleness';
 import { DocsEnvContext, type DocsEnv } from '../env';
 import { useRunStore } from '../runs/store';
 import { RunControlsContext, useRunControls, useStartQueuedRun } from '../runs/useRunControls';
@@ -48,6 +51,13 @@ function useResetRunsOnSessionChange(sid: string | null) {
   }, [sid]);
 }
 
+/** Point the echogram layers at the open session, restoring the ones it had. */
+function useResetEchogramOnSessionChange(sid: string | null) {
+  useLayoutEffect(() => {
+    useEchogramStore.getState().resetFor(sid);
+  }, [sid]);
+}
+
 function useGlobalShortcuts(commands: Commands) {
   const { findStep, runToSelected, runSelectedOnly } = commands;
   useEffect(
@@ -80,6 +90,10 @@ export function Shell() {
   const theme = useView((state) => state.theme);
   const surveyRegion = useView((state) => state.surveyRegion);
   const textSize = useView((state) => state.textSize);
+  const selected = useView((state) => state.selected);
+  const graph = useCurrentSession().data?.graph;
+  const selectedStep = selected?.kind === 'step' && graph ? findStep(graph, selected.id) : undefined;
+  const echogramSelected = Boolean(selectedStep && echogramCandidate(selectedStep));
 
   const docsUrl = useDocsUrl();
   const docsEnv = useMemo<DocsEnv>(() => ({ docsUrl, linkTarget: '_blank', pages: {} }), [docsUrl]);
@@ -88,6 +102,7 @@ export function Shell() {
   useRecoverWhenServerAnswers();
   useResetScopeOnSessionChange();
   useResetRunsOnSessionChange(sid);
+  useResetEchogramOnSessionChange(sid);
   useFollowRuns(sid);
   useStartQueuedRun(run);
   useGlobalShortcuts(commands);
@@ -104,11 +119,13 @@ export function Shell() {
       run: {
         canRun: run.canRun,
         canRunSelected: run.canRunSelected,
+        canRunStep: run.canRunStep,
         isActive: run.isActive,
         isCancelling: run.isCancelling,
       },
       surveyRegion,
       textSize,
+      echogramSelected,
     },
     commands,
   );
@@ -122,6 +139,7 @@ export function Shell() {
           <DockLayout />
           <StatusBar />
           <ShellDialogs />
+          <EchogramWatcher />
         </div>
       </RunControlsContext.Provider>
     </DocsEnvContext.Provider>

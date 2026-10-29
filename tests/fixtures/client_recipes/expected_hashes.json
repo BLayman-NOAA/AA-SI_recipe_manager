@@ -27,6 +27,15 @@
     "slow": "07dc925548249dbea6d61bb23ea1336a01dee86ea29fb1c41cf0d50c1506396a",
     "start": "0b1371ea7c542be6abb724c436f28026039a95fdacfa68b6c1f7a91d33f03778"
   },
+  "sv.yaml": {
+    "start": "0b1371ea7c542be6abb724c436f28026039a95fdacfa68b6c1f7a91d33f03778",
+    "sv": "c66d87f4eced1d680c2653da11d416545dab3f8dfee85da4c207e12689a8ce64"
+  },
+  "sv_mapped.yaml": {
+    "seg": "955f7c57eac430bdbee2616f55ddb4d49bb1fae0203c2134f67ca78a0495e741",
+    "sv": "2584ef66bf0186b9f93cc80c3e329048647a106885b991a64cea66277a765424",
+    "total": "a0d46d5d0b32efcb0ced96ed52b1e4ede403ee09e312391ca85bda8c66026670"
+  },
   "with_sub.yaml": {
     "chain_inc": "5d91ebd25fdd20f3217c575d01284f34c41bc153974efa0c07c80b1769905b64",
     "leaf_add": "ebeb7f0cbf50e9cade60e05809f6a6e4f7a779d50d2101c3997653df2c2db665",

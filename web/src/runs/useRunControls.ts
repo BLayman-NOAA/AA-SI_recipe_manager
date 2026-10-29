@@ -12,7 +12,7 @@ import { showPane } from '../shell/dock';
 import { useSessionStore } from '../state/session';
 import { useView } from '../state/view';
 import { readStored } from '../state/storage';
-import { intentFor, type RunAction, type RunIntent } from './intent';
+import { intentFor, selectionTargets, type RunAction, type RunIntent } from './intent';
 import { nearestCheckpointedDownstream } from './runToHere';
 import { isRunActive, useRunStore } from './store';
 
@@ -23,8 +23,10 @@ export interface RunControls {
   hasSession: boolean;
   /** A valid session is open and no run is active. */
   canRun: boolean;
-  /** canRun, and a step is selected. */
+  /** canRun, and a step or a sub-recipe is selected (Run to selected). */
   canRunSelected: boolean;
+  /** canRun, and a step is selected (Run selected only, Force rerun selected). */
+  canRunStep: boolean;
   isActive: boolean;
   /** Cancel was asked for and the run has not finished; Stop now is offered. */
   isCancelling: boolean;
@@ -34,10 +36,10 @@ export interface RunControls {
   runSelectedOnly: () => void;
   forceSelected: () => void;
   forceAll: () => void;
-  /** Run to a step, from the diagram's play icon. */
-  runToHere: (stepId: string) => void;
+  /** Run to a step, from the diagram's play icon or the echogram pane; told the run id once it starts. */
+  runToHere: (stepId: string, onStarted?: (runId: string) => void) => void;
   /** Start an intent now (no confirmation). */
-  start: (intent: RunIntent) => void;
+  start: (intent: RunIntent, onStarted?: (runId: string) => void) => void;
   cancel: () => void;
   /** Kill the run now, after a confirmation. */
   stopNow: () => void;
@@ -53,6 +55,7 @@ export const NO_RUN_CONTROLS: RunControls = {
   hasSession: false,
   canRun: false,
   canRunSelected: false,
+  canRunStep: false,
   isActive: false,
   isCancelling: false,
   dryRun: noop,
@@ -100,12 +103,13 @@ export function useRunControls(): RunControls {
 
   const valid = Boolean(session && session.id === sid && session.validation.valid);
   const canRun = valid && !isActive && !startRun.isPending;
-  const canRunSelected = canRun && selected?.kind === 'step';
+  const canRunSelected = canRun && selectionTargets(selected, graph).length > 0;
+  const canRunStep = canRun && selected?.kind === 'step';
   // isPending only shows after a render; this stops a second start in the same moment.
   const pending = useRef(false);
 
   const start = useCallback(
-    (intent: RunIntent) => {
+    (intent: RunIntent, onStarted?: (runId: string) => void) => {
       if (pending.current) return;
       pending.current = true;
       const store = useRunStore.getState();
@@ -117,13 +121,23 @@ export function useRunControls(): RunControls {
         onSuccess: (run) => {
           pending.current = false;
           useRunStore.getState().begin(run.id, preview);
-          const target = intent.mode === 'to' && intent.forceSteps.length === 0 ? intent.targets[0] : null;
+          // A caller waiting on the run (the echogram pane) gets no hint: its "run to y
+          // instead" would cancel the run the caller waits on.
+          if (onStarted) {
+            onStarted(run.id);
+            return;
+          }
+          // The hint is about one step, so a run through a sub-recipe gets none.
+          const target = intent.mode === 'to' && intent.forceSteps.length === 0 && !intent.include ? intent.targets[0] : null;
           const step = target && graph ? findStep(graph, target) : undefined;
           if (!step || step.checkpoint === 'always' || readStored(HINT_KEY) === 'off') return;
           const alternative = nearestCheckpointedDownstream(graph!, step.id);
+          const pinned = preview?.steps.find((entry) => entry.step_id === step.id)?.pinned;
           useRunStore.getState().setHint({
             step: step.id,
             alternative: alternative && { step: alternative.step, extra: alternative.extraSteps.length },
+            saved: pinned ?? step.checkpoint !== 'never',
+            never: step.checkpoint === 'never',
           });
         },
         onError: (error) => {
@@ -144,10 +158,10 @@ export function useRunControls(): RunControls {
   // Shortcuts call these whatever the buttons show, so they check again.
   const act = useCallback(
     (action: RunAction) => {
-      const intent = intentFor(action, useView.getState().selected);
+      const intent = intentFor(action, useView.getState().selected, graph);
       if (intent && canRun) start(intent);
     },
-    [start, canRun],
+    [start, canRun, graph],
   );
 
   const cancel = useCallback(() => {
@@ -181,6 +195,7 @@ export function useRunControls(): RunControls {
       hasSession: Boolean(session),
       canRun,
       canRunSelected,
+      canRunStep,
       isActive,
       isCancelling,
       dryRun: () => {
@@ -192,14 +207,14 @@ export function useRunControls(): RunControls {
       runSelectedOnly: () => act('only'),
       forceSelected: () => act('forceSelected'),
       forceAll: () => act('forceAll'),
-      runToHere: (stepId) => {
-        if (canRun) start({ mode: 'to', targets: [stepId], force: false, forceSteps: [] });
+      runToHere: (stepId, onStarted) => {
+        if (canRun) start({ mode: 'to', targets: [stepId], force: false, forceSteps: [] }, onStarted);
       },
       start,
       cancel,
       stopNow,
     }),
-    [session, canRun, canRunSelected, isActive, isCancelling, act, start, cancel, stopNow, client, sid],
+    [session, canRun, canRunSelected, canRunStep, isActive, isCancelling, act, start, cancel, stopNow, client, sid],
   );
 }
 

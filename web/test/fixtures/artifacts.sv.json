@@ -1,0 +1,94 @@
+{
+ "step_id": "sv",
+ "step_hash": "c66d87f4eced1d680c2653da11d416545dab3f8dfee85da4c207e12689a8ce64",
+ "fanned_out": false,
+ "held_by": [
+  "user"
+ ],
+ "instances": null,
+ "found": 1,
+ "marker": false,
+ "note": null,
+ "artifacts": [
+  {
+   "output": "ds_Sv",
+   "url": "C:/cache/sv/sv/c66d87f4/174932-d2af95/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "c66d87f4eced1d680c2653da11d416545dab3f8dfee85da4c207e12689a8ce64",
+   "instance_index": null,
+   "item": null,
+   "created_at": "2026-10-19T17:49:32.400418+00:00",
+   "run_id": "174932-d2af95",
+   "size_bytes": null
+  }
+ ],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": {
+   "mode": "artifacts",
+   "step": "sv",
+   "fannedOut": false,
+   "stepHash": "c66d87f4eced1d680c2653da11d416545dab3f8dfee85da4c207e12689a8ce64",
+   "status": "found",
+   "outputs": [
+    {
+     "name": "ds_Sv",
+     "format": "zarr",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "Sv",
+       "kind": "mvbs",
+       "dims": [
+        "channel",
+        "ping_time",
+        "range_sample"
+       ],
+       "channels": 2,
+       "samples": 20
+      }
+     ],
+     "default": "Sv"
+    }
+   ],
+   "output": "ds_Sv",
+   "createdAt": "2026-10-19T17:49:32.400418+00:00",
+   "entries": 1,
+   "kind": "dataset",
+   "var": "Sv",
+   "instances": [
+    {
+     "id": "c66d87f4eced1d680c2653da11d416545dab3f8dfee85da4c207e12689a8ce64",
+     "item": null,
+     "index": null,
+     "store": "C:/cache/sv/sv/c66d87f4/174932-d2af95/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "174932-d2af95@2026-10-19T17:49:32.400418+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      2,
+      12,
+      20
+     ],
+     "start": 1717200420000000000,
+     "end": 1717200431000000000,
+     "pings": 12,
+     "channels": 2,
+     "samples": 20,
+     "bytes": 1336,
+     "mount": "93fd5b0dd310137d"
+    }
+   ],
+   "skipped": [],
+   "empty": 0,
+   "bytes": 1336
+  }
+ }
+}

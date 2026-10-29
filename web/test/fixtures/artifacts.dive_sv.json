@@ -1,0 +1,155 @@
+{
+ "step_id": "dive_sv",
+ "step_hash": "bffac2485cd75e88561112ae500f2706bf375e76f4da82d1896452475b4c55e9",
+ "fanned_out": true,
+ "held_by": [
+  "user"
+ ],
+ "instances": 3,
+ "found": 3,
+ "marker": false,
+ "note": null,
+ "artifacts": [
+  {
+   "output": "ds_Sv",
+   "url": "C:/data/UC1/demo/user/dive_sv/76c74595/053316-66fb39/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "76c745957273a2091f41af32d0edc7ede4b89b00aaba2478573d38b95b5f6e8e",
+   "instance_index": 0,
+   "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T143539.raw",
+   "created_at": "2026-10-14T05:33:51.968253+00:00",
+   "run_id": "053316-66fb39",
+   "size_bytes": null
+  },
+  {
+   "output": "ds_Sv",
+   "url": "C:/data/UC1/demo/user/dive_sv/f722aecc/053316-66fb39/zarr/ds_Sv.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "f722aecce8535c8e85de2ae6c08b608a2438c757694625b20e9c21be262e9a74",
+   "instance_index": 1,
+   "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T145828.raw",
+   "created_at": "2026-10-14T05:34:20.087443+00:00",
+   "run_id": "053316-66fb39",
+   "size_bytes": null
+  },
+  {
+   "output": "ds_Sv",
+   "url": "C:/data/UC1/demo/user/dive_sv/861fad08/174014-eb8b18/json/ds_Sv.json",
+   "format": "json",
+   "tier": "user",
+   "step_hash": "861fad08a060195b5c1a96122c53ec1d1f21e4230d97f9024221e101a7204f30",
+   "instance_index": 2,
+   "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T152116.raw",
+   "created_at": "2026-10-16T17:40:44.398332+00:00",
+   "run_id": "174014-eb8b18",
+   "size_bytes": null
+  }
+ ],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": {
+   "mode": "artifacts",
+   "step": "dive_sv",
+   "fannedOut": true,
+   "stepHash": "bffac2485cd75e88561112ae500f2706bf375e76f4da82d1896452475b4c55e9",
+   "status": "found",
+   "outputs": [
+    {
+     "name": "ds_Sv",
+     "format": "zarr",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "Sv",
+       "kind": "sv",
+       "dims": [
+        "channel",
+        "ping_time",
+        "range_sample"
+       ],
+       "channels": 5,
+       "samples": 15302
+      }
+     ],
+     "default": "Sv"
+    }
+   ],
+   "output": "ds_Sv",
+   "createdAt": "2026-10-16T17:40:44.398332+00:00",
+   "entries": 3,
+   "kind": "dataset",
+   "var": "Sv",
+   "instances": [
+    {
+     "id": "76c745957273a2091f41af32d0edc7ede4b89b00aaba2478573d38b95b5f6e8e",
+     "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T143539.raw",
+     "index": 0,
+     "store": "C:/data/UC1/demo/user/dive_sv/76c74595/053316-66fb39/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "053316-66fb39@2026-10-14T05:33:51.968253+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      5,
+      31,
+      15302
+     ],
+     "start": 1471186460107740000,
+     "end": 1471186700155743000,
+     "pings": 31,
+     "channels": 5,
+     "samples": 15302,
+     "bytes": 16722902,
+     "mount": "cbd2414d6eeb967f"
+    },
+    {
+     "id": "f722aecce8535c8e85de2ae6c08b608a2438c757694625b20e9c21be262e9a74",
+     "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T145828.raw",
+     "index": 1,
+     "store": "C:/data/UC1/demo/user/dive_sv/f722aecc/053316-66fb39/zarr/ds_Sv.zarr",
+     "tier": "user",
+     "stamp": "053316-66fb39@2026-10-14T05:34:20.087443+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      5,
+      59,
+      15302
+     ],
+     "start": 1471186708156542000,
+     "end": 1471187172239944000,
+     "pings": 59,
+     "channels": 5,
+     "samples": 15302,
+     "bytes": 31428977,
+     "mount": "c7e93bdbe9d022e7"
+    }
+   ],
+   "skipped": [
+    {
+     "id": "861fad08a060195b5c1a96122c53ec1d1f21e4230d97f9024221e101a7204f30",
+     "item": "https://noaa-wcsd-pds.s3.amazonaws.com/data/raw/Henry_B._Bigelow/HB1603/EK60/D20160814-T152116.raw",
+     "index": 2,
+     "store": "C:/data/UC1/demo/user/dive_sv/861fad08/174014-eb8b18/json/ds_Sv.json",
+     "tier": "user",
+     "stamp": "174014-eb8b18@2026-10-16T17:40:44.398332+00:00",
+     "error": "empty instance (no data in this file)",
+     "empty": true
+    }
+   ],
+   "empty": 1,
+   "bytes": 48151879
+  }
+ }
+}

@@ -43,6 +43,18 @@ class RunNotFound(LookupError):
     """No run has the requested id."""
 
 
+class StepNotFound(LookupError):
+    """The session's recipe has no step with the requested id.
+
+    Attributes:
+        step_id: The id asked for.
+    """
+
+    def __init__(self, message: str, step_id: str) -> None:
+        super().__init__(message)
+        self.step_id = step_id
+
+
 class ActiveRunExists(Exception):
     """The session already has a run that has not finished."""
 
@@ -64,7 +76,13 @@ class InvalidRecipe(Exception):
 
 
 _STEP = re.compile(r"^Step '([^']+)'")
-NOT_FOUND = (SessionNotFound, RecipeNotFound, RunNotFound, FileNotFoundError)
+NOT_FOUND = (
+    SessionNotFound,
+    RecipeNotFound,
+    RunNotFound,
+    StepNotFound,
+    FileNotFoundError,
+)
 #: Requests that clash with a run's state.
 CONFLICT = (ActiveRunExists, RunNotActive, UpstreamNotCachedError)
 #: Recipe problems found while reading it, which the client can show.

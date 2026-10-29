@@ -3,13 +3,23 @@ import { includeMeta } from '../buildView';
 import { ExpandButton, Handles, IconButton, Spinner, stateClass, useDiagram, type ViewNodeProps } from './common';
 import { InputRows } from './SmallNodes';
 
+/** The bottom mark: the run's progress while one goes, else the preview's summary. */
+function bottomMark(progress: string | null, summary: string | null) {
+  if (progress) {
+    const kind =
+      progress === 'complete' ? 'rc-include-complete' : progress === 'failed' ? 'rc-include-failed' : 'rc-run-progress';
+    return { text: progress, kind, title: 'Progress of the run on the steps inside' };
+  }
+  return summary ? { text: summary, kind: '', title: 'What a run would do with the steps inside' } : null;
+}
+
 /**
  * A collapsed sub-recipe: title, counts, the ports that connect it, its
  * overrides and own inputs when expanded, and drill in.
  */
 export function IncludeNode({ data }: ViewNodeProps<'include'>) {
   const { node } = data;
-  const { include, inPorts, outPorts, expanded, rows, summary, surveyBacked, status } = node.data;
+  const { include, inPorts, outPorts, expanded, rows, summary, surveyBacked, status, progress } = node.data;
   const marks = [
     surveyBacked && 'rc-survey-backed',
     status === 'failed' && 'rc-actual-failed',
@@ -18,6 +28,7 @@ export function IncludeNode({ data }: ViewNodeProps<'include'>) {
     .filter(Boolean)
     .join(' ');
   const { drillInto, toggleBoxExpanded } = useDiagram();
+  const mark = bottomMark(progress, summary);
 
   return (
     <div
@@ -30,9 +41,9 @@ export function IncludeNode({ data }: ViewNodeProps<'include'>) {
           <Spinner />
         </div>
       )}
-      {summary && (
-        <div className="rc-run-marks rc-include-summary" title="What a run would do with the steps inside">
-          <span className="rc-run-mark">{summary}</span>
+      {mark && (
+        <div className="rc-run-marks rc-include-summary" title={mark.title}>
+          <span className={`rc-run-mark ${mark.kind}`.trim()}>{mark.text}</span>
         </div>
       )}
       <div className="rc-include-head">

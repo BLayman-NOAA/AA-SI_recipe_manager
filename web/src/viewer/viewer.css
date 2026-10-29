@@ -314,6 +314,12 @@ html.rc-viewer-no-scroll {
   display: none;
 }
 
+/* Until the viewer draws, the container keeps the diagram's height, so the
+   page does not grow when it draws and links to later sections land. */
+.recipe-viewer[data-recipe]:not([data-rv-state='ready'], [data-rv-state='failed']) {
+  min-height: min(48rem, 82vh);
+}
+
 .rc-viewer-notice {
   font-style: italic;
 }

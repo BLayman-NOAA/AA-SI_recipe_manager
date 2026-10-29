@@ -15,6 +15,8 @@ export interface DiagramActions {
   runToHere?: (stepId: string) => void;
   /** A run can start now. */
   canRun: boolean;
+  /** Draw a step's output in the echogram pane (the eye icon); absent hides the icon. */
+  showEchogram?: (stepId: string) => void;
 }
 
 export const DiagramContext = createContext<DiagramActions>({
@@ -127,6 +129,7 @@ const ICONS = {
   up: 'M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z',
   drill: 'M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
   play: 'M8 5v14l11-7z',
+  eye: 'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   disk: 'M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z',
 };
 

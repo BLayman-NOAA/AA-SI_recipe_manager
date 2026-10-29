@@ -1,0 +1,49 @@
+# Saved Sv datasets, one per item, for the echogram pane's pieces.
+recipe:
+  name: client_sv_mapped
+  version: "1.0"
+  description: Make one small Sv dataset per item, apart in time, and count them.
+  schema_version: "1"
+
+steps:
+  - id: seg
+    op: custom
+    checkpoint: always
+    custom_spec:
+      description: Make a list of numbers.
+      callable_path: _stage9_helpers.make_list
+      outputs:
+        items: {type: list}
+      output_map: {items: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: sv
+    op: custom
+    checkpoint: always
+    map_over: ${seg.items}
+    inputs:
+      x: ${_item}
+    custom_spec:
+      description: A synthetic Sv dataset starting x minutes in.
+      callable_path: _stage9_helpers.sv_dataset
+      inputs:
+        x: {type: int}
+      outputs:
+        ds_Sv: {type: Dataset}
+      output_map: {ds_Sv: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: total
+    op: custom
+    collect: ${sv.ds_Sv}
+    inputs:
+      values: ${sv.ds_Sv}
+    custom_spec:
+      description: Count the datasets.
+      callable_path: _stage9_helpers.count_items
+      inputs:
+        values: {type: Dataset, many: true}
+      outputs:
+        n: {type: int}
+      output_map: {n: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

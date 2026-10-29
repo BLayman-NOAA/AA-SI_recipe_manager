@@ -4,19 +4,22 @@ import type { Preview, StepPreview } from '../src/api/models';
 import { buildView } from '../src/diagram/buildView';
 import { layoutKey } from '../src/diagram/useLayout';
 import {
+  includeProgress,
   includeSummary,
   NOT_IN_RUN,
   NOT_NEEDED,
   notNeeded,
+  partlyHeld,
   predictedOf,
   runMarks,
+  savedOnDisk,
   statusText,
   stepBadges,
   surveyBackedSteps,
   tierLetter,
 } from '../src/runs/badges';
-import { parseRunEvents, type RunEvent } from '../src/runs/events';
-import { initialRunState, reduceEvents } from '../src/runs/reducer';
+import { parseRunEvents, type RunEvent, type RunStartedData } from '../src/runs/events';
+import { initialRunState, reduceEvents, type StepRunState, type StepStatus } from '../src/runs/reducer';
 import cachedText from './fixtures/cached.events.jsonl?raw';
 import uc1Json from './fixtures/uc1.graph.json';
 import { withSubGraph } from './helpers';
@@ -261,5 +264,162 @@ describe('outlines while a run goes', () => {
     expect(statusText('skipped')).toBe(NOT_NEEDED);
     expect(statusText('pruned')).toBe(NOT_NEEDED);
     expect(statusText('load-user')).toBe('load-user');
+  });
+});
+
+describe('savedOnDisk', () => {
+  function actual(status: StepStatus, hash = 'hash-x'): StepRunState {
+    return { ...BLANK_STEP, status, hash };
+  }
+  const BLANK_STEP = {
+    tier: null,
+    planned: null,
+    index: 0,
+    total: 0,
+    instances: { count: null, done: 0, computed: 0, cached: 0, skipped: 0 },
+    seconds: null,
+    error: null,
+    chain: null,
+  };
+  const ahead = step('x');
+
+  it('counts a result a tier holds for the current hash, with or without a run', () => {
+    expect(savedOnDisk(step('x', { held_by: ['user'] }), undefined)).toBe(true);
+    expect(savedOnDisk(ahead, undefined)).toBe(false);
+  });
+
+  it('counts a cache hit of the current hash, not of an older one', () => {
+    expect(savedOnDisk(ahead, actual('hit-user-cache'))).toBe(true);
+    expect(savedOnDisk(ahead, actual('hit-survey-cache'))).toBe(true);
+    expect(savedOnDisk(ahead, actual('hit-user-cache', 'older'))).toBe(false);
+  });
+
+  it('counts a computed result only when the run wrote it', () => {
+    expect(savedOnDisk(ahead, actual('computed'))).toBe(false);
+    expect(savedOnDisk(ahead, actual('computed'), step('x', { checkpoint: 'memory-only' }))).toBe(false);
+    expect(savedOnDisk(ahead, actual('computed'), step('x', { checkpoint: 'will-save' }))).toBe(true);
+    expect(savedOnDisk(ahead, actual('computed'), step('x', { pinned: true }))).toBe(true);
+    expect(savedOnDisk(ahead, actual('computed'), undefined, true)).toBe(true);
+    expect(savedOnDisk(ahead, actual('computed', 'older'), undefined, true)).toBe(false);
+    expect(savedOnDisk(undefined, actual('computed'), undefined, true)).toBe(true);
+    expect(savedOnDisk(ahead, actual('failed'), undefined, true)).toBe(false);
+  });
+
+  it('is each badge onDisk, from the preview the run was started with and its targets', () => {
+    const before = stepBadges(withSubGraph, PREVIEW, null);
+    expect(before.seed.onDisk).toBe(true);
+    expect(before.total.onDisk).toBe(false);
+    const run = finishedRun();
+    const notHeld = { ...PREVIEW, steps: PREVIEW.steps.map((entry) => ({ ...entry, held_by: [] })) };
+    expect(stepBadges(withSubGraph, notHeld, runMarks(run, PREVIEW)).total.onDisk).toBe(true);
+    expect(stepBadges(withSubGraph, notHeld, runMarks(run)).total.onDisk).toBe(false);
+    const targeted = { ...run, started: { targets: ['total'] } as unknown as RunStartedData };
+    expect(stepBadges(withSubGraph, notHeld, runMarks(targeted)).total.onDisk).toBe(true);
+  });
+});
+
+describe('savedOnDisk for steps never saved and steps partly saved', () => {
+  const computed: StepRunState = {
+    status: 'computed',
+    hash: 'hash-x',
+    tier: null,
+    planned: null,
+    index: 0,
+    total: 0,
+    instances: { count: null, done: 0, computed: 0, cached: 0, skipped: 0 },
+    seconds: null,
+    error: null,
+    chain: null,
+  };
+
+  it('trusts the start preview over the target: a checkpoint: never target is not saved', () => {
+    const refused = step('x', { pinned: false, checkpoint: 'memory-only' });
+    expect(savedOnDisk(step('x'), computed, refused, true)).toBe(false);
+    expect(savedOnDisk(step('x'), computed, undefined, true)).toBe(true);
+  });
+
+  it('counts a fanned out step some tier partly holds as drawable, and says how much', () => {
+    const partly = step('x', { fanned_out: true, instances: 3, instances_held: { user: 2 } });
+    expect(partlyHeld(partly)).toEqual({ count: 2, of: 3 });
+    expect(savedOnDisk(partly, undefined)).toBe(true);
+    expect(partlyHeld(step('x', { held_by: ['user'], instances: 3, instances_held: { user: 3 } }))).toBeNull();
+    expect(partlyHeld(step('x'))).toBeNull();
+  });
+});
+
+describe('includeProgress', () => {
+  const cached = parseRunEvents(cachedText);
+  const level = {
+    ...findInclude(withSubGraph, CHAIN)!,
+    steps: ['plan_dives', 'query_ncei', 'scan_raw_config', 'build_cal_mapping', 'read_raw', 'dive_sv', 'dive_file_mvbs', 'dive_cell_stats'],
+  };
+  const upTo = (seq: number) => reduceEvents(initialRunState('r1'), cached.filter((event) => event.seq <= seq)).steps;
+
+  it('counts the members the run uses that are done, then says complete', () => {
+    // scan_raw_config is pruned and dive_cell_stats untargeted: six members in the run.
+    expect(includeProgress(level, upTo(2))).toBe('0 of 6 done');
+    expect(includeProgress(level, upTo(10))).toBe('3 of 6 done');
+    // dive_sv and dive_file_mvbs still run, with their three items each finished.
+    expect(includeProgress(level, upTo(17))).toBe('4 of 6 done, 6 of 6 items');
+    expect(includeProgress(level, upTo(19))).toBe('complete');
+  });
+
+  /** A member's state with a status, and item counts for a mapped one. */
+  const member = (status: StepStatus, count: number | null = null, done = 0): StepRunState => ({
+    status,
+    tier: null,
+    hash: null,
+    planned: 'compute',
+    index: 0,
+    total: 0,
+    instances: { count, done, computed: done, cached: 0, skipped: 0 },
+    seconds: null,
+    error: null,
+    chain: null,
+  });
+  const chain = (steps: string[]) => ({ ...level, steps });
+
+  it('does not count a stopped member as done', () => {
+    const steps = { a: member('computed'), b: member('stopped'), c: member('skipped') };
+    expect(includeProgress(chain(['a', 'b', 'c']), steps)).toBe('2 of 3 done');
+    expect(includeProgress(chain(['a', 'b']), { ...steps, b: member('not-run') })).toBe('1 of 2 done');
+  });
+
+  it('adds the items of the mapped members running', () => {
+    const steps = {
+      read: member('running', 300, 160),
+      combine: member('running', 300, 150),
+      plan: member('hit-user-cache'),
+      sv: member('queued'),
+    };
+    expect(includeProgress(chain(['plan', 'read', 'combine', 'sv']), steps)).toBe('1 of 4 done, 310 of 600 items');
+    expect(includeProgress(chain(['plan', 'sv']), { ...steps, sv: member('running') })).toBe('1 of 2 done');
+  });
+
+  it('says failed, and nothing for a sub-recipe the run does not use', () => {
+    const steps = reduceEvents(initialRunState('r1'), [
+      ...cached.filter((event) => event.seq <= 10),
+      event(11, 'step_failed', { step: 'read_raw', index: 5, total: 8, error_type: 'OSError', message: 'gone' }),
+    ]).steps;
+    expect(includeProgress(level, steps)).toBe('failed');
+    const outside = { ...level, steps: ['scan_raw_config', 'dive_cell_stats'] };
+    expect(includeProgress(outside, upTo(19))).toBeNull();
+    expect(includeProgress(level, {})).toBeNull();
+  });
+
+  it('reaches the include box only with the steps of a run going', () => {
+    const options = { drill: [], connected: false, selected: null, expandedSteps: new Set<string>(), expandedBoxes: new Set<string>() };
+    const box = (runSteps?: Record<string, StepRunState> | null) =>
+      buildView(withSubGraph, { ...options, runSteps }).nodes.find((node) => node.id === CHAIN);
+    const running = reduceEvents(initialRunState('r1'), [
+      event(1, 'step_finished', { step: 'chain_inc', disposition: 'computed', tier: null, hash: 'h', index: 2, total: 4 }),
+      event(2, 'step_started', { step: 'leaf_add', index: 3, total: 4, instances: null, chain: null }),
+    ]).steps;
+    const live = box(running);
+    expect(live?.kind === 'include' && live.data.progress).toBe('1 of 2 done');
+    for (const none of [box(), box(null)]) expect(none?.kind === 'include' && none.data.progress).toBeNull();
+    expect(layoutKey(buildView(withSubGraph, options), 'RIGHT')).toBe(
+      layoutKey(buildView(withSubGraph, { ...options, runSteps: running }), 'RIGHT'),
+    );
   });
 });

@@ -172,6 +172,28 @@ def read_scratch(path: str) -> int:
         return int(stream.read())
 
 
+def sv_dataset(x: int = 0, pings: int = 12) -> Any:
+    """A small gridded Sv dataset whose pings start ``x`` minutes in.
+
+    Built with EchogramGL's synthetic fixture, imported here so that loading
+    and validating a recipe never needs EchogramGL installed.
+    """
+    import numpy as np
+    from aa_si_echogram_gl import fixtures
+
+    ds = fixtures.synthetic(
+        n_pings=pings, n_samples=20, gridded=True, gps=False, nodata=False
+    )
+    return ds.assign_coords(
+        ping_time=ds["ping_time"] + np.timedelta64(int(x), "m")
+    )
+
+
+def count_items(values: list) -> int:
+    """Count the collected values."""
+    return len(values)
+
+
 def console_note(x: int) -> int:
     """Print a line straight to the terminal, past the run log."""
     from aa_recipe_manager.executor.console import console_print

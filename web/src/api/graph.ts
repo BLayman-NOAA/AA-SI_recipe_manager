@@ -239,6 +239,33 @@ export function findInclude(graph: Graph, id: string): GraphInclude | undefined 
   return graph.includes.find((include) => include.id === id);
 }
 
+/**
+ * The run targets of a sub-recipe: its exit steps, in graph order.
+ *
+ * A member is an exit when it feeds a step outside the include, gives a
+ * declared recipe output, or feeds no step at all (a dead end such as a plot).
+ * An include's steps already hold those of the includes nested in it.
+ */
+export function includeTargets(graph: Graph, includeId: string): string[] {
+  const members = new Set(findInclude(graph, includeId)?.steps ?? []);
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const exits = new Set<string>();
+  const feeding = new Set<string>();
+  for (const edge of graph.edges) {
+    if (!members.has(edge.source)) continue;
+    const target = byId.get(edge.target);
+    if (target?.kind === 'step') {
+      feeding.add(edge.source);
+      if (!members.has(target.id)) exits.add(edge.source);
+    } else if (target?.kind === 'output' && target.declared) {
+      exits.add(edge.source);
+    }
+  }
+  return stepNodes(graph)
+    .map((step) => step.id)
+    .filter((id) => members.has(id) && (exits.has(id) || !feeding.has(id)));
+}
+
 /** A recipe input's name, without the `inputs.` of its label. */
 export function inputName(node: InputNode): string {
   return node.label.replace(/^inputs\./, '');
@@ -304,4 +331,12 @@ export function ownInputs(include: GraphInclude): GraphIncludeInput[] {
 export function opLabel(step: StepNode): string {
   if (!step.custom) return step.op;
   return step.extends ? `custom, extends ${step.extends}` : 'custom step';
+}
+
+/** Output types the echogram pane may be able to draw. */
+const ECHOGRAM_TYPES: ReadonlySet<string> = new Set(['Dataset', 'DataArray', 'DataTree', 'Dataset | DataArray']);
+
+/** The step has an output the echogram pane may draw, so it gets the eye icon. */
+export function echogramCandidate(step: StepNode): boolean {
+  return step.outputs.some((output) => output.type !== null && ECHOGRAM_TYPES.has(output.type));
 }

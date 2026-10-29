@@ -63,3 +63,6 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['queued', 's
 export function isActiveRun(run: RunRecord): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
 }
+
+export type StepArtifacts = Schemas['StepArtifactsResponse'];
+export type Artifact = Schemas['ArtifactModel'];

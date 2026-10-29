@@ -8,8 +8,9 @@ export default defineConfig({
   build: {
     outDir: '../src/aa_recipe_manager/server/static',
     emptyOutDir: true,
-    // The app chunk is about 0.9 MB; revisit with Monaco (M5) and EchogramGL (M6).
-    chunkSizeWarningLimit: 1200,
+    // The app chunk is about 1.3 MB with EchogramGL and zarrita (M6); revisit with Monaco (M5).
+    // The decode worker and zarrita's codecs are separate assets, loaded on demand.
+    chunkSizeWarningLimit: 1500,
   },
   server: {
     proxy: {

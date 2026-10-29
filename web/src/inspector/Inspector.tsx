@@ -1,15 +1,17 @@
 /** The open session's inspector: InspectorBody with the Cache section and the inputs form. */
-import { useId, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { fieldSources } from '../api/fields';
-import type { Graph, StepNode } from '../api/graph';
+import { echogramCandidate, type Graph, type StepNode } from '../api/graph';
 import type { InputField, SessionDocument, StepPreview } from '../api/models';
-import { useCurrentSession, useMutationError, useSetInputs } from '../api/queries';
+import { useCurrentSession, useMutationError, useSetInputs, useStepArtifacts } from '../api/queries';
 import { recipeInputRows, rowValue } from '../diagram/buildView';
+import { showEchogram } from '../echogram/show';
 import { DraftActions, InputControl, InputProblems, useInputDraft } from '../inputs/InputsPane';
 import { staleResult, statusText } from '../runs/badges';
 import type { StepRunState } from '../runs/reducer';
 import { openStepLog, useShownRun } from '../runs/store';
 import { useCurrentPreview } from '../runs/usePreviewIntent';
+import { useSessionStore } from '../state/session';
 import { useViewStore } from '../state/view';
 import { plural, secondsText, valueText } from '../text';
 import { ByFile } from './ByFile';
@@ -41,7 +43,48 @@ function actualText(actual: StepRunState): string {
   return parts.join(' ');
 }
 
+/** Where a step's saved outputs are, fetched when the list is opened. */
+function SavedFiles({ step }: { step: StepNode }) {
+  const sid = useSessionStore((state) => state.sid);
+  const [open, setOpen] = useState(false);
+  const found = useStepArtifacts(sid, step.id, open);
+  const data = found.data;
+  let body: ReactNode;
+  if (found.error) body = <p className="rc-field-error">{found.error.message}</p>;
+  else if (!data) body = <p className="rc-muted">Looking...</p>;
+  else if (data.artifacts.length === 0) {
+    body = <p className="rc-muted">{data.note ?? 'Nothing is saved for the current hash.'}</p>;
+  } else {
+    body = (
+      <table className="rc-table rc-artifacts">
+        <tbody>
+          {data.artifacts.map((artifact) => (
+            <tr key={`${artifact.step_hash}/${artifact.output}`}>
+              <td className="rc-mono">
+                {artifact.output}
+                {artifact.instance_index !== null ? ` #${artifact.instance_index}` : ''}
+              </td>
+              <td>{artifact.format}</td>
+              <td>{artifact.tier}</td>
+              <td className="rc-mono rc-artifact-url" title={artifact.url}>
+                {artifact.url}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+  return (
+    <details className="rc-saved-files" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Saved files</summary>
+      {open && body}
+    </details>
+  );
+}
+
 function StepCache({ step }: { step: StepNode }) {
+  const sid = useSessionStore((state) => state.sid);
   const preview = useCurrentPreview().data;
   const run = useShownRun();
   const ahead = preview?.steps.find((candidate) => candidate.step_id === step.id);
@@ -64,6 +107,12 @@ function StepCache({ step }: { step: StepNode }) {
     <section>
       <h3>Cache</h3>
       <Facts rows={rows} />
+      {sid && echogramCandidate(step) && (
+        <button type="button" className="rc-button rc-small" onClick={() => showEchogram(sid, step)}>
+          Show in echogram
+        </button>
+      )}
+      <SavedFiles step={step} />
       {staleResult(ahead, actual) && (
         <p className="rc-field-help rc-status-warning">The hash changed since the last run.</p>
       )}

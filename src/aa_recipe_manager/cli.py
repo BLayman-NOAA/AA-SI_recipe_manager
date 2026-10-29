@@ -1821,3 +1821,111 @@ def explain_cache_cmd(
         click.echo(_json.dumps(explanation.to_dict(), indent=2, default=str))
     else:
         click.echo(explanation.format_text())
+
+
+@main.command("artifacts")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.argument("step_id")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Run-config file supplying cache locations and credentials "
+        "(same discovery as 'run' when omitted)."
+    ),
+)
+@click.option(
+    "--user-cache-dir",
+    default=None,
+    help=(
+        "User cache root to probe. Defaults to the run config's user_cache_dir, "
+        f"else ./{DEFAULT_OUTPUT_ROOT}."
+    ),
+)
+@click.option(
+    "--survey-cache-dir",
+    "survey_cache_dir",
+    default=None,
+    metavar="DIR_OR_URL",
+    help="Survey cache root to probe (defaults to the run config's value).",
+)
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Supply a pipeline-level input value (repeatable).",
+)
+@click.option(
+    "--base-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help=(
+        "Resolve the recipe's relative paths against PATH instead of the "
+        "working directory, as a run started there would."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the answer as JSON instead of text.",
+)
+def artifacts_cmd(
+    recipe: str,
+    step_id: str,
+    config_path: str | None,
+    user_cache_dir: str | None,
+    survey_cache_dir: str | None,
+    inputs: tuple[str, ...],
+    base_dir: str | None,
+    as_json: bool,
+) -> None:
+    """List where STEP_ID's checkpointed outputs are, without running RECIPE.
+
+    Looks up the entry the recipe's current parameters hash to in each cache
+    tier; for a mapped or swept step, each instance's entry. Each line gives
+    the output, its format, the tier it was found in, the instance and its
+    item for a mapped step, and the location. Finding nothing is not an
+    error. Nothing is written.
+    """
+    parsed_inputs: dict[str, str] = {}
+    for item in inputs:
+        if "=" not in item:
+            _fail(f"--input value must be in NAME=VALUE format, got: {item!r}")
+        name, _, value = item.partition("=")
+        parsed_inputs[name.strip()] = value.strip()
+
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if run_config.source is not None and not as_json:
+        click.echo(f"Using run config: {run_config.source}")
+    user_cache_dir = (
+        user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
+    )
+    survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
+    try:
+        found = api.step_artifacts(
+            recipe,
+            step_id,
+            inputs=merged_inputs or None,
+            user_cache_dir=user_cache_dir,
+            survey_cache_dir=survey_cache_dir,
+            storage_options=run_config.storage_options,
+            base_dir=base_dir,
+        )
+    except Exception as exc:
+        _handle_recipe_errors(exc)
+        return
+
+    if as_json:
+        click.echo(json.dumps(found.to_dict(), indent=2, default=str))
+    else:
+        click.echo(found.format_text())

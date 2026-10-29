@@ -212,6 +212,38 @@ class PreviewResponse(BaseModel):
     warnings: list[str]
 
 
+class ArtifactModel(BaseModel):
+    output: str
+    url: str
+    format: str
+    tier: str
+    step_hash: str
+    instance_index: int | None
+    item: Any
+    created_at: str | None
+    run_id: str | None
+    size_bytes: int | None
+
+
+class EchogramBlock(BaseModel):
+    available: bool
+    reason: str | None
+    resolution: dict[str, Any] | None
+
+
+class StepArtifactsResponse(BaseModel):
+    step_id: str
+    step_hash: str
+    fanned_out: bool
+    held_by: list[str]
+    instances: int | None
+    found: int
+    marker: bool
+    note: str | None
+    artifacts: list[ArtifactModel]
+    echogram: EchogramBlock
+
+
 class LogEntry(BaseModel):
     seq: int
     time: float

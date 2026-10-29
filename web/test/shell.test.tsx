@@ -59,6 +59,7 @@ function noCommands(): Commands {
     showRunHistory: noop,
     refreshPreview: noop,
     toggleSurveyRegion: noop,
+    showEchogramForSelected: noop,
   };
 }
 
@@ -70,9 +71,10 @@ const STATE: MenuState = {
   direction: 'RIGHT',
   theme: 'dark',
   docsUrl: 'https://docs.example.org/',
-  run: { canRun: false, canRunSelected: false, isActive: false, isCancelling: false },
+  run: { canRun: false, canRunSelected: false, canRunStep: false, isActive: false, isCancelling: false },
   surveyRegion: true,
   textSize: 1.15,
+  echogramSelected: false,
 };
 
 afterEach(() => {
@@ -223,6 +225,7 @@ describe('buildMenus', () => {
       'cancel',
       'stop-now',
       'refresh-preview',
+      'show-echogram',
     ]);
     const menus = buildMenus(STATE, noCommands());
     const disabled = menus
@@ -262,20 +265,26 @@ describe('buildMenus', () => {
         .find((menu) => menu.label === 'Run')!
         .items.find((entry) => entry.id === id)!;
 
-    const idle = { ...STATE, sid: 's1', run: { canRun: true, canRunSelected: false, isActive: false, isCancelling: false } };
+    const idle = { ...STATE, sid: 's1', run: { ...STATE.run, canRun: true } };
     expect(item(idle, 'dry-run').enabled).toBe(true);
     expect(item(idle, 'run-all').enabled).toBe(true);
     expect(item(idle, 'run-to-selected').enabled).toBe(false);
     expect(item(idle, 'cancel').enabled).toBe(false);
     expect(item(idle, 'run-history').enabled).toBe(true);
 
-    const selected = { ...idle, run: { canRun: true, canRunSelected: true, isActive: false, isCancelling: false } };
+    const selected = { ...idle, run: { ...idle.run, canRunSelected: true, canRunStep: true } };
     expect(item(selected, 'run-to-selected').enabled).toBe(true);
     expect(item(selected, 'run-selected-only').enabled).toBe(true);
+    expect(item(selected, 'force-rerun-selected').enabled).toBe(true);
+    // A sub-recipe selected: Run to Selected runs through it; the step only items stay off.
+    const include = { ...idle, run: { ...idle.run, canRunSelected: true } };
+    expect(item(include, 'run-to-selected').enabled).toBe(true);
+    expect(item(include, 'run-selected-only').enabled).toBe(false);
+    expect(item(include, 'force-rerun-selected').enabled).toBe(false);
     item(selected, 'run-to-selected').action!();
     expect(commands.runToSelected).toHaveBeenCalledTimes(1);
 
-    const running = { ...idle, run: { canRun: false, canRunSelected: false, isActive: true, isCancelling: false } };
+    const running = { ...idle, run: { ...idle.run, canRun: false, isActive: true } };
     expect(item(running, 'run-all').enabled).toBe(false);
     expect(item(running, 'cancel').enabled).toBe(true);
     expect(item(idle, 'stop-now').enabled).toBe(false);
@@ -300,6 +309,17 @@ describe('buildMenus', () => {
     expect(byId('survey-region')).toMatchObject({ enabled: true, checked: true });
     byId('survey-region').action!();
     expect(commands.toggleSurveyRegion).toHaveBeenCalledTimes(1);
+    expect(byId('show-echogram')).toMatchObject({ label: 'Show Selected in Echogram', enabled: false });
+  });
+
+  it('enables Show Selected in Echogram with a step the eye icon shows on', () => {
+    const commands = noCommands();
+    commands.showEchogramForSelected = vi.fn();
+    const cache = buildMenus({ ...STATE, sid: 's1', echogramSelected: true }, commands).find((menu) => menu.label === 'Cache')!;
+    const item = cache.items.find((entry) => entry.id === 'show-echogram')!;
+    expect(item.enabled).toBe(true);
+    item.action!();
+    expect(commands.showEchogramForSelected).toHaveBeenCalledTimes(1);
   });
 
   it('lists the view options and panes in the View menu', () => {

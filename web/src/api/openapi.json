@@ -1,6 +1,129 @@
 {
   "components": {
     "schemas": {
+      "ArtifactModel": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "instance_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Index"
+          },
+          "item": {
+            "title": "Item"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "step_hash": {
+            "title": "Step Hash",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "output",
+          "url",
+          "format",
+          "tier",
+          "step_hash",
+          "instance_index",
+          "item",
+          "created_at",
+          "run_id",
+          "size_bytes"
+        ],
+        "title": "ArtifactModel",
+        "type": "object"
+      },
+      "EchogramBlock": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        },
+        "required": [
+          "available",
+          "reason",
+          "resolution"
+        ],
+        "title": "EchogramBlock",
+        "type": "object"
+      },
       "ErrorResponse": {
         "properties": {
           "details": {
@@ -1188,6 +1311,83 @@
           }
         },
         "title": "StartRunRequest",
+        "type": "object"
+      },
+      "StepArtifactsResponse": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactModel"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "echogram": {
+            "$ref": "#/components/schemas/EchogramBlock"
+          },
+          "fanned_out": {
+            "title": "Fanned Out",
+            "type": "boolean"
+          },
+          "found": {
+            "title": "Found",
+            "type": "integer"
+          },
+          "held_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Held By",
+            "type": "array"
+          },
+          "instances": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instances"
+          },
+          "marker": {
+            "title": "Marker",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "step_hash": {
+            "title": "Step Hash",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "step_hash",
+          "fanned_out",
+          "held_by",
+          "instances",
+          "found",
+          "marker",
+          "note",
+          "artifacts",
+          "echogram"
+        ],
+        "title": "StepArtifactsResponse",
         "type": "object"
       },
       "StepPreviewModel": {
@@ -3109,6 +3309,182 @@
         "summary": "Start Run",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/steps/{step}/artifacts": {
+      "get": {
+        "description": "Where a step's saved outputs are, and what of them the echogram pane draws.\n\n``output`` and ``var`` choose what to draw, and ``start`` and ``end`` (ISO\ntimes or nanoseconds) limit a mapped step to a time window. With\n``resolve=false`` only the artifacts are listed: nothing is read or\nmounted, and ``echogram.resolution`` is null.",
+        "operationId": "step_artifacts_api_sessions__sid__steps__step__artifacts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "step",
+            "required": true,
+            "schema": {
+              "title": "Step",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "output",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Output"
+            }
+          },
+          {
+            "in": "query",
+            "name": "var",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Var"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolve",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Resolve",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepArtifactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Step Artifacts",
+        "tags": [
+          "Sessions"
         ]
       }
     }

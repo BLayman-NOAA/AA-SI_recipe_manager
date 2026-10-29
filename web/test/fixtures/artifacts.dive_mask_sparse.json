@@ -1,0 +1,16 @@
+{
+ "step_id": "dive_mask_sparse",
+ "step_hash": "4ebac2f4f363b4f16e35132424f02d6c47b24134e3fc8901dc6fb37c60d69399",
+ "fanned_out": true,
+ "held_by": [],
+ "instances": 3,
+ "found": 0,
+ "marker": false,
+ "note": null,
+ "artifacts": [],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": null
+ }
+}

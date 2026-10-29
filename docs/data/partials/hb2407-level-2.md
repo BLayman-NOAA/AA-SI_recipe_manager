@@ -329,6 +329,10 @@
 
     - `output_logs_folder` path - Where the fallback writes its calibration flags. A temporary folder is used when omitted, which is what a per-file chain wants: several files falling back at once would otherwise race on one flags file.
 
+    - `waveform_mode` str - The waveform_mode the compute_sv step passes to echopype, "CW" or "BB". Selects the beam group whose channels are extracted, which matters for an EK80 file that mixes CW and FM channels: echopype calibrates one beam group at a time and needs parameters for exactly its channels. Leave unset to use the first beam group. A broadband channel with no matching calibration is an error, since the values the raw file records are CW only.
+
+    - `encode_mode` str - The encode_mode the compute_sv step passes to echopype, "complex" or "power". Set it together with waveform_mode, or leave both unset.
+
 
     *Runs once per `map_over` instance (fan-out loop).*
 

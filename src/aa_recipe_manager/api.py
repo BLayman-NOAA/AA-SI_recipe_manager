@@ -40,10 +40,31 @@ from aa_recipe_manager.validation import DryRunEngine, DryRunReport
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from aa_recipe_manager.artifacts import (  # noqa: F401  (re-exported)
+        ArtifactInfo,
+        StepArtifacts,
+    )
     from aa_recipe_manager.config import RunConfig
     from aa_recipe_manager.docs.site_data import SiteDataResult
     from aa_recipe_manager.events import CancelToken, EventSink
     from aa_recipe_manager.model.types import CheckpointMode, PipelineDAG, Recipe
+
+
+#: Names re-exported from modules imported on first use.
+_LAZY_EXPORTS = {
+    "ArtifactInfo": "aa_recipe_manager.artifacts",
+    "StepArtifacts": "aa_recipe_manager.artifacts",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Import a lazily re-exported name, such as ``ArtifactInfo``, on first use."""
+    module = _LAZY_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    return getattr(importlib.import_module(module), name)
 
 
 @dataclass
@@ -1318,6 +1339,65 @@ def step_hashes(
             payload=fingerprints.payloads[step_id],
         )
     return found
+
+
+def step_artifacts(
+    recipe: str | Path | Recipe,
+    step_id: str,
+    *,
+    inputs: dict[str, Any] | None = None,
+    user_cache_dir: str | Path | None = None,
+    survey_cache_dir: str | Path | None = None,
+    storage_options: dict[str, Any] | None = None,
+    fingerprint_cache: dict[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
+    instance_probe_limit: int = 32,
+) -> StepArtifacts:
+    """Where a step's checkpointed outputs are, per tier, without running anything.
+
+    The entry the recipe's current parameters hash to, in the first tier that
+    holds it; for a mapped or swept step one record per instance whose
+    sidecar a tier holds, in fan out order. Only sidecars are read (and the
+    cached ``map_over`` source of a fanned out step); nothing is written.
+
+    Args:
+        recipe: Recipe file path or pre-loaded Recipe object.
+        step_id: The step to look up.
+        inputs: Pipeline input values.
+        user_cache_dir: The user cache tier root. Without it nothing is held,
+            as for :func:`plan_preview`; the CLI defaults it as a run does.
+        survey_cache_dir: The survey cache tier root.
+        storage_options: fsspec options for remote tiers and inputs.
+        fingerprint_cache: A dict kept between calls that holds file and
+            folder fingerprints, so remote folders are listed once.
+        base_dir: Directory that relative local paths in the recipe are
+            checked and fingerprinted under (default: the working directory).
+        instance_probe_limit: Above this many instances, which are held is
+            read from one listing per tier instead of a probe per instance.
+
+    Returns:
+        A :class:`StepArtifacts` with one :class:`ArtifactInfo` per output of
+        each entry found.
+
+    Raises:
+        UnknownStepError: ``step_id`` is not a step of the recipe.
+    """
+    from aa_recipe_manager.artifacts import step_artifacts as _step_artifacts
+
+    dag = _load_dag(
+        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+    )
+    return _step_artifacts(
+        dag,
+        step_id,
+        inputs=inputs,
+        user_cache_dir=user_cache_dir,
+        survey_cache_dir=survey_cache_dir,
+        storage_options=storage_options,
+        fingerprint_cache=fingerprint_cache,
+        base_dir=base_dir,
+        instance_probe_limit=instance_probe_limit,
+    )
 
 
 def fingerprint_differences(

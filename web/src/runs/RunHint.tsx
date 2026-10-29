@@ -30,8 +30,10 @@ export function RunHint() {
   return (
     <div className="rc-run-hint" role="status">
       <span className="rc-row-main">
-        <span className="rc-mono">{hint.step}</span> is not a checkpoint in the recipe. It is saved now because it
-        is this run's target, but a later run that recomputes it will not save it again.
+        <span className="rc-mono">{hint.step}</span> is not a checkpoint in the recipe.{' '}
+        {hint.saved === false
+          ? `This run does not save it${hint.never ? ' (checkpoint: never in the recipe)' : ''}.`
+          : "It is saved now because it is this run's target, but a later run that recomputes it will not save it again."}
       </span>
       {alternative && (
         <button type="button" className="rc-button rc-small" onClick={runInstead}>

@@ -12,6 +12,13 @@ export interface RunHint {
   step: string;
   /** The nearest checkpointed step downstream, and how many more steps a run to it takes. */
   alternative: { step: string; extra: number } | null;
+  /**
+   * The run saves the step: its start preview pins it. False when the pin is
+   * refused, as for a step the recipe marks checkpoint: never. Absent means saved.
+   */
+  saved?: boolean;
+  /** The recipe marks the step checkpoint: never. */
+  never?: boolean;
 }
 
 export interface RunStore {

@@ -1,7 +1,7 @@
 // The docs site viewer draws the application's diagram: for the same graph and
-// view, every node's markup is the same in both hosts, the play icon aside
-// (the site cannot run). Both render with the flowStubs stand-ins and the grid
-// layout fallback.
+// view, every node's markup is the same in both hosts, the play and eye icons
+// aside (the site cannot run or draw echograms). Both render with the
+// flowStubs stand-ins and the grid layout fallback.
 import { act, cleanup, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Diagram } from '../src/diagram/Diagram';
@@ -19,12 +19,12 @@ const LEAF = 'inc:sub/leaf.yaml';
 
 installFlowStubs();
 
-/** The rendered nodes' markup, without the play icon. */
+/** The rendered nodes' markup, without the play and eye icons. */
 async function nodeMarkup(): Promise<string[]> {
   await laidOut();
   return [...document.querySelectorAll('.react-flow__node')].map((node) => {
     const copy = node.cloneNode(true) as HTMLElement;
-    copy.querySelectorAll('.rc-play').forEach((play) => play.remove());
+    copy.querySelectorAll('.rc-play, .rc-eye').forEach((tool) => tool.remove());
     return copy.outerHTML;
   });
 }
@@ -96,6 +96,7 @@ describe('the site viewer and the application draw the same nodes', () => {
     expect(app.length).toBeGreaterThan(3);
     expect(plays).toBeGreaterThan(0);
     expect(document.querySelector('.rc-play')).toBeNull();
+    expect(document.querySelector('.rc-eye')).toBeNull();
     expect(site).toEqual(app);
   });
 });

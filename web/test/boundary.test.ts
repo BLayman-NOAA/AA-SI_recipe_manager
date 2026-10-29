@@ -2,7 +2,7 @@
 // The docs site viewer mounts the shared diagram, inspector and YAML pieces
 // without a server. This walks their source imports (type only imports left
 // out, as the bundler drops them) and checks none reaches the app's query
-// client, run store, shell or dock.
+// client, run store, shell or dock, nor the echogram pane and EchogramGL.
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -18,12 +18,13 @@ const SHARED = [
   'src/yaml/findLine.ts',
 ];
 
-const FORBIDDEN_PACKAGES = [/^@tanstack\/react-query/, /^dockview/];
+const FORBIDDEN_PACKAGES = [/^@tanstack\/react-query/, /^dockview/, /^aa-si-echogram-gl/, /^zarrita/];
 const FORBIDDEN_FILES = [
   /^src\/api\/queries\.ts$/,
   /^src\/runs\/(store|usePreviewIntent|useRunControls|RunHint)\.tsx?$/,
   /^src\/shell\//,
   /^src\/recipes\//,
+  /^src\/echogram\//,
 ];
 
 const IMPORT = /^\s*(import|export)\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]/gm;
@@ -77,7 +78,7 @@ describe('the shared diagram, inspector and YAML pieces', () => {
     expect(packages).toContain('@xyflow/react');
   });
 
-  it('imports no query client, dock, run store, shell or recipes code', () => {
+  it('imports no query client, dock, run store, shell, recipes or echogram code', () => {
     const badPackages = [...packages].filter((name) => FORBIDDEN_PACKAGES.some((rule) => rule.test(name)));
     const badFiles = [...files].filter((file) => FORBIDDEN_FILES.some((rule) => rule.test(file)));
     expect(badPackages).toEqual([]);
@@ -101,5 +102,9 @@ describe('the shared diagram, inspector and YAML pieces', () => {
     expect(app.packages).toContain('@tanstack/react-query');
     expect(app.files).toContain('src/runs/store.ts');
     expect(app.files).toContain('src/shell/dock.ts');
+    expect(app.files).toContain('src/echogram/show.ts');
+    const pane = runtimeImports(['src/echogram/EchogramPane.tsx']);
+    expect(pane.packages).toContain('aa-si-echogram-gl');
+    expect(pane.packages).toContain('aa-si-echogram-gl/decode-worker?url');
   });
 });

@@ -22,6 +22,8 @@ RECIPES = [
     "slow.yaml",
     "failing.yaml",
     "paths.yaml",
+    "sv.yaml",
+    "sv_mapped.yaml",
 ]
 
 

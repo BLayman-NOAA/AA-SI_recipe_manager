@@ -1,0 +1,145 @@
+{
+ "step_id": "embed_results",
+ "step_hash": "43b98fa27c0fd9d2098868d2f183e2241a9eab2b242cc9945f48e7ec1c977798",
+ "fanned_out": false,
+ "held_by": [
+  "user"
+ ],
+ "instances": null,
+ "found": 1,
+ "marker": false,
+ "note": null,
+ "artifacts": [
+  {
+   "output": "ds_normalized",
+   "url": "C:/data/UC1/demo/user/embed_results/43b98fa2/043437-614996/zarr/ds_normalized.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "43b98fa27c0fd9d2098868d2f183e2241a9eab2b242cc9945f48e7ec1c977798",
+   "instance_index": null,
+   "item": null,
+   "created_at": "2026-10-14T04:35:46.792199+00:00",
+   "run_id": "043437-614996",
+   "size_bytes": null
+  },
+  {
+   "output": "gridded_results",
+   "url": "C:/data/UC1/demo/user/embed_results/43b98fa2/043437-614996/zarr/gridded_results.zarr",
+   "format": "zarr_da",
+   "tier": "user",
+   "step_hash": "43b98fa27c0fd9d2098868d2f183e2241a9eab2b242cc9945f48e7ec1c977798",
+   "instance_index": null,
+   "item": null,
+   "created_at": "2026-10-14T04:35:46.792199+00:00",
+   "run_id": "043437-614996",
+   "size_bytes": null
+  }
+ ],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": {
+   "mode": "artifacts",
+   "step": "embed_results",
+   "fannedOut": false,
+   "stepHash": "43b98fa27c0fd9d2098868d2f183e2241a9eab2b242cc9945f48e7ec1c977798",
+   "status": "found",
+   "outputs": [
+    {
+     "name": "ds_normalized",
+     "format": "zarr",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "ml_dataset_hdbscan_results_grid",
+       "kind": "labels",
+       "dims": [
+        "ping_time",
+        "depth"
+       ],
+       "channels": 1,
+       "samples": 1506
+      },
+      {
+       "name": "ml_dataset_valid_mask",
+       "kind": "mvbs",
+       "dims": [
+        "channel",
+        "ping_time",
+        "depth"
+       ],
+       "channels": 2,
+       "samples": 1506
+      },
+      {
+       "name": "Sv",
+       "kind": "mvbs",
+       "dims": [
+        "channel",
+        "ping_time",
+        "depth"
+       ],
+       "channels": 2,
+       "samples": 1506
+      }
+     ],
+     "default": "Sv"
+    },
+    {
+     "name": "gridded_results",
+     "format": "zarr_da",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "_da",
+       "kind": "labels",
+       "dims": [
+        "ping_time",
+        "depth"
+       ],
+       "channels": 1,
+       "samples": 1506
+      }
+     ],
+     "default": "_da"
+    }
+   ],
+   "output": "ds_normalized",
+   "createdAt": "2026-10-14T04:35:46.792199+00:00",
+   "entries": 1,
+   "kind": "dataset",
+   "var": "Sv",
+   "instances": [
+    {
+     "id": "43b98fa27c0fd9d2098868d2f183e2241a9eab2b242cc9945f48e7ec1c977798",
+     "item": null,
+     "index": null,
+     "store": "C:/data/UC1/demo/user/embed_results/43b98fa2/043437-614996/zarr/ds_normalized.zarr",
+     "tier": "user",
+     "stamp": "043437-614996@2026-10-14T04:35:46.792199+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "depth"
+     ],
+     "shape": [
+      2,
+      72,
+      1506
+     ],
+     "start": 1471186460000000000,
+     "end": 1471187170000000000,
+     "pings": 72,
+     "channels": 2,
+     "samples": 1506,
+     "bytes": 1146570,
+     "mount": "1cf69250fcfc902c"
+    }
+   ],
+   "skipped": [],
+   "empty": 0,
+   "bytes": 1146570
+  }
+ }
+}

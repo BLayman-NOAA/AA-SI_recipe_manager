@@ -69,6 +69,10 @@ beforehand. The third is from the HB1603 calibration example.
     Under `channels`, each channel is split into `segments`, one per stretch
     of time with the same settings, each saying which calibration was applied,
     or why none was, and the raw settings compared against the calibration's.
+    `calibration_files` describes each calibration the mapping uses. One this
+    run averaged or merged names the calibrations it was made from and how far
+    they disagree; a merge also lists which calibration supplies each band and
+    the `holes_hz` none of them covers.
 
 ## Reproducing a run
 

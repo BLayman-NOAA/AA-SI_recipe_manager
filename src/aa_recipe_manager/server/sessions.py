@@ -442,16 +442,32 @@ class SessionStore:
         Raises:
             SessionNotFound: No such session.
         """
+        return {
+            **self.cache_args(sid),
+            "targets": targets or None,
+            "only": only,
+            "force": force,
+            "force_steps": force_steps,
+        }
+
+    def cache_args(self, sid: str) -> dict[str, Any]:
+        """The recipe, inputs and folders a session's runs read and write.
+
+        Returns:
+            ``recipe``, ``inputs``, ``user_cache_dir``, ``survey_cache_dir``,
+            ``outputs_dir``, ``storage_options``, ``fingerprint_cache`` and
+            ``base_dir``, with relative folders resolved from the recipe's
+            folder as the run process resolves them.
+
+        Raises:
+            SessionNotFound: No such session.
+        """
         with self._lock:
             session = self._get(sid)
             config = session.resolved_run_config()
             return {
                 "recipe": session.origin,
                 "inputs": session.explicit_inputs() or None,
-                "targets": targets or None,
-                "only": only,
-                "force": force,
-                "force_steps": force_steps,
                 "user_cache_dir": config["user_cache_dir"],
                 "survey_cache_dir": config["survey_cache_dir"],
                 "outputs_dir": config["outputs_dir"],

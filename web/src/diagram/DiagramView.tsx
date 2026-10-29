@@ -28,6 +28,7 @@ import {
 } from 'react';
 import type { Graph, StepNode as GraphStep } from '../api/graph';
 import { notNeeded, type StepBadge } from '../runs/badges';
+import type { StepRunState } from '../runs/reducer';
 import { useViewStore } from '../state/view';
 import { selectStep } from './locate';
 import { RouteEdge } from './edges/RouteEdge';
@@ -226,8 +227,12 @@ export interface DiagramViewProps {
   inputSources?: Record<string, InputSource>;
   /** Run status marks by step id; absent draws none. */
   badges?: Record<string, StepBadge>;
+  /** The step states of the run going, for the sub-recipe boxes' progress; absent draws none. */
+  runSteps?: Record<string, StepRunState> | null;
   /** Run to a step from the play icon; absent hides the icon. */
   runToHere?: { run: (stepId: string) => void; enabled: boolean };
+  /** Draw a step's output in the echogram pane from the eye icon; absent hides the icon. */
+  echogram?: { show: (stepId: string) => void };
   /** Called on a step click after selection (the app opens a failed step's log). */
   onStepClick?: (step: GraphStep, badge: StepBadge | null) => void;
   /** Rendered between the diagram bar and the canvas (the app's sub-recipe banner and run hint). */
@@ -242,7 +247,9 @@ function DiagramCanvas({
   inputValues,
   inputSources,
   badges,
+  runSteps,
   runToHere,
+  echogram,
   onStepClick,
   notices,
   wheel = 'zoom',
@@ -262,6 +269,7 @@ function DiagramCanvas({
   const textSize = store((state) => state.textSize);
   const run = runToHere?.run;
   const canRun = runToHere?.enabled ?? false;
+  const showEchogram = echogram?.show;
   const flow = useReactFlow<FlowNode>();
   const [center, setCenter] = useState<{ id: string; count: number } | null>(null);
   const fittedScope = useRef('');
@@ -285,8 +293,21 @@ function DiagramCanvas({
         expandedSteps,
         expandedBoxes,
         badges,
+        runSteps,
       }),
-    [graph, drill, connected, selected, findQuery, inputValues, inputSources, expandedSteps, expandedBoxes, badges],
+    [
+      graph,
+      drill,
+      connected,
+      selected,
+      findQuery,
+      inputValues,
+      inputSources,
+      expandedSteps,
+      expandedBoxes,
+      badges,
+      runSteps,
+    ],
   );
   const layout = useLayout(view, direction, textSize);
 
@@ -301,6 +322,7 @@ function DiagramCanvas({
       direction,
       runToHere: run,
       canRun,
+      showEchogram,
       drillInto: state.drillInto,
       select: state.select,
       toggleStepExpanded: (id) => {
@@ -312,7 +334,7 @@ function DiagramCanvas({
         state.toggleBoxExpanded(id);
       },
     };
-  }, [store, direction, flow, run, canRun]);
+  }, [store, direction, flow, run, canRun, showEchogram]);
 
   // Expand or collapse everything in view when asked (the view is read then,
   // not on every change), then fit each layout that follows for a moment.

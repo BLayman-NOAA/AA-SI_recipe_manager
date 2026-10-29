@@ -35,6 +35,15 @@
   --rc-yaml-comment: #75715e;
   --rc-yaml-punct: #f8f8f2;
   --rc-yaml-highlight: #49483e;
+  /* The echogram pane's EchogramGL panel inherits these */
+  --egl-background: var(--rc-bg);
+  --egl-bar: var(--rc-panel);
+  --egl-text: var(--rc-fg);
+  --egl-line: var(--rc-line);
+  --egl-muted: var(--rc-muted);
+  --egl-warning: var(--rc-warning);
+  --egl-readout: color-mix(in srgb, var(--rc-raised) 90%, transparent);
+  --egl-color-scheme: dark;
 }
 
 [data-theme='light'] {
@@ -70,6 +79,15 @@
   --rc-yaml-comment: #8a8670;
   --rc-yaml-punct: #272822;
   --rc-yaml-highlight: #ece9cf;
+  /* The echogram pane's EchogramGL panel inherits these */
+  --egl-background: var(--rc-bg);
+  --egl-bar: var(--rc-panel);
+  --egl-text: var(--rc-fg);
+  --egl-line: var(--rc-line);
+  --egl-muted: var(--rc-muted);
+  --egl-warning: var(--rc-warning);
+  --egl-readout: color-mix(in srgb, var(--rc-raised) 90%, transparent);
+  --egl-color-scheme: light;
 }
 
 :root {

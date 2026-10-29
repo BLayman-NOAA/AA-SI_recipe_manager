@@ -99,10 +99,11 @@ outputs:
     required: false
     description: >
       {"channels": [...]}, the standardized channels the mapping was built
-      from plus any record averaged from several of them, each carrying its
-      _calibration_file_key. Every key in mapping_dict names one of them, so
-      this, not the standardization step's payload, is what to hand to
-      save_calibration_archive once an average has been chosen. JSON-safe.
+      from plus any record averaged or merged from several of them, each
+      carrying its _calibration_file_key. Every key in mapping_dict names one
+      of them, so this, not the standardization step's payload, is what to
+      hand to save_calibration_archive once an average or merge has been
+      chosen. JSON-safe.
 params:
   output_base:
     type: path
@@ -151,17 +152,26 @@ params:
     required: false
     description: >
       Conflict decisions supplied up front, mapping a conflict id from a
-      previous run's conflicts output to the calibration key to keep. A list
-      of candidate keys in place of one key averages them: the average is
-      written as a new single-channel file with is_averaged set, the
+      previous run's conflicts output to a choice. A choice is the
+      calibration key to keep; a list of candidate keys, or
+      {"average": [keys]}, to average them; or {"merge": [items]} to merge
+      them as the EK80 software does, where an item is a key or an
+      {"average": [keys]}. A merge takes the calibrations in the order given:
+      the first is used wherever its sphere is valid and each later one fills
+      only what the earlier ones leave, so the sphere may differ. Frequencies
+      none of them covers stay uncovered, which is reported as a warning and
+      in the provenance, never refused. An average or merge is written as a
+      new single-channel file with is_averaged or is_merged set, the
       conflict's channels are mapped to it, and the candidates it was made
-      from are set aside. Only calibrations of the same transducer, at the
-      same settings and with the same sphere, can be averaged. Applied in
-      every conflict_resolution mode before that mode's handler runs, so a
-      partial map resolves what it covers and leaves the rest to be reported,
-      prompted for, or raised on. An unknown conflict id, a key that is not
-      one of that conflict's candidates, or candidates that cannot be
-      averaged, is an error, and nothing is changed.
+      from are set aside; an average made only to be merged is not written.
+      Only calibrations of the same transducer, at the same settings and with
+      the same sphere, can be averaged; only FM calibrations can be merged.
+      Applied in every conflict_resolution mode before that mode's handler
+      runs, so a partial map resolves what it covers and leaves the rest to
+      be reported, prompted for, or raised on. An unknown conflict id, a
+      malformed choice, a key that is not one of that conflict's candidates,
+      or candidates that cannot be combined, is an error, and nothing is
+      changed.
   tolerances:
     type: dict
     required: false
@@ -197,9 +207,9 @@ params:
     type: str
     required: false
     description: >
-      Recorded as the author of any record averaged while resolving
-      conflicts. When omitted, the averaged calibrations' author is kept if
-      they share one.
+      Recorded as the author of any record averaged or merged while
+      resolving conflicts. When omitted, the combined calibrations' author is
+      kept if they share one.
   keep_unused:
     type: bool
     required: false
@@ -214,8 +224,8 @@ params:
     default: true
     description: >
       Remap the returned dictionaries to compact calibration keys when they
-      are not already the single-channel file names, and give averaged
-      records compact keys. Should match the setting the single-channel files
+      are not already the single-channel file names, and give averaged and
+      merged records compact keys. Should match the setting the single-channel files
       were written with.
   verbose:
     type: bool

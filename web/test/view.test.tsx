@@ -32,7 +32,7 @@ describe('createViewStore', () => {
   });
 
   it('starts from the default preferences, with valid stored values over them', () => {
-    expect(createViewStore().getState()).toMatchObject({ direction: 'RIGHT', textSize: 1.15 });
+    expect(createViewStore().getState()).toMatchObject({ direction: 'RIGHT', textSize: 1.3 });
     window.localStorage.setItem('rc.site.view', JSON.stringify({ textSize: 1, direction: 'sideways' }));
     const store = createViewStore({ storageKey: 'rc.site.view' });
     expect(store.getState()).toMatchObject({ direction: 'RIGHT', textSize: 1 });

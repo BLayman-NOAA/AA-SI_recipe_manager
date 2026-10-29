@@ -736,13 +736,31 @@
           "default": null,
           "set": false,
           "value": null
+        },
+        {
+          "name": "waveform_mode",
+          "type": "str",
+          "units": null,
+          "description": "The waveform_mode the compute_sv step passes to echopype, \"CW\" or \"BB\". Selects the beam group whose channels are extracted, which matters for an EK80 file that mixes CW and FM channels: echopype calibrates one beam group at a time and needs parameters for exactly its channels. Leave unset to use the first beam group. A broadband channel with no matching calibration is an error, since the values the raw file records are CW only.",
+          "default": null,
+          "set": false,
+          "value": null
+        },
+        {
+          "name": "encode_mode",
+          "type": "str",
+          "units": null,
+          "description": "The encode_mode the compute_sv step passes to echopype, \"complex\" or \"power\". Set it together with waveform_mode, or leave both unset.",
+          "default": null,
+          "set": false,
+          "value": null
         }
       ],
       "outputs": [
         {
           "name": "cal_params",
           "type": "dict",
-          "description": "Calibration parameters keyed by channel (gain_correction, sa_correction, EBA)",
+          "description": "Calibration parameters (gain_correction, sa_correction, EBA, beam widths and angle offsets), one value per channel. When a channel's calibration is frequency dependent (FM), each per-frequency parameter is instead an xarray DataArray with dims (cal_channel_id, cal_frequency), the form echopype interpolates at each ping's centre frequency; such an output is checkpointed as a pickle. An FM record's single equivalent beam angle, beam width or angle sensitivity is its nominal-frequency value and is carried across the band as echopype carries its own.",
           "disposed": false,
           "many": false,
           "semantic": null

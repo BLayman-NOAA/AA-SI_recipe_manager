@@ -34,7 +34,11 @@ A channel reviewed in phase 1 can be edited or dropped and passed back as
 `override_channels`, which rewrites the standardized folder to match, so the
 archived files are the ones the mapping was built from. With
 `conflict_resolution: report`, conflicts are returned rather than raised;
-re-run with `calibration_choices` to settle them.
+re-run with `calibration_choices` to settle them. A choice keeps one
+candidate, averages several, or merges FM calibrations in priority order as
+the EK80 software does: the first is used wherever its sphere is valid and the
+later ones fill the rest. A merge that leaves part of the band uncovered is
+applied with a warning and recorded in the provenance.
 
 --8<-- "data/partials/calibration-mapping.md"
 

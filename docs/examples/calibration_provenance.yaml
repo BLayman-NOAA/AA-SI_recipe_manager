@@ -13,6 +13,8 @@ summary:
   channels_multiplexed: 0
   calibration_files_loaded: 5
   calibration_files_used: 5
+  calibration_files_averaged: 0
+  calibration_files_merged: 0
 tolerances:
   defaults:
     frequency: 1.0
@@ -155,7 +157,8 @@ channels:
 calibration_files:
   2016-07-18__120000__config-1:
     channel: GPT 120 kHz 0090720580f1 3-1 ES120-7
-    calibration_date: '2016-07-18'
+    calibration_date:
+    - '2016-07-18'
     frequency_hz:
     - 120000.0
     measured_at:
@@ -165,9 +168,12 @@ calibration_files:
       transmit_duration_nominal: 0.001024
     source_filenames:
     - HBB_120kHz_18July2016.cal
+    is_averaged: false
+    is_merged: false
   2016-07-18__18000__config-1:
     channel: GPT  18 kHz 009072056b0e 2-1 ES18-11
-    calibration_date: '2016-07-18'
+    calibration_date:
+    - '2016-07-18'
     frequency_hz:
     - 18000.0
     measured_at:
@@ -177,9 +183,12 @@ calibration_files:
       transmit_duration_nominal: 0.001024
     source_filenames:
     - HBB_018kHz_18July2016.cal
+    is_averaged: false
+    is_merged: false
   2016-07-18__200000__config-1:
     channel: GPT 200 kHz 009072034261 4-1 ES200-7
-    calibration_date: '2016-07-18'
+    calibration_date:
+    - '2016-07-18'
     frequency_hz:
     - 200000.0
     measured_at:
@@ -189,9 +198,12 @@ calibration_files:
       transmit_duration_nominal: 0.001024
     source_filenames:
     - HBB_200kHz_18July2016.cal
+    is_averaged: false
+    is_merged: false
   2016-07-18__38000__config-1:
     channel: GPT  38 kHz 0090720346bc 1-1 ES38B
-    calibration_date: '2016-07-18'
+    calibration_date:
+    - '2016-07-18'
     frequency_hz:
     - 38000.0
     measured_at:
@@ -201,9 +213,12 @@ calibration_files:
       transmit_duration_nominal: 0.001024
     source_filenames:
     - HBB_038kHz_18July2016.cal
+    is_averaged: false
+    is_merged: false
   2016-07-18__70000__config-1:
     channel: GPT  70 kHz 00907206042f 5-1 ES70-7C
-    calibration_date: '2016-07-18'
+    calibration_date:
+    - '2016-07-18'
     frequency_hz:
     - 70000.0
     measured_at:
@@ -213,3 +228,5 @@ calibration_files:
       transmit_duration_nominal: 0.001024
     source_filenames:
     - HBB_070kHz_18July2016.cal
+    is_averaged: false
+    is_merged: false

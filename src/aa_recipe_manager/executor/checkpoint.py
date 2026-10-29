@@ -2144,19 +2144,47 @@ class CheckpointManager:
             )
         return loaded
 
-    def artifact_urls(self, step_id: str) -> dict[str, str]:
-        """Absolute artifact locations for a cached step (for run manifests)."""
-        meta = self._read_meta(step_id)
+    def artifact_urls(
+        self, step_id: str, *, instance_hash: str | None = None
+    ) -> dict[str, str]:
+        """Absolute artifact locations for a cached step (for run manifests).
+
+        Args:
+            step_id: The step.
+            instance_hash: One instance's hash for a fanned out step (default:
+                the step's current hash).
+
+        Returns:
+            Output name to location, empty when there is no entry.
+        """
+        meta = self._read_meta(step_id, instance_hash)
         if meta is None:
             return {}
-        return {
-            out_name: str(self._artifact_location(meta, entry["path"]))
-            for out_name, entry in meta.outputs.items()
-        }
+        return {name: self.artifact_url(meta, name) for name in meta.outputs}
 
-    def read_meta(self, step_id: str) -> _StepCacheMeta | None:
-        """Public tolerant sidecar read (None when absent/corrupt)."""
-        return self._read_meta(step_id)
+    def artifact_url(self, meta: _StepCacheMeta, output: str) -> str:
+        """Absolute location of one output recorded in a sidecar.
+
+        Args:
+            meta: The entry's sidecar, as :meth:`read_meta` returns it.
+            output: The output name.
+
+        Returns:
+            A local path or a URL, as :class:`StorageLocation` spells it.
+        """
+        return str(self._artifact_location(meta, meta.outputs[output]["path"]))
+
+    def read_meta(
+        self, step_id: str, step_hash: str | None = None
+    ) -> _StepCacheMeta | None:
+        """Public tolerant sidecar read (None when absent/corrupt).
+
+        Args:
+            step_id: The step.
+            step_hash: The entry's hash, an instance hash for one instance of
+                a fanned out step (default: the step's current hash).
+        """
+        return self._read_meta(step_id, step_hash)
 
     def recorded_artifacts(self, step_id: str) -> list[str] | None:
         """User-facing artifact paths recorded for a hash-matching entry.

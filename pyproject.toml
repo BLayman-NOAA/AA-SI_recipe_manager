@@ -62,6 +62,13 @@ server = [
     # Run process liveness checks and process tree kills.
     "psutil>=5.9",
 ]
+# The client's echogram pane: EchogramGL's catalog and data routes, which
+# `aa-recipe serve` mounts at /echogram. Pinned to the EchogramGL commit whose
+# web build is packed into web/vendor/, so the Python and TypeScript halves
+# match; the same reference is in all-builtin-specs.
+echogram = [
+    "aa-si-echogram-gl[server] @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@main",
+]
 # Google Cloud Storage backend for checkpoint cache / exe_temp / outputs on
 # gs:// URLs. gcsfs registers the fsspec "gs" protocol; credentials come from
 # Application Default Credentials (gcloud auth application-default login).
@@ -98,7 +105,7 @@ all-builtin-specs = [
     "aa-si-calibration @ git+https://github.com/BLayman-NOAA/AA-SI_calibration.git",
     "aa-si-ml @ git+https://github.com/BLayman-NOAA/AA-SI_ML.git",
     "aa-si-visualization @ git+https://github.com/BLayman-NOAA/AA-SI_Visualization.git",
-    "aa-si-echogram-gl @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git",
+    "aa-si-echogram-gl @ git+https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git@main",
     "ipykernel",
     "ipywidgets",
 ]

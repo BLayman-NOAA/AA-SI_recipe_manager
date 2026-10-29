@@ -10,6 +10,7 @@ import { InspectorBody } from '../src/inspector/InspectorBody';
 import { useRunStore } from '../src/runs/store';
 import { useSessionStore } from '../src/state/session';
 import { createViewStore, useView, ViewStoreContext } from '../src/state/view';
+import artifactsFixture from './fixtures/artifacts.sv_mapped.json';
 import { declaredGraph, makeSession, mockApi, nestedInputGraph, renderWithClient, withSubGraph } from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
@@ -84,6 +85,29 @@ describe('Inspector', () => {
     expect(screen.getByText('items')).toBeInTheDocument();
     expect(screen.getByText('last run').closest('tr')).toHaveTextContent('not run');
     expect(screen.getByText('not computed')).toBeInTheDocument();
+  });
+
+  it('lists the saved files when asked, without resolving them for the echogram', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockApi({
+      [`GET /api/sessions/${SID}`]: makeSession(),
+      [`GET /api/sessions/${SID}/steps/seed/artifacts?resolve=false`]: {
+        ...artifactsFixture,
+        step_id: 'seed',
+        echogram: { available: true, reason: null, resolution: null },
+      },
+    });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+    const summary = await screen.findByText('Saved files');
+    // A list output: no eye icon, so no echogram button either.
+    expect(screen.queryByRole('button', { name: 'Show in echogram' })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/artifacts'))).toBe(false);
+    await user.click(summary);
+    expect(document.querySelector<HTMLDetailsElement>('.rc-saved-files')?.open).toBe(true);
+    expect(await screen.findAllByText(/ds_Sv #/)).toHaveLength(3);
+    expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/${SID}/steps/seed/artifacts?resolve=false`, expect.anything());
   });
 
   it('shows the cache status from the preview and the run shown, and opens a failed step log', async () => {

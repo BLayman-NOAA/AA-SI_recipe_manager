@@ -1,9 +1,10 @@
 /** The application's diagram: the open session's graph with its run marks and run controls. */
 import { useMemo } from 'react';
 import { fieldSources } from '../api/fields';
-import { GRAPH_SCHEMA, stepNodes } from '../api/graph';
+import { findStep, GRAPH_SCHEMA, stepNodes } from '../api/graph';
 import type { SessionDocument } from '../api/models';
 import { useCurrentSession, useOpeningRecipe } from '../api/queries';
+import { showEchogram } from '../echogram/show';
 import { stepBadges } from '../runs/badges';
 import { RunHint } from '../runs/RunHint';
 import { openStepLog, shownRun, shownRunPreview, useRunStore } from '../runs/store';
@@ -20,13 +21,25 @@ function SessionDiagram({ session }: { session: SessionDocument }) {
   const runSteps = useRunStore((state) => shownRun(state)?.steps ?? null);
   const runLive = useRunStore((state) => shownRun(state)?.finished === null);
   const runPreview = useRunStore(shownRunPreview);
+  const runTargets = useRunStore((state) => shownRun(state)?.started?.targets);
   const { runToHere, canRun } = useRunControlsContext();
   // Badges are node data only: useLayout's key ignores them, so a run never moves the nodes.
   const badges = useMemo(
-    () => stepBadges(graph, preview, runSteps && { steps: runSteps, live: runLive, preview: runPreview }),
-    [graph, preview, runSteps, runLive, runPreview],
+    () =>
+      stepBadges(graph, preview, runSteps && { steps: runSteps, live: runLive, preview: runPreview, targets: runTargets }),
+    [graph, preview, runSteps, runLive, runPreview, runTargets],
   );
   const run = useMemo(() => ({ run: runToHere, enabled: canRun }), [runToHere, canRun]);
+  const sid = session.id;
+  const echogram = useMemo(
+    () => ({
+      show: (stepId: string) => {
+        const step = findStep(graph, stepId);
+        if (step) showEchogram(sid, step);
+      },
+    }),
+    [sid, graph],
+  );
   const declared = session.inputs.declared;
   const inputSources = useMemo(() => fieldSources(declared), [declared]);
   return (
@@ -36,7 +49,9 @@ function SessionDiagram({ session }: { session: SessionDocument }) {
       inputValues={session.inputs.values}
       inputSources={inputSources}
       badges={badges}
+      runSteps={runLive ? runSteps : null}
       runToHere={run}
+      echogram={echogram}
       onStepClick={(step, badge) => {
         if (badge?.actual === 'failed') openStepLog(step.id);
       }}

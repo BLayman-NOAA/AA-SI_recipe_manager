@@ -330,7 +330,7 @@ def plan_preview(
             dag, mode=checkpoint_mode, extra_step_ids=checkpoint_steps
         )
     forced = set(dag.topological_order) if force else set(plan.forced)
-    probe = _Prober(store, instance_probe_limit)
+    probe = Prober(store, instance_probe_limit)
     previews: dict[str, StepPreview] = {}
 
     chain_members: set[str] = set()
@@ -485,7 +485,7 @@ def _plain_preview(
     )
 
 
-class _Prober:
+class Prober:
     """Ask the cache tiers what they hold, in parallel for remote tiers."""
 
     def __init__(self, store: TieredCheckpointStore | None, limit: int) -> None:
@@ -554,7 +554,7 @@ class _Prober:
         )
 
 
-def _map_source_items(
+def map_source_items(
     dag: PipelineDAG, source_ref: str, store: TieredCheckpointStore | None
 ) -> list[Any] | None:
     """The cached fan out source as a list, or None when it is not known."""
@@ -577,6 +577,60 @@ def _map_source_items(
     return value if isinstance(value, list) else [value]
 
 
+def source_label(source_ref: str) -> str:
+    """The step a ``map_over`` reference names, for messages."""
+    return (parse_ref(source_ref) or (source_ref,))[0]
+
+
+def chain_discriminators(
+    dag: PipelineDAG,
+    source_ref: str | None,
+    members: list[str],
+    store: TieredCheckpointStore | None,
+) -> list[dict[str, Any]] | None:
+    """Each instance's discriminator for one mapped or swept chain, in order.
+
+    Built as the run builds them: one per mapped item, times one per sweep
+    combination of the chain's swept member.
+
+    Args:
+        dag: The pipeline.
+        source_ref: The chain's ``map_over`` reference, or None for a sweep.
+        members: The chain members to consider.
+        store: The cache tiers the fan out source is read from.
+
+    Returns:
+        The discriminators, or None when the fan out source is not cached.
+    """
+    if source_ref is not None:
+        items = map_source_items(dag, source_ref, store)
+        if items is None:
+            return None
+    else:
+        items = [None]
+    swept = [dag.nodes[m] for m in members if dag.nodes[m].is_swept]
+    combos: list[dict[str, Any] | None] = (
+        list(expand_sweep(swept[0].sweep_declaration)) if swept else [None]
+    )
+
+    discriminators = []
+    for item in items:
+        for combo in combos:
+            kwargs: dict[str, Any] = {
+                "index": len(discriminators),
+                "param_overrides": combo,
+            }
+            if source_ref is not None:
+                kwargs["item"] = item
+            discriminators.append(instance_discriminator(**kwargs))
+    return discriminators
+
+
+# Former private names, kept for existing imports.
+_Prober = Prober
+_map_source_items = map_source_items
+
+
 def _chain_previews(
     dag: PipelineDAG,
     source_ref: str | None,
@@ -584,7 +638,7 @@ def _chain_previews(
     plan: Any,
     hashes: dict[str, str],
     forced: set[str],
-    probe: _Prober,
+    probe: Prober,
 ) -> dict[str, StepPreview]:
     """Predict the members of one mapped or swept chain, instance by instance.
 
@@ -608,37 +662,19 @@ def _chain_previews(
             )
             for mid in members
         }
-    if source_ref is not None:
-        items = _map_source_items(dag, source_ref, store)
-        if items is None:
-            src = (parse_ref(source_ref) or (source_ref,))[0]
-            return {
-                mid: StepPreview(
-                    step_id=mid,
-                    step_hash=hashes.get(mid, ""),
-                    held_by=[],
-                    planned=planned_alone(mid, "unknown"),
-                    note=f"instances are known once {src} has run",
-                )
-                for mid in members
-            }
-    else:
-        items = [None]
-    swept = [dag.nodes[m] for m in members if dag.nodes[m].is_swept]
-    combos: list[dict[str, Any] | None] = (
-        list(expand_sweep(swept[0].sweep_declaration)) if swept else [None]
-    )
-
-    discriminators = []
-    for item in items:
-        for combo in combos:
-            kwargs: dict[str, Any] = {
-                "index": len(discriminators),
-                "param_overrides": combo,
-            }
-            if source_ref is not None:
-                kwargs["item"] = item
-            discriminators.append(instance_discriminator(**kwargs))
+    discriminators = chain_discriminators(dag, source_ref, members, store)
+    if discriminators is None:
+        src = source_label(source_ref)
+        return {
+            mid: StepPreview(
+                step_id=mid,
+                step_hash=hashes.get(mid, ""),
+                held_by=[],
+                planned=planned_alone(mid, "unknown"),
+                note=f"instances are known once {src} has run",
+            )
+            for mid in members
+        }
     n = len(discriminators)
 
     # held[mid][tier][i]: whether ``tier`` holds instance i of ``mid``.

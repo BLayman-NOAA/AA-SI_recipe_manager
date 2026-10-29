@@ -72,6 +72,8 @@ export interface RunState {
   logs: LogEntry[];
   warnings: WarningData[];
   finished: RunFinishedData | null;
+  /** When run_finished was written, seconds since 1970 as the server stamps events. */
+  finishedAt: number | null;
 }
 
 const TERMINAL: ReadonlySet<StepStatus> = new Set([
@@ -115,6 +117,7 @@ export function initialRunState(runId: string): RunState {
     logs: [],
     warnings: [],
     finished: null,
+    finishedAt: null,
   };
 }
 
@@ -245,6 +248,7 @@ class Draft {
         this.addWarning(event.data as unknown as WarningData);
         break;
       case 'run_finished':
+        state.finishedAt = event.time;
         this.runFinished(event.data as unknown as RunFinishedData);
         break;
     }

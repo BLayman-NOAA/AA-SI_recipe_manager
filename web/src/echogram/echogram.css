@@ -1,0 +1,96 @@
+/* The echogram pane. The panel's own look is EchogramGL's, scoped under
+   .egl-panel; its colors come from the --egl-* tokens in theme.css. */
+
+.rc-echogram {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--rc-bg);
+}
+
+.rc-echogram-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  max-height: 40%;
+  overflow: auto;
+}
+
+.rc-echogram-bar:empty {
+  display: none;
+}
+
+.rc-echogram-layer {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rc-echogram-layer:hover .rc-row-title {
+  text-decoration: underline;
+}
+
+.rc-echogram-tier {
+  color: var(--rc-muted);
+  font-weight: 400;
+}
+
+.rc-echogram-chooser,
+.rc-echogram-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rc-echogram-chooser .rc-input {
+  width: auto;
+  max-width: 100%;
+}
+
+.rc-echogram-message {
+  color: var(--rc-muted);
+}
+
+.rc-echogram-starting {
+  padding: 8px;
+}
+
+.rc-echogram-unavailable {
+  padding: 16px;
+  color: var(--rc-fg);
+}
+
+.rc-echogram-unavailable h3 {
+  margin: 0 0 8px;
+  color: var(--rc-warning);
+}
+
+.rc-echogram-host {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The inspector's list of saved files. */
+.rc-saved-files {
+  margin-top: 6px;
+}
+
+.rc-saved-files summary {
+  cursor: pointer;
+  color: var(--rc-muted);
+}
+
+.rc-artifact-url {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

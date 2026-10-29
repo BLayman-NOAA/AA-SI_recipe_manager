@@ -17,6 +17,7 @@ from aa_recipe_manager.server.errors import (
     InvalidRecipe,
     RunNotActive,
     RunNotFound,
+    StepNotFound,
     translate_error,
 )
 
@@ -79,3 +80,10 @@ def test_invalid_recipe_is_422_with_its_problems():
     assert status == 422
     assert body["error"] == "InvalidRecipe"
     assert body["details"] == problems
+
+
+def test_step_not_found_is_404_naming_the_step():
+    status, body = translate_error(StepNotFound("unknown step id(s): 'x'", "x"))
+    assert status == 404
+    assert body["error"] == "StepNotFound"
+    assert body["step_id"] == "x"

@@ -341,10 +341,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/steps/{step}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Step Artifacts
+         * @description Where a step's saved outputs are, and what of them the echogram pane draws.
+         *
+         *     ``output`` and ``var`` choose what to draw, and ``start`` and ``end`` (ISO
+         *     times or nanoseconds) limit a mapped step to a time window. With
+         *     ``resolve=false`` only the artifacts are listed: nothing is read or
+         *     mounted, and ``echogram.resolution`` is null.
+         */
+        get: operations["step_artifacts_api_sessions__sid__steps__step__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ArtifactModel */
+        ArtifactModel: {
+            /** Created At */
+            created_at: string | null;
+            /** Format */
+            format: string;
+            /** Instance Index */
+            instance_index: number | null;
+            /** Item */
+            item: unknown;
+            /** Output */
+            output: string;
+            /** Run Id */
+            run_id: string | null;
+            /** Size Bytes */
+            size_bytes: number | null;
+            /** Step Hash */
+            step_hash: string;
+            /** Tier */
+            tier: string;
+            /** Url */
+            url: string;
+        };
+        /** EchogramBlock */
+        EchogramBlock: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Resolution */
+            resolution: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** ErrorResponse */
         ErrorResponse: {
             /** Details */
@@ -727,6 +786,28 @@ export interface components {
              * @default []
              */
             targets: string[];
+        };
+        /** StepArtifactsResponse */
+        StepArtifactsResponse: {
+            /** Artifacts */
+            artifacts: components["schemas"]["ArtifactModel"][];
+            echogram: components["schemas"]["EchogramBlock"];
+            /** Fanned Out */
+            fanned_out: boolean;
+            /** Found */
+            found: number;
+            /** Held By */
+            held_by: string[];
+            /** Instances */
+            instances: number | null;
+            /** Marker */
+            marker: boolean;
+            /** Note */
+            note: string | null;
+            /** Step Hash */
+            step_hash: string;
+            /** Step Id */
+            step_id: string;
         };
         /** StepPreviewModel */
         StepPreviewModel: {
@@ -2131,6 +2212,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    step_artifacts_api_sessions__sid__steps__step__artifacts_get: {
+        parameters: {
+            query?: {
+                output?: string | null;
+                var?: string | null;
+                start?: string | null;
+                end?: string | null;
+                resolve?: boolean;
+            };
+            header?: never;
+            path: {
+                sid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StepArtifactsResponse"];
                 };
             };
             /** @description Bad Request */
