@@ -2,13 +2,10 @@
 # sub_recipes/processing_lvl_1_per_file.yaml. Its first two steps moved to level
 # 0 and extract_cal_params to level 2, to match the HB1603 levels.
 
-# Processing level 1 (per file): raw ingest.
-#
-#   read_raw -> combine_raw
-#
-# The per-file fan-out starts here. Each raw file runs every step through
-# apply_mask in level 2 as its own cached instance, so adding a file later runs
-# only that file. Include processing_lvl_2_per_file.yaml immediately after this.
+# Processing level 1, per file: raw ingest.
+# Unlike processing_lvl_1_parallel.yaml this never combines; files stay split
+# until the fan-in in processing_lvl_2_per_file.yaml, which must be included
+# immediately after this level.
 
 recipe:
   name: "processing_lvl_1_per_file"
@@ -21,17 +18,25 @@ inputs:
   sonar_model:
     type: str
     default: "EK80"
+    description: >
+      Echosounder model as echopype names it, such as "EK60" or "EK80".
   ping_time_chunk:
     type: int
     default: 10000
     description: >
-      Ping-time chunk length of each file's EchoData and checkpoint. The default
-      keeps each file in one chunk; lower it if a file does not fit in memory.
+      Chunk length along ping_time of each file's EchoData and its checkpoint.
+      Larger chunks mean fewer, faster remote writes but more memory per chunk.
+      The default keeps each file in one chunk; lower it if a file does not fit
+      in memory.
 
 steps:
 
-  # Never checkpointed: its output is a temporary store path deleted at the end
-  # of the run.
+  # Per-file fan-out starts here. Every step through apply_mask in
+  # processing_lvl_2_per_file.yaml shares this map_over source, so each file
+  # runs the chain as its own instance under its own hash.
+
+  # checkpoint: never: the output is an exe_temp path deleted at the end of
+  # the run, so a cached copy would dangle.
   - id: read_raw
     op: read_raw_files
     map_over: ${initial_setup.raw_file_paths}
@@ -41,13 +46,13 @@ steps:
         scheduler: processes
     inputs:
       raw_file_paths:
-        - ${_item}          # a single-element list: just this file
+        - ${_item}          # one-element list: just this file
     params:
       sonar_model: ${inputs.sonar_model}
       include_bot: false
       intermediate_format: "zarr"
 
-  # Opens this file's store as an EchoData object. One file only, so not a fan-in.
+  # Not a fan-in: given a one-file list, combine_raw_files just opens it.
   - id: combine_raw
     op: combine_raw_files
     map_over: ${initial_setup.raw_file_paths}

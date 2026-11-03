@@ -1,18 +1,8 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline (experimental seafloor)
+# processing_levels_pipeline.yaml with level 2 from
+# sub_recipes/processing_lvl_2_experimental.yaml, which picks the seafloor by
+# HDBSCAN clustering; see that file's header. It needs its own environment:
 #
-# Same as processing_levels_pipeline.yaml, but level 2 comes from
-# processing_lvl_2_experimental.yaml, which detects the seafloor by clustering
-# the Sv cells with HDBSCAN instead of thresholding. Every other level is
-# shared with the stable pipeline.
-#
-# This recipe pulls two steps from specs/experimental/, one of which needs a
-# build of echopype that is not on PyPI. It therefore needs its own
-# environment and cannot share one with the stable pipeline:
-#
-#   aa-recipe env create processing_levels_pipeline_experimental.yaml #       --path ./hb1603_experimental_env
-#
-# See the header of sub_recipes/processing_lvl_2_experimental.yaml for what the
-# seafloor branch does and why it is a branch.
+#   aa-recipe env create processing_levels_pipeline_experimental.yaml --path ./hb1603_experimental_env
 #
 # Usage: aa-recipe generate processing_levels_pipeline_experimental.yaml
 
@@ -24,21 +14,28 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # line_file_path, range_bin and ping_time_bin are unused while the steps
+  # that read them are commented out below.
   raw_input_folder:
     type: path
     default: "./raw_file_inputs"
+    description: "Local folder the NCEI download writes raw files into."
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 
@@ -76,6 +73,7 @@ steps:
       x_axis_units: "seconds"
       y_axis_units: "meters"
 
+  # Levels 3 and 4 are off on this branch; uncomment to run them.
   # - include: sub_recipes/processing_lvl_3.yaml
   #   input_overrides:
   #     sv_clean_unmasked: ${remove_noise.ds_Sv}

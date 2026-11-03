@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { findInclude, findStep, type Graph, type GraphEdge, type StepNode } from '../src/api/graph';
 import {
   buildView,
+  CONFIG_HANDLE,
+  configRowTag,
+  MORE_HANDLE,
+  RUN_CONFIG_ID,
+  runConfigCount,
   findSteps,
   includeInputRows,
   includeMeta,
@@ -25,10 +30,21 @@ import {
   type ViewOptions,
 } from '../src/diagram/buildView';
 import { edgeTooltip } from '../src/diagram/useLayout';
+import { estimateSize, layoutRequest, rowOffsets } from '../src/diagram/layout';
+import { runConfigView, type RunConfigView } from '../src/diagram/runConfig';
+import type { InputField } from '../src/api/models';
 import hb1603Json from './fixtures/hb1603.graph.json';
 import mappedJson from './fixtures/mapped.graph.json';
 import uc1Json from './fixtures/uc1.graph.json';
-import { declaredGraph, mappedInputGraph, mappedOverInputGraph, nestedInputGraph, withSubGraph } from './helpers';
+import {
+  declaredGraph,
+  makeSession,
+  mappedInputGraph,
+  mappedOverInputGraph,
+  nestedInputGraph,
+  runConfigBlock,
+  withSubGraph,
+} from './helpers';
 
 const mappedGraph = mappedJson as unknown as Graph;
 const uc1Graph = uc1Json as unknown as Graph;
@@ -659,7 +675,10 @@ describe('inputs boxes mirror the files', () => {
     expect(row).toMatchObject({ setBy: 'unset', set: false });
     expect(rowValue(row)).toBe('unset');
     expect(rowTag(row)).toBe('required');
-    expect(ownInputRows(graph, LEAF, {}, { offset: 'unset' })[0].setBy).toBe('unset');
+    const optional = ownInputRows(graph, LEAF, {}, { offset: 'unset' })[0];
+    expect(optional).toMatchObject({ setBy: 'default', set: false });
+    expect(rowTag(optional)).toBeNull();
+    expect(rowValue(optional)).toBe('unset');
   });
 
   it('lists an input of another file a step in view reads by name', () => {
@@ -1004,5 +1023,195 @@ describe('a level draws its part of a per file run', () => {
     );
     expect(box.edges.find((edge) => edge.target === 'group:1')?.dimmed).toBe(false);
     for (const id of LVL2_STEPS) expect(node(box.nodes, id).dimmed, id).toBe(false);
+  });
+});
+
+describe('the run config box', () => {
+  /** uc1's config: ping_time_bin set, cal_input_folder overridden, two inputs of sub-recipes, one unused. */
+  const uc1Config = (extra: Partial<RunConfigView> = {}): RunConfigView => ({
+    path: 'C:/uc1/dive_analysis.config.yaml',
+    name: 'dive_analysis.config.yaml',
+    inputs: [
+      { name: 'ping_time_bin', value: '20s', state: 'set' },
+      { name: 'stray', value: 1, state: 'unused' },
+      { name: 'cruise_name', value: 'HB1603', state: 'set' },
+      { name: 'cal_input_folder', value: '../cal', state: 'overridden', sessionValue: '../other' },
+    ],
+    settings: [{ name: 'user_cache_dir', value: './demo/user' }],
+    error: null,
+    ...extra,
+  });
+  const configNode = (view: ReturnType<typeof buildView>) => node(view.nodes, RUN_CONFIG_ID, 'runConfig');
+  const configEdges = (view: ReturnType<typeof buildView>) => view.edges.filter((edge) => edge.bus === 'config');
+
+  it('draws no box on the site, without a config file, or drilled in', () => {
+    expect(buildView(uc1Graph, options()).nodes.some((n) => n.kind === 'runConfig')).toBe(false);
+    expect(buildView(uc1Graph, options({ runConfig: null })).nodes.some((n) => n.kind === 'runConfig')).toBe(false);
+    const drilled = buildView(uc1Graph, options({ drill: [LVL2], runConfig: uc1Config() }));
+    expect(drilled.nodes.some((n) => n.kind === 'runConfig')).toBe(false);
+    expect(configEdges(drilled)).toEqual([]);
+    expect(node(drilled.nodes, `overrides:${LVL2}`, 'inputsBox').data.configLines).toBe(false);
+  });
+
+  it('lists the rows in inputs box order, unused last, and collapses to one line labelled with what it sets', () => {
+    const view = buildView(uc1Graph, options({ runConfig: uc1Config() }));
+    const box = configNode(view);
+    expect(box.selection).toEqual({ kind: 'runConfig', id: RUN_CONFIG_ID });
+    expect(box.data.expanded).toBe(false);
+    expect(box.data.inputs.map((row) => [row.name, row.state, row.target])).toEqual([
+      ['cal_input_folder', 'overridden', 'row:cal_input_folder'],
+      ['ping_time_bin', 'set', 'row:ping_time_bin'],
+      ['cruise_name', 'set', MORE_HANDLE],
+      ['stray', 'unused', null],
+    ]);
+    expect(box.data.inputs.every((row) => !row.handle)).toBe(true);
+    expect(configRowTag(box.data.inputs[0])).toBe('overridden in session');
+    expect(configRowTag(box.data.inputs[3])).toBe('not used by this recipe');
+    expect(runConfigCount(box.data)).toBe('4 inputs, 1 setting');
+    const [line] = configEdges(view);
+    expect(configEdges(view)).toHaveLength(1);
+    expect(line).toMatchObject({
+      id: 'e:runConfig->inputs',
+      source: RUN_CONFIG_ID,
+      target: 'inputs',
+      sourceHandle: CONFIG_HANDLE,
+      targetHandle: CONFIG_HANDLE,
+      label: 'cal_input_folder, ping_time_bin, cruise_name',
+      muted: false,
+    });
+    expect(node(view.nodes, 'inputs', 'inputsBox').data.configLines).toBe(true);
+    // The box comes before the inputs box among the nodes, and its lines first.
+    expect(ids(view.nodes).indexOf(RUN_CONFIG_ID)).toBeLessThan(ids(view.nodes).indexOf('inputs'));
+    expect(view.edges[0]).toBe(line);
+  });
+
+  it('keeps one line while either box is collapsed, and mutes it when the session overrides every value', () => {
+    const only = uc1Config({ inputs: [{ name: 'cal_input_folder', value: 'a', state: 'overridden', sessionValue: 'b' }] });
+    const view = buildView(uc1Graph, options({ runConfig: only, expandedBoxes: new Set([RUN_CONFIG_ID]) }));
+    expect(configEdges(view).map((edge) => [edge.id, edge.muted])).toEqual([['e:runConfig->inputs', true]]);
+    // The listed row has its handle already, so it is measured before the inputs box opens.
+    expect(configNode(view).data.inputs[0].handle).toBe(true);
+  });
+
+  it('draws a line from each row to its row when both boxes are expanded, dotted when overridden, none when unused', () => {
+    const expandedBoxes = new Set([RUN_CONFIG_ID, 'inputs']);
+    const view = buildView(uc1Graph, options({ runConfig: uc1Config(), expandedBoxes }));
+    const lines = configEdges(view).map((edge) => [edge.id, edge.sourceHandle, edge.targetHandle, edge.muted, edge.label]);
+    expect(lines).toEqual([
+      ['e:runConfig.cal_input_folder->inputs', 'row:cal_input_folder', 'row:cal_input_folder', true, ''],
+      ['e:runConfig.ping_time_bin->inputs', 'row:ping_time_bin', 'row:ping_time_bin', false, ''],
+      ['e:runConfig.cruise_name->inputs', 'row:cruise_name', MORE_HANDLE, false, ''],
+    ]);
+    expect(configNode(view).data.inputs.map((row) => row.handle)).toEqual([true, true, true, false]);
+    const tooltip = edgeTooltip(view, configEdges(view)[0]);
+    expect(tooltip).toBe('cal_input_folder = ../cal, overridden in session by ../other');
+  });
+
+  it('marks a required input the session says is missing as a red row', () => {
+    const view = buildView(withSubGraph, options({ inputSources: { n: 'missing' }, inputValues: { n: null } }));
+    const row = node(view.nodes, 'inputs', 'inputsBox').data.rows[0];
+    expect(row).toMatchObject({ name: 'n', setBy: 'unset', set: false, missing: true });
+    expect(rowTag(row)).toBe('required');
+    // Without sources, as on the site, a row is never marked missing.
+    expect(node(buildView(withSubGraph, options()).nodes, 'inputs', 'inputsBox').data.rows[0].missing).toBeUndefined();
+  });
+
+  it('places a box without lines when the recipe has no inputs box', () => {
+    const config = uc1Config({ inputs: [{ name: 'stray', value: 1, state: 'unused' }] });
+    const view = buildView(mappedGraph, options({ runConfig: config }));
+    expect(configNode(view).data.inputs[0].target).toBeNull();
+    expect(view.nodes.some((n) => n.kind === 'inputsBox')).toBe(false);
+    expect(configEdges(view)).toEqual([]);
+  });
+
+  it('selects and focuses the box', () => {
+    const selected = { kind: 'runConfig' as const, id: RUN_CONFIG_ID };
+    const view = buildView(uc1Graph, options({ runConfig: uc1Config(), selected, connected: true }));
+    expect(configNode(view).selected).toBe(true);
+    expect(configNode(view).dimmed).toBe(false);
+    expect(node(view.nodes, 'inputs').dimmed).toBe(false);
+    expect(configEdges(view)[0].dimmed).toBe(false);
+  });
+});
+
+describe('runConfigView', () => {
+  const declared: InputField[] = [
+    { name: 'n', type: 'int', description: null, default: 3, required: false, value: 7, source: 'session' },
+    { name: 'm', type: 'int', description: null, default: 1, required: true, value: 2, source: 'config' },
+  ];
+
+  it('reads each config input state and the settings the file gives a value', () => {
+    const block = runConfigBlock({
+      contents: { inputs: { m: 2, n: 5, stray: 'x' }, settings: { user_cache_dir: './u', temp_dir: null } },
+      unused_inputs: ['stray'],
+    });
+    const view = runConfigView(block, declared)!;
+    expect(view.name).toBe('with_sub.config.yaml');
+    expect(view.inputs).toEqual([
+      { name: 'm', value: 2, state: 'set' },
+      { name: 'n', value: 5, state: 'overridden', sessionValue: 7 },
+      { name: 'stray', value: 'x', state: 'unused' },
+    ]);
+    expect(view.settings).toEqual([{ name: 'user_cache_dir', value: './u' }]);
+    expect(view.error).toBeNull();
+  });
+
+  it('is null without a file and says when the file could not be read', () => {
+    expect(runConfigView(makeSession().run_config, declared)).toBeNull();
+    const broken = runConfigView(runConfigBlock({ contents: null }), declared)!;
+    expect(broken.inputs).toEqual([]);
+    expect(broken.error).toBe('The file could not be read.');
+    expect(runConfigView(runConfigBlock({ contents: null, error: 'bad yaml' }), declared)!.error).toBe('bad yaml');
+  });
+});
+
+describe('run config box sizes and rows', () => {
+  const view = (expanded: string[]) =>
+    buildView(uc1Graph, {
+      ...options({ expandedBoxes: new Set(expanded) }),
+      runConfig: {
+        path: 'C:/uc1/x.config.yaml',
+        name: 'x.config.yaml',
+        inputs: [
+          { name: 'ping_time_bin', value: '20s', state: 'set' },
+          { name: 'cal_input_folder', value: '../cal', state: 'set' },
+        ],
+        settings: [{ name: 'temp_dir', value: './t' }],
+        error: null,
+      },
+    });
+
+  it('grows the box when it lists its rows', () => {
+    const collapsed = node(view([]).nodes, RUN_CONFIG_ID);
+    const expanded = node(view([RUN_CONFIG_ID]).nodes, RUN_CONFIG_ID);
+    expect(estimateSize(expanded).height).toBeGreaterThan(estimateSize(collapsed).height + 60);
+  });
+
+  it('gives a handle place to each row, top to bottom, inside each box, only when both are expanded', () => {
+    const both = view([RUN_CONFIG_ID, 'inputs']);
+    const request = layoutRequest(both, 'RIGHT');
+    const inputs = request.nodes.find((n) => n.id === 'inputs')!;
+    const config = request.nodes.find((n) => n.id === RUN_CONFIG_ID)!;
+    expect(config.bus).toBe('config');
+    expect(Object.keys(inputs.rows!)).toEqual([
+      'row:cal_input_folder',
+      'row:calibration_output_dir',
+      'row:crop_max_range_m',
+      'row:ping_time_bin',
+      MORE_HANDLE,
+    ]);
+    const offsets = Object.values(inputs.rows!);
+    expect([...offsets].sort((a, b) => a - b)).toEqual(offsets);
+    expect(offsets.every((y) => y > 0 && y < inputs.height)).toBe(true);
+    expect(Object.keys(config.rows!)).toEqual(['row:cal_input_folder', 'row:ping_time_bin']);
+    expect(Object.values(config.rows!).every((y) => y > 0 && y < config.height)).toBe(true);
+    expect(rowOffsets(node(view([]).nodes, 'inputs'))).toBeUndefined();
+  });
+
+  it('stretches the row places to a measured height', () => {
+    const box = node(view([RUN_CONFIG_ID, 'inputs']).nodes, 'inputs');
+    const estimated = rowOffsets(box)!;
+    const taller = rowOffsets(box, estimateSize(box).height + 100)!;
+    expect(taller[MORE_HANDLE]).toBeGreaterThan(estimated[MORE_HANDLE]);
   });
 });

@@ -1,7 +1,7 @@
 /** Which shell dialog is open. */
 import { create } from 'zustand';
 
-export type DialogId = 'shortcuts' | 'about';
+export type DialogId = 'shortcuts' | 'about' | 'save' | 'saveAs';
 
 interface DialogState {
   open: DialogId | null;

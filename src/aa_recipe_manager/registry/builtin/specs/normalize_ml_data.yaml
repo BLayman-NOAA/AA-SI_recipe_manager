@@ -8,10 +8,10 @@ inputs:
   ds_ml:
     type: Dataset
     description: >
-      Flattened ML Dataset to normalize, from reshape_for_ml, or from
-      add_auxiliary_features when auxiliary columns were appended. Those
-      columns are on unrelated scales (metres, seconds, a coefficient of
-      variation), which is what per_group_methods exists to handle.
+      Flattened ML Dataset to normalize, from reshape_for_ml or
+      add_auxiliary_features. Auxiliary columns are on unrelated scales
+      (metres, seconds, a coefficient of variation); per_group_methods
+      handles them.
 outputs:
   ds_normalized:
     type: Dataset

@@ -1,11 +1,13 @@
 op: save_calibration_archive
 cache_key: save_calibration_archive  # pinned cache identity - keep stable across op renames
 description: >
-  Write the finished calibration outputs to a directory the survey keeps.
-
+  Write the finished calibration outputs (channel mapping, provenance and one
+  file per standardized channel) to a directory the survey keeps, local or
+  remote. Mark the step regenerate: always in a recipe.
+notes: >
   Writes channel_mapping.yaml and calibration_provenance.yaml at the top of
   archive_dir, and one file per standardized channel under
-  Standardized_Reports/ - the same files a local run writes to
+  Standardized_Reports/, the same files a local run writes to
   single_channel_calibration_files/. The channel files are named by each
   channel's calibration file key, which is what the mapping refers to, so the
   archive resolves against itself.
@@ -16,10 +18,10 @@ description: >
   folder of the run in progress instead, which is how a local run archives
   with nothing but a directory.
 
-  archive_dir may be a remote fsspec URL, which is the point for a client
-  whose run directory disappears when the container does.
+  A remote archive_dir is the point for a client whose run directory
+  disappears when the container does.
 
-  Mark it regenerate: always in a recipe. Its product is files outside the
+  regenerate: always is needed because the product is files outside the
   run's outputs directory, where the executor cannot verify them, so a cache
   hit would return the paths without writing anything.
 category: calibration
@@ -37,9 +39,11 @@ inputs:
     description: >
       Each raw file's channels mapped to their calibration key, from
       build_calibration_mapping. Read from mapping_files/channel_mapping.yaml
-      under output_base when omitted. An empty mapping is an error: that is
-      what the mapping step returns while conflicts are unresolved, and an
-      archive that looks complete and is not is worse than a failed run.
+      under output_base when omitted. An empty mapping is an error.
+    notes: >
+      An empty mapping is what the mapping step returns while conflicts are
+      unresolved, and an archive that looks complete and is not is worse than
+      a failed run.
   provenance:
     type: dict
     required: false
@@ -73,19 +77,21 @@ params:
     type: path
     required: true
     description: >
-      Directory to write the archive into. May be a local path or a remote
-      fsspec URL (e.g. gs://bucket/surveys/RL2307/calibration). Not
-      fingerprinted: it is where this step writes, not something it reads.
+      Directory to write the archive into, as a local path or a remote URL
+      such as gs://bucket/surveys/RL2307/calibration.
+    notes: >
+      Not fingerprinted: it is where this step writes, not something it reads.
     constraints:
       must_exist: false
   output_base:
     type: path
     required: false
     description: >
-      Calibration outputs folder to read anything omitted from. Defaults to
-      the folder the run in progress is writing, resolved the way
-      initial_setup resolves it, so a local run after the mapping phase finds
-      the files it just wrote.
+      Calibration outputs folder to read omitted inputs from. Defaults to the
+      calibration folder of the run in progress.
+    notes: >
+      The default is resolved the way initial_setup resolves it, so a local
+      run after the mapping phase finds the files it just wrote.
     constraints:
       must_exist: false
   calibration_outputs:
@@ -100,11 +106,12 @@ params:
     required: false
     default: false
     description: >
-      Replace an archive already in archive_dir. Off by default: an archive
-      directory is written once and kept, so a non-empty destination stops the
-      run rather than overwriting it. When on, Standardized_Reports/ is
-      cleared first, so a channel dropped during review leaves no orphan file
-      behind.
+      Replace an archive already in archive_dir. Off by default, so a
+      non-empty destination stops the run.
+    notes: >
+      An archive directory is meant to be written once and kept. When on,
+      Standardized_Reports/ is cleared first, so a channel dropped during
+      review leaves no orphan file behind.
   verbose:
     type: bool
     required: false

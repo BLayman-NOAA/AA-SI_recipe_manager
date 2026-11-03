@@ -40,6 +40,7 @@ def build_payload(
     registry: Registry | None = None,
     *,
     resolve_sources: bool = True,
+    include_notes: bool = True,
 ) -> dict[str, Any]:
     """Build the JSON-safe document model for every op in the registry.
 
@@ -48,6 +49,9 @@ def build_payload(
         resolve_sources: Import each implementation's package to attach its
             source location, signature, and docstring. Disable to skip all
             third-party imports.
+        include_notes: Add a ``notes`` field to each op, port and param entry
+            with the spec's developer notes. The docs site shows them; the
+            client catalog leaves them out.
 
     Returns:
         A dict containing only JSON-serializable values.
@@ -63,6 +67,7 @@ def build_payload(
             _implementations(registry, op),
             resolve_sources,
             registry.spec_file(op),
+            include_notes,
         )
         for op in registry.list_ops()
     ]
@@ -150,6 +155,7 @@ def _op_entry(
     implementations: list[Implementation],
     resolve_sources: bool,
     spec_path: Path | None,
+    include_notes: bool = True,
 ) -> dict[str, Any]:
     """One op's full documentation entry."""
     resolved = spec_path.resolve() if spec_path is not None else None
@@ -170,7 +176,21 @@ def _op_entry(
         ],
     }
     entry["search"] = _search_blob(entry)
+    if include_notes:
+        _add_notes(entry, spec)
     return entry
+
+
+def _add_notes(entry: dict[str, Any], spec: Spec) -> None:
+    """Attach the spec's developer notes to an op entry and its rows."""
+    entry["notes"] = clean_text(spec.notes)
+    for group, declarations in (
+        ("inputs", spec.inputs),
+        ("outputs", spec.outputs),
+        ("params", spec.params),
+    ):
+        for row in entry[group]:
+            row["notes"] = clean_text(declarations[row["name"]].notes)
 
 
 def _port_entry(name: str, port: PortDeclaration) -> dict[str, Any]:

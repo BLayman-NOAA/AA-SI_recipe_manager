@@ -1,27 +1,26 @@
 op: merge_datasets
 cache_key: merge_datasets  # pinned cache identity - keep stable across op renames
 description: >
-  Reconsolidate a collected list of xarray Datasets into a single Dataset by
-  concatenating along a dimension. This is the recipe system's fan-in (collect)
-  target for segment-parallel work: a mapped step that produces one Dataset per
-  data segment (e.g. per-file MVBS) is gathered via ``collect`` and merged back
-  into one Dataset along ``dim`` (default ``ping_time``). A single Dataset
-  passes through unchanged (single-item transparency).
+  Concatenate a collected list of Datasets into one along ``dim``, for example
+  per-file MVBS gathered with ``collect``. A single Dataset passes through
+  unchanged.
+notes: >
+  The fan-in target for segment-parallel work: a mapped step produces one
+  Dataset per data segment, and ``collect`` hands the list to this op.
 category: processing
 inputs:
   datasets:
     type: Dataset | DataArray
     many: true
     description: >
-      Collected list of Datasets (one per mapped/swept instance), supplied by a
-      ``collect: ${mapped_step.output}`` directive on the recipe step.
+      Collected list of Datasets, one per mapped or swept instance, supplied by
+      ``collect: ${mapped_step.output}`` on the recipe step.
 outputs:
   merged:
     type: Dataset | DataArray
     description: >
-      Single concatenated result, matching the collected element type: a
-      Dataset for collected Datasets, a DataArray for collected DataArrays
-      (e.g. a per-file detect_seafloor line collected into a survey-wide one).
+      The concatenated result: a Dataset for collected Datasets, a DataArray
+      for collected DataArrays (such as per-file seafloor lines).
 params:
   dim:
     type: str
@@ -31,29 +30,30 @@ params:
   on_duplicate:
     type: str
     description: >
-      What to do when two collected segments carry the same label on ``dim``.
+      How to handle two collected segments with the same label on ``dim``.
+      Unset keeps both (fine when segments can't overlap). "mean" averages them
+      (binned products split at a segment boundary). "first" keeps the first
+      and sorts (overlapping slices of one store).
+    notes: >
+      Unset suits per-file Sv concatenated on raw ping_time, where segments
+      never overlap.
 
-      Unset (the default) leaves both, which is right when segments cannot
-      overlap - per-file Sv concatenated on raw ping_time, for instance.
-
-      "mean" averages them into one entry. That is what a fan-in over per
-      segment BINNED products needs: compute_mvbs and
+      "mean" suits a fan-in over per segment binned products. compute_mvbs and
       compute_per_cell_statistics anchor their time bins to a global origin, so
-      a segment boundary falling inside a bin makes the segment on each side
-      emit that bin, each holding part of its pings. Left alone the merged store
-      carries a duplicate index, which every downstream reindex rejects -
+      a segment boundary inside a bin makes the segments on both sides emit
+      that bin, each holding part of its pings. Left alone, the merged store
+      carries a duplicate index that every downstream reindex rejects;
       add_auxiliary_features raises InvalidIndexError on it.
 
-      "first" keeps the first entry for a label and sorts the result. That is
-      what a fan-in over overlapping SLICES OF ONE STORE needs: dive windows
-      cut from the survey grid, where two dives sharing a minute are the same
-      cells twice, so nothing should be averaged. A per-segment variable that
-      differs on the overlap is kept from the first segment only, which is the
-      sign it does not belong on the shared axis; attach it per segment after
+      "first" suits a fan-in over overlapping slices of one store, such as dive
+      windows cut from the survey grid, where two dives sharing a minute hold
+      the same cells twice and nothing should be averaged. A per segment
+      variable that differs on the overlap is kept from the first segment only,
+      a sign it does not belong on the shared axis; attach it per segment after
       the fan-in.
 
-      Variables carrying "units: dB" are averaged in the linear domain and
-      converted back, since a mean of decibels is not the mean of what they
+      With "mean", variables with "units: dB" are averaged in the linear domain
+      and converted back, since a mean of decibels is not the mean of what they
       measure. The average is unweighted: the partial bins do not record how
       many pings each held.
     required: false

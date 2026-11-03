@@ -1,14 +1,17 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { fieldFile, sourceLabel } from '../api/fields';
 import type { Graph } from '../api/graph';
 import type { InputField, Problem } from '../api/models';
 import { useCurrentSession, useMutationError, useSetInputs } from '../api/queries';
 import { ByFile } from '../inspector/ByFile';
 import {
-  controlFor,
   fieldDraft,
   formValues,
+  inputControl,
   inputProblems,
+  isUnapplied,
+  parseDraft,
+  type ControlKind,
   type Edits,
   type FieldEdit,
   type FormResult,
@@ -23,14 +26,23 @@ interface FieldProps {
   idPrefix: string;
 }
 
+/** The badge of a field whose draft differs from the value and is not applied yet. */
+export function UnappliedBadge() {
+  return (
+    <span className="rc-badge" title="Apply sends this change.">
+      not applied
+    </span>
+  );
+}
+
 /** One input's control with its badges, reset, error and description. */
 export function InputControl({ field, edit, error, onEdit, idPrefix }: FieldProps) {
-  const kind = controlFor(field.type);
+  const kind = inputControl(field);
   const draft = fieldDraft(field, edit);
   const id = `${idPrefix}rc-input-${field.name}`;
-  const className = `rc-input${error ? ' rc-invalid' : ''}`;
   const reset = 'reset' in (edit ?? {});
   const canReset = field.source === 'session' ? !reset : edit !== undefined;
+  const unapplied = isUnapplied(edit, field.value, (next) => parseDraft(next, field.type));
 
   return (
     <div className="rc-field">
@@ -42,6 +54,7 @@ export function InputControl({ field, edit, error, onEdit, idPrefix }: FieldProp
         <span className={`rc-badge rc-badge-${field.source}`}>{sourceLabel(field.source)}</span>
         {field.required && <span className="rc-badge">required</span>}
         {reset && <span className="rc-badge">reset on apply</span>}
+        {unapplied && <UnappliedBadge />}
         <span className="rc-spacer" />
         <button
           type="button"
@@ -52,45 +65,79 @@ export function InputControl({ field, edit, error, onEdit, idPrefix }: FieldProp
           Reset
         </button>
       </div>
-      {kind === 'checkbox' && (
+      <ValueInput
+        id={id}
+        kind={kind}
+        draft={draft}
+        invalid={Boolean(error)}
+        integer={field.type === 'int'}
+        onChange={(next) => onEdit({ draft: next })}
+      />
+      {error && <div className="rc-field-error">{error}</div>}
+      {field.description && <div className="rc-field-help">{field.description}</div>}
+    </div>
+  );
+}
+
+interface ValueInputProps {
+  id: string;
+  kind: ControlKind;
+  draft: string | boolean;
+  invalid?: boolean;
+  /** A number control steps by whole numbers. */
+  integer?: boolean;
+  disabled?: boolean;
+  onChange: (draft: string | boolean) => void;
+}
+
+/** The bare control for a draft: a checkbox, number, text field or JSON text area. */
+export function ValueInput({ id, kind, draft, invalid, integer, disabled, onChange }: ValueInputProps) {
+  const className = `rc-input${invalid ? ' rc-invalid' : ''}`;
+  switch (kind) {
+    case 'checkbox':
+      return (
         <input
           id={id}
           type="checkbox"
           checked={draft === true}
-          onChange={(event) => onEdit({ draft: event.target.checked })}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
         />
-      )}
-      {kind === 'number' && (
+      );
+    case 'number':
+      return (
         <input
           id={id}
           className={className}
           type="number"
-          step={field.type === 'int' ? 1 : 'any'}
+          step={integer ? 1 : 'any'}
           value={String(draft)}
-          onChange={(event) => onEdit({ draft: event.target.value })}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
         />
-      )}
-      {kind === 'text' && (
+      );
+    case 'json':
+      return (
+        <textarea
+          id={id}
+          className={`${className} rc-mono`}
+          value={String(draft)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      );
+    default:
+      return (
         <input
           id={id}
           className={className}
           type="text"
           value={String(draft)}
-          onChange={(event) => onEdit({ draft: event.target.value })}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
         />
-      )}
-      {kind === 'json' && (
-        <textarea
-          id={id}
-          className={`${className} rc-mono`}
-          value={String(draft)}
-          onChange={(event) => onEdit({ draft: event.target.value })}
-        />
-      )}
-      {error && <div className="rc-field-error">{error}</div>}
-      {field.description && <div className="rc-field-help">{field.description}</div>}
-    </div>
-  );
+      );
+  }
 }
 
 /** The edits of an inputs form and what applying them would send. */
@@ -133,29 +180,26 @@ export function useInputDraft(declared: InputField[]): InputDraft {
 }
 
 interface DraftActionsProps {
-  draft: InputDraft;
+  /** Some edit does not parse. */
+  invalid: boolean;
+  /** Apply would change something. */
+  changed: boolean;
+  /** How many fields are edited. */
+  count: number;
+  discard: () => void;
   applying?: boolean;
-  applyError?: string | null;
+  applyError?: ReactNode;
 }
 
-/** Apply and Discard for an inputs form, and the error of the last apply. */
-export function DraftActions({ draft, applying, applyError }: DraftActionsProps) {
+/** Apply and Discard for a form, and the error of the last apply. */
+export function DraftActions({ invalid, changed, count, discard, applying, applyError }: DraftActionsProps) {
   return (
     <>
       <div className="rc-pane-toolbar">
-        <button
-          type="submit"
-          className="rc-button rc-primary"
-          disabled={draft.invalid || !draft.result.changed || applying}
-        >
+        <button type="submit" className="rc-button rc-primary" disabled={invalid || !changed || applying}>
           Apply
         </button>
-        <button
-          type="button"
-          className="rc-button"
-          disabled={Object.keys(draft.edits).length === 0}
-          onClick={draft.discard}
-        >
+        <button type="button" className="rc-button" disabled={count === 0} onClick={discard}>
           Discard changes
         </button>
       </div>
@@ -220,7 +264,14 @@ export function InputsForm({ declared, problems, applying, applyError, onApply, 
       ) : (
         declared.map(control)
       )}
-      <DraftActions draft={draft} applying={applying} applyError={applyError} />
+      <DraftActions
+        invalid={draft.invalid}
+        changed={draft.result.changed}
+        count={Object.keys(draft.edits).length}
+        discard={draft.discard}
+        applying={applying}
+        applyError={applyError}
+      />
       <InputProblems problems={problems} declared={declared} />
     </form>
   );

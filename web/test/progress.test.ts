@@ -47,7 +47,7 @@ describe('progress lines', () => {
     expect(filterLogs(logs, { ...NO_FILTER, step: 'proc' }).map((entry) => entry.text)).toEqual([
       '[1/4] proc ... start (3 instances)',
       'working\n',
-      '[1/4] proc ... computed (3 instances: 1 computed, 2 cached; sum 6.00s, avg 2.00s, min 1.00s, max 3.00s)',
+      '[1/4] proc ... computed (3 instances: 1 computed, 2 loaded; sum 6.00s, avg 2.00s, min 1.00s, max 3.00s)',
     ]);
   });
 

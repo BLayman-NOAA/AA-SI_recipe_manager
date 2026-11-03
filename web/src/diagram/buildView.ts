@@ -32,6 +32,7 @@ import type { StepRunState } from '../runs/reducer';
 import type { Selection } from '../state/view';
 import { andList, plural, showValue, valueText } from '../text';
 import { includeChain } from './locate';
+import type { RunConfigInput, RunConfigView } from './runConfig';
 
 export type { InputSource };
 
@@ -41,6 +42,8 @@ export interface ViewOptions {
   selected: Selection | null;
   /** Steps whose id or op contain this text are marked as matches. */
   findQuery?: string;
+  /** Step ids marked as matches too, whatever the find query. */
+  highlight?: Set<string>;
   /** Current recipe input values by name; defaults are shown when absent. */
   inputValues?: Record<string, unknown>;
   /** Where each recipe input's value comes from, by name (the session's declared fields); absent on the site. */
@@ -53,6 +56,8 @@ export interface ViewOptions {
   badges?: Record<string, StepBadge>;
   /** The step states of the run going, by id; absent or null when none is. */
   runSteps?: Record<string, StepRunState> | null;
+  /** The run config file the session uses, drawn as a box at the top level; absent on the site. */
+  runConfig?: RunConfigView | null;
 }
 
 export type Badge = 'per item' | 'collects' | 'sweep' | 'checkpoint' | 'writes files' | 'custom';
@@ -153,6 +158,8 @@ export interface InputRow {
   setBy: 'default' | 'run' | 'parent' | 'unset';
   /** The run source when known; only with setBy 'run'. */
   runSource?: 'config' | 'session';
+  /** The session says the input is required and has no value: a red row. */
+  missing?: boolean;
   /** The file declaring an own or other input. */
   declaredIn?: string;
 }
@@ -170,6 +177,22 @@ export interface InputsBoxData {
   inputCount: number;
   /** Inputs declared in sub-recipes below this file, not listed. */
   more: number;
+  expanded: boolean;
+  /** A run config box draws lines into the box and its rows, which need handles. */
+  configLines: boolean;
+}
+
+/** A config input as its box lists it, with the inputs box handle its line ends on. */
+export interface RunConfigRow extends RunConfigInput {
+  /** `row:<name>`, the more row's handle, or null when the line has nowhere to go. */
+  target: string | null;
+  /** The row has a handle for its line: it has a target and the box lists its rows. */
+  handle: boolean;
+}
+
+export interface RunConfigData extends Omit<RunConfigView, 'inputs'> {
+  /** The config inputs in the order of the inputs box rows they set, unused ones last. */
+  inputs: RunConfigRow[];
   expanded: boolean;
 }
 
@@ -218,6 +241,7 @@ export type ViewNode = ViewNodeBase &
     | { kind: 'external'; data: ExternalData }
     | { kind: 'inputsBox'; data: InputsBoxData }
     | { kind: 'outputsBox'; data: OutputsBoxData }
+    | { kind: 'runConfig'; data: RunConfigData }
   );
 
 export type ViewNodeKind = ViewNode['kind'];
@@ -235,9 +259,12 @@ export interface ViewEdge {
   names: string[];
   type: string | null;
   dimmed: boolean;
-  /** Lines of an inputs box ('in') or into an outputs box ('out'). */
-  bus: 'in' | 'out' | null;
-  /** A line into an outputs box none of whose outputs is used later. */
+  /** Lines of an inputs box ('in'), into an outputs box ('out') or from the run config box ('config'). */
+  bus: 'in' | 'out' | 'config' | null;
+  /**
+   * A line into an outputs box none of whose outputs is used later, or a run
+   * config line whose values the session overrides.
+   */
   muted: boolean;
 }
 
@@ -260,6 +287,17 @@ export const OUT_HANDLE = 'out';
 export const BOX_HANDLE = 'bus';
 export const BUS_IN_HANDLE = 'bus-in';
 export const BUS_OUT_HANDLE = 'bus-out';
+
+/** The run config box's node id, and the handle of its one line on both boxes. */
+export const RUN_CONFIG_ID = 'runConfig';
+export const CONFIG_HANDLE = 'config';
+/** The handle of the inputs box row counting the inputs declared in sub-recipes. */
+export const MORE_HANDLE = 'row-more';
+
+/** The handle of a row of the inputs or run config box. */
+export function rowHandle(name: string): string {
+  return `row:${name}`;
+}
 
 export const CONTAINER_KINDS: ReadonlySet<ViewNodeKind> = new Set(['mapGroup']);
 
@@ -683,7 +721,9 @@ function sourceName(id: string): string {
 /**
  * An input's value and what gives it: the run when its source says config or
  * session (or, without sources, when the value differs from the default),
- * nothing when it is required and has no value, else the default.
+ * nothing when the source says missing or it is required and has no value,
+ * else the default. A source of unset means the server found the input feeds
+ * only optional slots, so the steps use their own defaults.
  */
 function runSetting(
   name: string,
@@ -691,13 +731,15 @@ function runSetting(
   required: boolean,
   inputValues?: Record<string, unknown>,
   inputSources?: Record<string, InputSource>,
-): Pick<InputRow, 'value' | 'set' | 'setBy' | 'runSource'> {
+): Pick<InputRow, 'value' | 'set' | 'setBy' | 'runSource' | 'missing'> {
   const given = inputValues !== undefined && name in inputValues;
   const value = given ? inputValues[name] : fallback;
   const source = inputSources?.[name];
   if (source === 'config' || source === 'session') {
     return { value, set: true, setBy: 'run', runSource: source };
   }
+  if (source === 'missing') return { value, set: false, setBy: 'unset', missing: true };
+  if (source === 'unset') return { value, set: false, setBy: 'default' };
   let setBy: InputRow['setBy'] = 'default';
   if (source === undefined && given && JSON.stringify(value) !== JSON.stringify(fallback)) setBy = 'run';
   else if (required && (value === undefined || value === null)) setBy = 'unset';
@@ -760,7 +802,7 @@ export function rootInputRows(
 }
 
 /** The nearest include above this one whose entry overrides an input, if any. */
-function overridingAncestor(graph: Graph, include: GraphInclude, name: string): GraphInclude | undefined {
+export function overridingAncestor(graph: Graph, include: GraphInclude, name: string): GraphInclude | undefined {
   let ancestor = include.parent ? findInclude(graph, include.parent) : undefined;
   while (ancestor && !(name in ancestor.overrides)) {
     ancestor = ancestor.parent ? findInclude(graph, ancestor.parent) : undefined;
@@ -1179,6 +1221,7 @@ function boxInputs(
       inputCount: own.size + others.length,
       more,
       expanded: options.expandedBoxes.has(id),
+      configLines: false,
     },
   };
   const edges = [
@@ -1201,6 +1244,77 @@ function moreCount(graph: Graph, scope: GraphInclude | null, shown: Set<string>)
     const file = declaredIn(graph, node);
     return below ? below.has(file) : file !== root;
   }).length;
+}
+
+/** What the run config box counts, such as "2 inputs, 4 settings". */
+export function runConfigCount(data: Pick<RunConfigData, 'inputs' | 'settings'>): string {
+  return (
+    countsText([
+      [data.inputs.length, 'input'],
+      [data.settings.length, 'setting'],
+    ]) || 'No inputs or settings'
+  );
+}
+
+/** The text a run config row's value shows after the value. */
+export function configRowTag(row: RunConfigInput): string | null {
+  if (row.state === 'overridden') return 'overridden in session';
+  if (row.state === 'unused') return 'not used by this recipe';
+  return null;
+}
+
+/**
+ * Rule 4b: at the top level, the run config box with its lines into the
+ * inputs box.
+ *
+ * Its rows follow the inputs box rows they set, so the lines between the two
+ * nest without crossing; an input declared in a sub-recipe goes to the more
+ * row, and an unused one has no line. With both boxes listing their rows a
+ * line leaves each row; otherwise one line leaves the box, labelled with the
+ * inputs it sets. A line whose values the session overrides is muted.
+ */
+function boxRunConfig(ctx: Context, inputsNodes: ViewNode[]): { nodes: ViewNode[]; edges: ViewEdge[] } {
+  const config = ctx.options.runConfig;
+  if (!config || ctx.scope) return { nodes: [], edges: [] };
+  const box = inputsNodes.find((node): node is Extract<ViewNode, { kind: 'inputsBox' }> => node.kind === 'inputsBox');
+  const order = new Map((box?.data.rows ?? []).map((row, index) => [row.name, index]));
+  const target = (input: RunConfigInput): string | null => {
+    if (!box || input.state === 'unused') return null;
+    if (order.has(input.name)) return rowHandle(input.name);
+    return box.data.more > 0 ? MORE_HANDLE : null;
+  };
+  const rank = (row: RunConfigRow) =>
+    row.target === null ? order.size + 1 : row.target === MORE_HANDLE ? order.size : order.get(row.name)!;
+  const expanded = ctx.options.expandedBoxes.has(RUN_CONFIG_ID);
+  const rowLines = expanded && box !== undefined && box.data.expanded;
+  const inputs = config.inputs
+    .map((input) => {
+      const to = target(input);
+      return { ...input, target: to, handle: expanded && to !== null };
+    })
+    .sort((a, b) => rank(a) - rank(b));
+  const node: ViewNode = {
+    ...base(RUN_CONFIG_ID, { kind: 'runConfig', id: RUN_CONFIG_ID }),
+    kind: 'runConfig',
+    data: { ...config, inputs, expanded },
+  };
+  if (!box) return { nodes: [node], edges: [] };
+  box.data.configLines = true;
+  const lined = inputs.filter((row) => row.target !== null);
+  const line = (handles: [string, string], rows: RunConfigRow[], label: string): ViewEdge => ({
+    ...busEdge(RUN_CONFIG_ID, box.id, handles, 'param', rows.map((row) => row.name), 'in', label),
+    bus: 'config',
+    muted: rows.every((row) => row.state === 'overridden'),
+  });
+  const edges = rowLines
+    ? lined.map((row) => ({
+        ...line([rowHandle(row.name), row.target!], [row], ''),
+        id: `e:${RUN_CONFIG_ID}.${row.name}->${box.id}`,
+      }))
+    : lined.length > 0
+      ? [line([CONFIG_HANDLE, CONFIG_HANDLE], lined, listLabel(lined.map((row) => row.name)))]
+      : [];
+  return { nodes: [node], edges };
 }
 
 /** The label of an output box owner: a step id or an include title. */
@@ -1454,6 +1568,7 @@ function markSelection(ctx: Context, nodes: ViewNode[], edges: ViewEdge[]) {
 
 function markMatches(ctx: Context, nodes: ViewNode[]) {
   const found = new Set(findSteps(ctx.graph, ctx.options.findQuery ?? '').map((step) => step.id));
+  for (const id of ctx.options.highlight ?? []) found.add(id);
   if (found.size === 0) return;
   for (const node of nodes) {
     if (node.kind === 'step') node.match = found.has(node.id);
@@ -1492,14 +1607,22 @@ export function buildView(graph: Graph, options: ViewOptions): View {
   const groupOf = drawGroups(ctx, nodes);
   const folding = foldEdges(ctx);
   const inputs = boxInputs(ctx, folding, groupOf);
+  const config = boxRunConfig(ctx, inputs.nodes);
   nameGroups(nodes, inputs.edges);
   const outputs = boxOutputs(ctx, inputs.kept, folding.exits);
   assignPorts(nodes, outputs.kept);
   const core = mergeEdges(outputs.kept);
   const externals = externalNodes(ctx, core);
 
-  const all = [...folding.ghosts.values(), ...externals, ...nodes.values(), ...inputs.nodes, ...outputs.nodes];
-  const edges = [...inputs.edges, ...core, ...outputs.edges];
+  const all = [
+    ...folding.ghosts.values(),
+    ...externals,
+    ...nodes.values(),
+    ...config.nodes,
+    ...inputs.nodes,
+    ...outputs.nodes,
+  ];
+  const edges = [...config.edges, ...inputs.edges, ...core, ...outputs.edges];
   markSelection(ctx, all, edges);
   markMatches(ctx, all);
   return { nodes: sortParentsFirst(all), edges, breadcrumb: breadcrumb(ctx) };

@@ -1,33 +1,21 @@
-# HB2407 Survey Pre-Processing - Build the Shared Sv Store
+# HB2407 survey pre-processing: build the shared Sv store
 #
-# Runs levels 1 and 2a only, producing one chunked, survey-wide Sv store that
-# every user recipe starts from. Slow and run rarely; the per-user recipes that
-# read it are fast.
+# Runs levels 1 and 2a only, producing the chunked survey-wide Sv store every
+# user recipe starts from (see Herring_10-15_windowed.yaml). Slow and run
+# rarely; the user recipes that read it are fast.
 #
 #   level 1   per file: read -> materialize -> select this file's calibration
 #   level 2a  per file: Sv -> transducer depth -> depth -> fixed range crop
-#             FAN-IN:   merge on ping_time -> rechunk -> checkpoint
+#             fan-in:   merge on ping_time -> rechunk -> checkpoint
 #
-# The boundary is deliberate. Everything here is a property of the raw data and
-# its calibration; nothing above the line is something a user would vary per
-# analysis. Seabed detection, masking, noise removal, MVBS and ML all are, and
-# they live in the user recipes (see Herring_10-15_windowed.yaml).
+# No user window on purpose: a window wired into initial_setup would re-key
+# every downstream checkpoint, so no two user segments would share cached work.
+# Nothing here needs the survey in memory; the steps that scale with survey
+# length run after the user's window.
 #
-# THIS RECIPE HAS NO USER WINDOW, ON PURPOSE. Step hashes are a Merkle chain,
-# so a window wired into initial_setup would re-key every downstream
-# checkpoint and no two user segments would ever share cached work. The window
-# belongs on select_ping_time_range in processing_lvl_2_user.yaml instead.
-#
-# MEMORY. Nothing here needs the survey in memory. The per-file chain is
-# bounded by one file's working set, and the checkpoint write streams chunk by
-# chunk. The steps that do scale badly with survey length -- sparse masking,
-# MVBS and per-cell statistics -- are all downstream of the user's window.
-#
-# Publish to the shared cache tier so user runs read it:
+# Publish to the shared cache tier so user runs read it, and run it where the
+# bucket is (a survey-scale store over a 2.8 MiB/s uplink takes days):
 #   aa-recipe run survey_preprocess.yaml --cache-write-tier survey
-#
-# Run it where the bucket is. A survey-scale store over a 2.8 MiB/s uplink is
-# measured in days, not hours.
 #
 # Usage: aa-recipe dry-run survey_preprocess.yaml --visualize
 
@@ -39,29 +27,35 @@ recipe:
   schema_version: "1"
 
 inputs:
-  # fingerprint_mode: auto puts the folder's CONTENTS in the hash and scrubs
-  # its location, so a local copy and the gs:// original give the same survey
-  # hash. Adding a raw file changes it, which is correct.
+  # fingerprint_mode: auto puts the folder's contents in the hash, not its
+  # location, so a local copy and the gs:// original give the same survey hash.
   raw_input_folder:
     type: path
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
 
-  # Fixed range ceiling. Every file crops to the same depth so they share a
-  # range_sample length and concatenate without NaN padding. 250 m clears the
-  # deepest seabed seen on this survey (214 m of real data in the 10-15
-  # window); confirm against the .evl line files before changing it.
+  # One constant for every file, so they share a range_sample length. 250 m
+  # clears the deepest seabed seen on this survey (214 m in the 10-15 window);
+  # confirm against the .evl line files before changing it.
   crop_max_range_m:
     type: float
     default: 250.0
+    description: >
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. Changing it recomputes the whole survey Sv.
 
-  # Chunking of the shared store, and therefore the granularity a user's
-  # window reads at. ~21 chunks for a 15-raw-file segment.
+  # User recipes must pass the same value, or they miss the shared cache.
   survey_chunk_ping_time:
     type: int
     default: 2000
+    description: >
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
 steps:
 
@@ -78,9 +72,8 @@ steps:
       echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
-      # Transducer depth comes from the raw file's drop keel offset (e.g. 7.5 m)
-      # plus heave, with datum_correction_m assuming the recorded offset is
-      # waterline referenced.
+      # Transducer depth is the raw file's drop keel offset (e.g. 7.5 m) plus
+      # datum_correction_m and heave.
       datum_correction_m: -1.0
       use_heave: true
       heave_sign: 1.0

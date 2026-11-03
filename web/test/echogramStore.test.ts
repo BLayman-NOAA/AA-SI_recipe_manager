@@ -1,6 +1,7 @@
 import type { PieceSetSpec, Resolution, ViewSettings } from 'aa-si-echogram-gl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StepArtifacts } from '../src/api/models';
+import { actionsFor, freshnessText } from '../src/echogram/LayerList';
 import { NEEDS_WEBGPU, storageKey, useEchogramStore } from '../src/echogram/store';
 import type { Preview } from '../src/api/models';
 import type { RunStartedData } from '../src/runs/events';
@@ -10,7 +11,7 @@ import diveSv from './fixtures/artifacts.dive_sv.json';
 import embed from './fixtures/artifacts.embed_results.json';
 import svPlain from './fixtures/artifacts.sv.json';
 import svMapped from './fixtures/artifacts.sv_mapped.json';
-import { errorResponse, mockApi } from './helpers';
+import { errorResponse, makePreview, mockApi, previewStep } from './helpers';
 
 const SID = 'S';
 const SV = 'GET /api/sessions/S/steps/sv/artifacts';
@@ -58,8 +59,43 @@ async function settle() {
   await vi.waitFor(() => expect(store().layers.every((entry) => entry.state !== 'loading' && entry.state !== 'refreshing')).toBe(true));
 }
 
+/** The answer for sv's current hash: the fixture's data at another hash, or nothing saved. */
+function svAt(hash: string, saved = true): StepArtifacts {
+  const answer = structuredClone((saved ? svMapped : diveMaskSparse) as unknown as StepArtifacts);
+  answer.step_id = 'sv';
+  answer.step_hash = hash;
+  return answer;
+}
+
+/** A preview holding sv at a hash, by tier, or for some of its three files. */
+function svPreview(hash: string, held: string[] = [], instancesHeld: Record<string, number> = {}): Preview {
+  return makePreview([
+    previewStep('sv', {
+      step_hash: hash,
+      held_by: held,
+      fanned_out: true,
+      instances: 3,
+      instances_held: instancesHeld,
+      checkpoint: 'will-save',
+      recipe_checkpoint: 'always',
+    }),
+  ]);
+}
+
 beforeEach(() => {
-  useEchogramStore.setState({ sid: null, gpu: 'unknown', layers: [], panel: null, settings: null, choice: null, pendingRun: null, message: null, busy: null });
+  useEchogramStore.setState({
+    sid: null,
+    gpu: 'unknown',
+    layers: [],
+    panel: null,
+    settings: null,
+    choice: null,
+    pendingRun: null,
+    message: null,
+    busy: null,
+    preview: null,
+    computed: null,
+  });
   store().resetFor(SID);
 });
 
@@ -139,9 +175,49 @@ describe('show', () => {
   it('offers to run to a step that is not saved', async () => {
     mockApi({ 'GET /api/sessions/S/steps/dive_mask_sparse/artifacts': diveMaskSparse });
     await store().show(SID, 'dive_mask_sparse');
-    expect(store().pendingRun).toEqual({ step: 'dive_mask_sparse', runId: null });
-    expect(store().message).toMatch(/dive_mask_sparse has not been saved\. Run to dive_mask_sparse\?/);
+    expect(store().pendingRun).toEqual({ step: 'dive_mask_sparse', runId: null, memoryOnly: false });
+    expect(store().message).toBe('dive_mask_sparse has no saved result yet. Run to dive_mask_sparse to draw it.');
     expect(store().layers).toEqual([]);
+  });
+
+  it('says a step that is not a checkpoint is saved only by a run to it, and offers to make it one', async () => {
+    mockApi({ 'GET /api/sessions/S/steps/dive_mask_sparse/artifacts': diveMaskSparse });
+    store().track(makePreview([previewStep('dive_mask_sparse', { checkpoint: 'will-save', pinned: true })]), null);
+    await store().show(SID, 'dive_mask_sparse');
+    expect(store().pendingRun).toEqual({ step: 'dive_mask_sparse', runId: null, memoryOnly: true });
+    expect(store().message).toBe(
+      "dive_mask_sparse isn't a checkpoint, so only a run to it saves it. " +
+        'Run to dive_mask_sparse to draw it, or make it a checkpoint so every run saves it.',
+    );
+    store().checkpointMade('dive_mask_sparse');
+    expect(store().pendingRun).toEqual({ step: 'dive_mask_sparse', runId: null, memoryOnly: false });
+    expect(store().message).toBe('dive_mask_sparse has no saved result yet. Run to dive_mask_sparse to draw it.');
+  });
+
+  it('does not call a checkpoint the preview leaves out of its run a step kept in memory', async () => {
+    mockApi({ 'GET /api/sessions/S/steps/dive_mask_sparse/artifacts': diveMaskSparse });
+    const step = previewStep('dive_mask_sparse', { planned: 'untargeted', checkpoint: 'memory-only', recipe_checkpoint: 'always' });
+    store().track(makePreview([step]), null);
+    await store().show(SID, 'dive_mask_sparse');
+    expect(store().pendingRun).toEqual({ step: 'dive_mask_sparse', runId: null, memoryOnly: false });
+    expect(store().message).toBe('dive_mask_sparse has no saved result yet. Run to dive_mask_sparse to draw it.');
+  });
+
+  it('says a checkpoint not run for its settings has no saved result yet', async () => {
+    mockApi({ 'GET /api/sessions/S/steps/dive_mask_sparse/artifacts': diveMaskSparse });
+    store().track(makePreview([previewStep('dive_mask_sparse', { checkpoint: 'will-save', recipe_checkpoint: 'always' })]), null);
+    await store().show(SID, 'dive_mask_sparse');
+    expect(store().pendingRun?.memoryOnly).toBe(false);
+    expect(store().message).toBe('dive_mask_sparse has no saved result yet. Run to dive_mask_sparse to draw it.');
+  });
+
+  it('says a step drawn earlier is not saved any more when its result for the same hash is gone', async () => {
+    mockApi({ [SV]: svMapped });
+    await store().show(SID, 'sv');
+    mockApi({ [SV]: svAt(svMapped.step_hash, false) });
+    await store().show(SID, 'sv');
+    expect(store().message).toBe('sv is not saved any more.');
+    expect(store().pendingRun).toMatchObject({ step: 'sv', runId: null });
   });
 
   it('says why when the server cannot draw echograms, or the step drew nothing', async () => {
@@ -178,16 +254,16 @@ describe('a drawn layer', () => {
     return panel;
   }
 
-  it('retries on refresh when the checkpoint is the same, and clears the mark', async () => {
+  it('retries on refresh when the checkpoint is the same, and is current again', async () => {
     const panel = await shown();
-    store().markOutOfDate({ sv: 'moved' }, null);
-    expect(layer(SV_ID)?.outOfDate).toBe(true);
-    mockApi({ [SV_CHOSEN]: svMapped });
+    store().track(svPreview('moved', ['user']), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+    mockApi({ [SV_CHOSEN]: svAt('moved') });
     await store().refresh(SV_ID);
     await settle();
     expect(panel.retry).toHaveBeenCalledTimes(1);
     expect(panel.replaceSource).not.toHaveBeenCalled();
-    expect(layer(SV_ID)?.outOfDate).toBe(false);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'current' });
   });
 
   it('replaces the source on refresh when a run wrote it again', async () => {
@@ -199,11 +275,147 @@ describe('a drawn layer', () => {
     expect(layer(SV_ID)?.resolution?.createdAt).toBe('2026-10-20T00:00:00+00:00');
   });
 
-  it('marks the row when the step is not saved any more', async () => {
+  it('marks the row when its result for the same hash is not saved any more', async () => {
     await shown();
-    mockApi({ [SV_CHOSEN]: diveMaskSparse });
+    mockApi({ [SV_CHOSEN]: svAt(svMapped.step_hash, false) });
     await store().refresh(SV_ID);
     expect(layer(SV_ID)).toMatchObject({ state: 'error', error: 'sv is not saved any more.' });
+  });
+
+  it('keeps drawing the previous settings when nothing holds the new hash', async () => {
+    await shown();
+    store().track(svPreview('moved'), null);
+    mockApi({ [SV_CHOSEN]: svAt('moved', false) });
+    await store().refresh(SV_ID);
+    expect(layer(SV_ID)).toMatchObject({ state: 'shown', error: null, freshness: { state: 'not_computed' } });
+    expect(layer(SV_ID)?.stepHash).toBe(svMapped.step_hash);
+  });
+
+  it('says the new hash is not saved when a refresh finds nothing the preview said was held, until a run', async () => {
+    await shown();
+    store().track(svPreview('moved', ['user']), null);
+    expect(actionsFor(layer(SV_ID)!)).toBe('refresh');
+    mockApi({ [SV_CHOSEN]: svAt('moved', false) });
+    await store().refresh(SV_ID);
+    expect(layer(SV_ID)).toMatchObject({ state: 'shown', error: null, stepHash: svMapped.step_hash });
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'not_saved' });
+    expect(freshnessText(layer(SV_ID)!.freshness, true)).toBe(
+      'not saved at the current settings: showing the previous settings',
+    );
+    expect(actionsFor(layer(SV_ID)!)).toBeNull();
+
+    // The same preview again offers no refresh; a run that finishes does.
+    store().track(svPreview('moved', ['user']), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'not_saved' });
+    const ran = { steps: new Set(['sv']), runId: 'r1' };
+    store().track(svPreview('moved', ['user']), ran);
+    expect(actionsFor(layer(SV_ID)!)).toBe('refresh');
+
+    mockApi({ [SV_CHOSEN]: svAt('moved') });
+    await store().refresh(SV_ID);
+    await settle();
+    expect(layer(SV_ID)).toMatchObject({ stepHash: 'moved', missed: undefined, freshness: { state: 'current' } });
+  });
+
+  it('goes from not computed after an edit, to available after a run, to current after a refresh', async () => {
+    const panel = await shown();
+    const drawn = svMapped.step_hash;
+    store().track(svPreview(drawn, ['user']), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'current' });
+
+    // An edit moves the hash; the preview refetches and nothing holds it.
+    store().track(svPreview('edited'), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'not_computed' });
+
+    // A run saves it; the preview refetches after the run.
+    const ran = { steps: new Set(['sv']), runId: 'r1' };
+    store().track(svPreview('edited', ['user']), ran);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+
+    mockApi({ [SV_CHOSEN]: withResolution(svAt('edited'), { stepHash: 'edited' }) });
+    await store().refresh(SV_ID);
+    await settle();
+    expect(panel.replaceSource).toHaveBeenCalled();
+    expect(layer(SV_ID)).toMatchObject({ stepHash: 'edited', freshness: { state: 'current' } });
+  });
+
+  it('is available when a value is changed back to one computed before', async () => {
+    await shown();
+    store().track(svPreview('earlier', ['user']), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+  });
+
+  it('is available when a later run saved the step again at the same hash', async () => {
+    await shown();
+    store().track(svPreview(svMapped.step_hash, ['user']), { steps: new Set(['sv']), runId: 'r1' });
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+  });
+
+  it('is current again after a refresh that follows a run, and available after a later run, whatever the clocks', async () => {
+    const drawn = svMapped.step_hash;
+    // The browser's clock a day ahead of the server's while the row is drawn and refreshed.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 86400000);
+    await shown();
+    expect(layer(SV_ID)?.drawnAfter).toBeNull();
+    store().track(svPreview(drawn, ['user']), { steps: new Set(['sv']), runId: 'r1' });
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+
+    mockApi({ [SV_CHOSEN]: svMapped });
+    await store().refresh(SV_ID);
+    await settle();
+    expect(layer(SV_ID)).toMatchObject({ drawnAfter: 'r1', freshness: { state: 'current' } });
+
+    // Then the browser's clock a day behind, and a later run computes sv again.
+    now.mockReturnValue(Date.now() - 2 * 86400000);
+    store().track(svPreview(drawn, ['user']), { steps: new Set(['other']), runId: 'r2' });
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'current' });
+    store().track(svPreview(drawn, ['user']), { steps: new Set(['sv']), runId: 'r3' });
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'available' });
+    now.mockRestore();
+  });
+
+  it('says how many files of a mapped step hold the new hash', async () => {
+    await shown();
+    store().track(svPreview('edited', [], { user: 1, survey: 0 }), null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'partial', held: 1, of: 3 });
+    store().track(null, null);
+    expect(layer(SV_ID)?.freshness).toEqual({ state: 'unknown' });
+  });
+
+  it('refreshes its own row, not the default, after a run its Run button started', async () => {
+    await shown();
+    store().track(svPreview('edited'), null);
+    store().runStarted('sv', 'r1', SV_ID);
+    expect(store().pendingRun).toEqual({ step: 'sv', runId: 'r1', layer: SV_ID });
+    const refresh = vi.spyOn(store(), 'refresh');
+    const show = vi.spyOn(store(), 'show');
+    mockApi({ [SV_CHOSEN]: svAt('edited') });
+    const instances = { count: null, done: 0, computed: 0, cached: 0, skipped: 0 };
+    store().runFinished(
+      {
+        ...initialRunState('r1'),
+        started: { targets: ['sv'] } as unknown as RunStartedData,
+        finished: { status: 'completed', seconds: 1, manifest: null, executed: [], skipped: [], pruned: [], untargeted: [], error_type: null, message: null },
+        steps: { sv: { status: 'computed', tier: null, hash: null, planned: null, index: 0, total: 0, instances, seconds: null, error: null, chain: null } },
+      },
+      null,
+    );
+    expect(refresh).toHaveBeenCalledWith(SV_ID);
+    expect(show).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(layer(SV_ID)?.stepHash).toBe('edited'));
+    refresh.mockRestore();
+    show.mockRestore();
+  });
+
+  it('says why a restored row with nothing at its new hash draws nothing', async () => {
+    window.localStorage.setItem(
+      storageKey('R'),
+      JSON.stringify({ layers: [{ step: 'sv', output: 'ds_Sv', variable: 'Sv', label: 'sv', stepHash: 'old', addedAt: 1 }], settings: null }),
+    );
+    mockApi({ 'GET /api/sessions/R/steps/sv/artifacts?output=ds_Sv&var=Sv': svAt('new', false) });
+    store().resetFor('R');
+    await store().attach(fakePanel());
+    expect(layer(SV_ID)).toMatchObject({ state: 'error', error: 'sv has no saved result yet. Run to sv to draw it.' });
   });
 
   it('is removed from the panel with its row', async () => {
@@ -451,7 +663,7 @@ describe('experience test fixes', () => {
 
   it('does not offer a run for a step the recipe never saves', async () => {
     const fetchMock = mockApi({ 'GET /api/sessions/S/steps/label_all_points/artifacts': { ...diveMaskSparse, step_id: 'label_all_points' } });
-    await store().show(SID, 'label_all_points', { neverSaved: true });
+    await store().show(SID, 'label_all_points', { checkpoint: 'never' });
     expect(store().pendingRun).toBeNull();
     expect(store().message).toBe("label_all_points is never saved (checkpoint: never in the recipe), so it can't be drawn.");
     expect(fetchMock).toHaveBeenCalledTimes(1);

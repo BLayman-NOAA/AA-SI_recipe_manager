@@ -2,19 +2,20 @@
 # sub_recipes/processing_lvl_2_per_file.yaml, with extract_cal_params moved here
 # from level 1 to match the HB1603 levels.
 
-# Processing level 2 (per file): Sv and masks per file, then the survey fan-in.
+# Processing level 2, per file: Sv and masking per file, then the survey fan-in.
+# Continues the mapped chain from processing_lvl_1_per_file.yaml, which must be
+# included immediately before this level.
 #
 #   [per file] extract_cal_params -> compute_sv -> compute_transducer_depth
 #              -> ep_add_depth -> detect_seafloor -> masks -> apply_mask
 #   [fan-in]   merge_sv, concat along ping_time
 #   [survey]   crop_range -> rechunk_before_noise -> remove_noise
 #
-# Include this level immediately after processing_lvl_1_per_file.yaml, since it
-# continues the same mapped chain. The per-file steps are all ping-local, so the
-# merge can wait until remove_noise, the first step that needs the whole survey.
+# The fan-in sits at apply_mask: every step above it is ping-local, and
+# remove_background_noise is the first with a cross-ping window.
 #
-# ep_add_splitbeam_angle is commented out: HB2407's calibration has no
-# angle_sensitivity, so echopype raises TypeError. Nothing downstream needs it.
+# ep_add_splitbeam_angle is disabled: HB2407's calibration mapping has no
+# angle_sensitivity, so echopype raises. Nothing downstream uses the angles.
 
 recipe:
   name: "processing_lvl_2_per_file"
@@ -26,108 +27,132 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Per-file EchoData from level 1."
+    description: "One file's raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   calibration_dict:
     type: dict
-    description: "Standardized calibration data, from gen_cal_mapping."
+    description: "Standardized calibration values keyed by calibration key, from the calibration mapping step."
   mapping_dict:
     type: dict
-    description: "Raw channel to calibration key mapping, from gen_cal_mapping."
+    description: "Mapping from each raw file's channels to their calibration key, from the calibration mapping step."
   datum_correction_m:
     type: float
     default: 0.0
-    description: "Metres added to each file's drop keel offset to give depth below the waterline."
+    description: >
+      Metres added to each file's recorded drop keel offset to give depth below
+      the waterline; positive pushes the transducer deeper. 0 takes the
+      recorded offset as waterline referenced.
   use_heave:
     type: bool
     default: true
-    description: "Add the per-ping platform heave term to transducer depth."
+    description: "Add the per-ping platform heave to transducer depth. False holds the static keel depth on every ping."
+  # heave_sign was found by correlating raw heave against the EVL line: 0.14 m
+  # residual for +1.0 against 0.75 m for -1.0.
   heave_sign:
     type: float
     default: 1.0
-    description: "Sign applied to platform heave. +1.0 fits the EVL seabed line best on HB2407."
+    description: >
+      Sign applied to platform heave when computing transducer depth, +1.0 or
+      -1.0. +1.0 fits the hand-verified EVL seabed line best on HB2407.
   seabed_line_folder:
     type: path
     description: >
-      Folder of Echoview .evl seabed line exports. The files covering the time
-      window are combined into the seafloor; a single .evl file is read whole.
+      Folder of Echoview .evl seabed line exports, a local path or a gs:// URL.
+      The files covering the time window are combined into the seafloor; a
+      single .evl file is read whole.
+  # The seabed line window is survey-wide: every mapped instance reads the same
+  # line files and interpolates them onto its own pings.
   file_time_start:
     type: str
     required: false
     description: >
-      Optional inclusive ISO start time selecting seabed line files by the time
-      span in their names. Pass the window that selected the raw files.
+      Optional inclusive ISO datetime selecting the seabed line files to read,
+      by the time span in their names. Pass the window that selected the raw
+      files; unset reads every line file.
   file_time_end:
     type: str
     required: false
-    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+    description: >
+      Optional inclusive ISO datetime selecting the seabed line files to read,
+      by the time span in their names. Pass the window that selected the raw
+      files; unset reads every line file.
   seabed_line_max_gap_s:
     type: float
     default: 600
     description: >
-      Widest gap in the combined seabed line to interpolate across, in seconds.
-      Only a break between survey legs is this wide.
+      Widest gap in the combined seabed line, in seconds, to interpolate
+      across; pings in a wider gap get no seafloor. Only a break between
+      survey legs is this wide.
+  # Per file the coverage test is stricter than it looks: a short uncovered
+  # stretch can be a large fraction of the one file it falls in.
   seabed_line_min_coverage:
     type: float
     default: 0.99
     description: >
-      Fraction of a file's pings the line must cover, or the step fails. Per
-      file this is stricter than it looks. Lower it or widen the window rather
-      than let uncovered pings through, since all their samples get masked.
+      Fraction of a file's pings (0 to 1) the seabed line must cover, or the
+      step fails. Lower it or widen the window rather than let uncovered pings
+      through, since all their samples are masked.
   surface_mask_depth:
     type: float
     default: 10.0
-    description: "Depth in meters above which the surface mask excludes samples."
+    description: >
+      Range from the transducer, in metres, above which samples are masked, to
+      remove the transmit pulse and ringdown.
   seafloor_buffer_m:
     type: float
     default: 1.0
-    description: "Height of buffer above seabed line to mask."
+    description: >
+      Height above the seabed line, in metres, that is also masked, to drop the
+      bottom echo and detection error.
   crop_outlier_sigma:
     type: float
     required: false
     description: >
-      Standard deviations above the mean deepest sample at which a ping counts
-      as an outlier; the crop lands on the deepest kept ping. Unset falls back
-      to the lossless trim below, which one glitch ping defeats.
+      Standard deviations above the mean per-ping deepest sample at which a
+      ping is an outlier; the crop lands on the deepest kept ping. Unset falls
+      back to the trailing NaN trim.
   crop_outlier_margin:
     type: float
     default: 1.5
     description: >
-      Multiplier on (mean + crop_outlier_sigma * sd) giving the reject
-      threshold. Raise it to flag fewer pings.
+      Multiplier on (mean + crop_outlier_sigma * sd) of the per-ping deepest
+      sample that gives the reject threshold. Raise it to flag fewer pings.
+      Used only when crop_outlier_sigma is set.
   crop_trailing_all_nan:
     type: bool
     default: true
     description: >
-      Drop trailing range samples with no finite Sv anywhere. Lossless, and
-      ignored when crop_outlier_sigma is set. False with the other two unset
-      disables the crop.
+      Drop trailing range samples with no finite Sv anywhere. Lossless; ignored
+      when crop_outlier_sigma is set. False, with the other two crop inputs
+      unset, turns the crop off.
   crop_max_range_m:
     type: float
     required: false
     description: >
-      Hard depth ceiling for the crop, in metres; the shallowest cut wins. It
-      drops data too, so check the crop step's "deepest kept" against the
-      seabed line before choosing one.
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. With other crop criteria set, the shallowest cut wins. Unset
+      derives the crop from the data.
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Range samples per bin for background noise estimation."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Pings per bin for background noise estimation."
+    description: "Pings per bin for the background noise estimate."
   noise_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size of the merged Sv before remove_noise, so the noise
-      estimate runs in dask chunks. Keep it a multiple of noise_ping_num.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      noise_ping_num.
 
 steps:
 
   # Per-file chain, continuing the map_over from level 1.
 
-  # Picks this file's calibration out of the survey mapping.
+  # Picks this file's calibration out of the shared dicts, so each file is
+  # calibrated for its own channel configuration.
   - id: extract_cal_params
     op: extract_standardized_cal_params
     map_over: ${initial_setup.raw_file_paths}
@@ -149,8 +174,8 @@ steps:
       waveform_mode: "CW"
       encode_mode: "power"
 
-  # Drop keel offset plus per-ping heave. Checkpointed so the vertical reference
-  # the run used can be inspected later.
+  # Checkpointed because it is tiny and records the vertical reference the run
+  # used, so it can be inspected without recomputing Sv.
   - id: compute_transducer_depth
     op: compute_transducer_depth
     map_over: ${initial_setup.raw_file_paths}
@@ -163,8 +188,9 @@ steps:
       use_heave: ${inputs.use_heave}
       heave_sign: ${inputs.heave_sign}
 
-  # Adds the surface-referenced 'depth' the seabed steps compare against. Without
-  # it, create_seafloor_mask silently offsets the mask by the transducer depth.
+  # Everything compared against the seabed line reads this dataset, not
+  # compute_sv's: without 'depth', create_seafloor_mask silently falls back to
+  # echo_range and offsets the mask by the transducer depth.
   - id: ep_add_depth
     op: ep_add_depth
     map_over: ${initial_setup.raw_file_paths}
@@ -197,8 +223,8 @@ steps:
       # Same window that selects the raw files, so the line spans the pings.
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
-      # No extrapolation past the line's ends. Uncovered pings fail min_coverage
-      # rather than being masked away.
+      # No extrapolation past the line's ends. Uncovered pings would be masked
+      # away entirely, so min_coverage fails the run instead.
       edge_extend_s: 0.0
       max_gap_s: ${inputs.seabed_line_max_gap_s}
       min_coverage: ${inputs.seabed_line_min_coverage}
@@ -213,7 +239,8 @@ steps:
     params:
       seafloor_buffer_m: ${inputs.seafloor_buffer_m}
 
-  # Compares against echo_range, so it takes compute_sv's dataset.
+  # create_surface_mask compares against echo_range, so compute_sv's dataset
+  # is enough.
   - id: create_surface_mask
     op: create_surface_mask
     map_over: ${initial_setup.raw_file_paths}
@@ -252,8 +279,9 @@ steps:
 
   # Survey-wide from here on.
 
-  # Drops the all-NaN range samples below the deepest seabed, shrinking every
-  # later step. It must follow the merge, or merge_sv pads them back in.
+  # Drops the all-NaN range samples below the deepest seabed once, which
+  # shrinks every later step. It must follow the fan-in: cropping per file
+  # leaves different range_sample lengths that merge_sv pads back with NaN.
   - id: crop_range
     op: crop_range
     checkpoint: always

@@ -2,20 +2,18 @@ op: merge_clustering_passes
 cache_key: merge_clustering_passes  # pinned cache identity - keep stable across op renames
 description: >
   Merge a first-pass clustering result with one or more second-pass results
-  into a single consolidated Dataset.
+  into one Dataset. Second-pass labels get new numbers that do not collide
+  with pass-1 labels.
+notes: >
+  Noise points from the second pass override the parent label for those
+  samples. When retain_parent_labels is true, each sample's original pass-1
+  label is stored as a parent_labels variable, for parent and child lineage
+  queries.
 
-  Child cluster labels are remapped to unique integers that do not collide
-  with pass-1 labels. Noise points from the second pass override the parent
-  label for those samples. When retain_parent_labels is true, each sample's
-  original pass-1 cluster label is stored alongside the merged labels as a
-  parent_labels variable, enabling parent-child lineage queries.
-
-  Designed as a fan-in primitive: clustering_results_pass2 is declared
-  many: true and accepts either a single Dataset or an explicit list of
-  Datasets today (e.g. clustering_results_pass2: ["${step_a.clustering_results}",
-  "${step_b.clustering_results}"]). Once the recipe executor supports native
-  fan-in via the collect: step attribute, a collected list from a mapped
-  run_hdbscan step will work identically with no changes to this op or spec.
+  clustering_results_pass2 is declared many: true, so it accepts a single
+  Dataset, an explicit list such as ["${step_a.clustering_results}",
+  "${step_b.clustering_results}"], or a list collected from a mapped
+  run_hdbscan step.
 category: ml_clustering
 inputs:
   clustering_results_pass1:
@@ -26,19 +24,19 @@ inputs:
     type: Dataset
     many: true
     description: >
-      One or more second-pass clustering result Datasets from run_hdbscan
-      calls that each covered a subset of the pass-1 samples. A single
-      Dataset or an explicit list of Datasets is accepted (many: true).
-      Future: supply via collect: from a mapped run_hdbscan step.
+      One or more second-pass results from run_hdbscan, each covering a subset
+      of the pass-1 samples. A single Dataset or a list is accepted.
 outputs:
   clustering_results:
     type: Dataset
     description: >
-      Merged clustering result Dataset with the same sample scope as
-      clustering_results_pass1. Child labels are offset above the highest
-      pass-1 label so they never collide. Includes a parent_labels variable
-      when retain_parent_labels is true. Compatible with embed_clustering_results
-      and plot_clustering_report without any changes to those ops.
+      Merged clustering result covering the same samples as
+      clustering_results_pass1, with a parent_labels variable when
+      retain_parent_labels is true.
+    notes: >
+      Child labels are offset above the highest pass-1 label so they never
+      collide. The result works with embed_clustering_results and
+      plot_clustering_report unchanged.
 params:
   ml_result_name:
     type: str

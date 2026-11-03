@@ -1,76 +1,64 @@
 op: ep_detect_seafloor
 cache_key: ep_detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
-  Detect seafloor depth and return a 1-D (ping_time,) DataArray. This step is
-  echopype.mask.api.detect_seafloor called directly, so the detection itself
-  is entirely echopype's. It dispatches to one of echopype's
-  built-in implementations ("basic" Sv-threshold or "blackwell" Sv +
-  split-beam angle) selected by the ``method`` parameter, with the
-  method-specific keyword arguments passed via ``method_params``.
+  Detect the seafloor in metres per ping with echopype's "basic" or
+  "blackwell" detector. Swaps in for ``detect_seafloor``; the step takes no
+  ``echodata`` input.
+notes: >
+  This step is echopype.mask.api.detect_seafloor called directly, so the
+  detection itself is entirely echopype's. ``method`` selects the
+  implementation and ``method_params`` carries its keyword arguments.
 
-  Drop-in swap with the ``detect_seafloor`` op: the output port name
-  (``seafloor_depth``) and shape (1-D, ping_time) match, so downstream
-  steps such as ``create_seafloor_mask`` work unchanged. The recipe step's
-  ``inputs`` must drop the ``echodata`` line (echopype's detector does not
-  use a separate EchoData source) and the ``params`` block must use
-  ``method`` + ``method_params`` instead of ``channel`` /
-  ``min_valid_depth_m``.
+  The output port name (``seafloor_depth``) and shape (1-D, ping_time) match
+  ``detect_seafloor``, so downstream steps such as ``create_seafloor_mask``
+  work unchanged. The recipe step's ``inputs`` must drop the ``echodata``
+  line (echopype's detector does not use a separate EchoData source) and the
+  ``params`` block must use ``method`` and ``method_params`` instead of
+  ``channel`` and ``min_valid_depth_m``.
 category: detection
 inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Calibrated Sv dataset containing the variables and coordinates
-      required by the chosen echopype method (at minimum ping_time, a
-      vertical coordinate such as depth, and Sv; the ``blackwell`` method
-      additionally requires split-beam angle variables).
+      Calibrated Sv dataset with ping_time, a vertical coordinate such as
+      depth, and Sv; "blackwell" also needs split-beam angles.
 outputs:
   seafloor_depth:
     type: DataArray
     description: >
-      Detected seafloor depth in metres, shape (ping_time,). Always 1-D
-      (no channel dimension), matching the output of the ``detect_seafloor``
-      op so downstream masking steps are interchangeable.
+      Detected seafloor depth in metres per ping, with no channel dimension.
 params:
   method:
     type: str
     description: >
-      Echopype bottom-detection method. Supported values:
-        - "basic": Sv threshold-only detector.
-        - "blackwell": Sv + split-beam angle detector.
+      Echopype detection method: "basic" (Sv threshold) or "blackwell" (Sv and
+      split-beam angle).
     required: false
     default: "basic"
   method_params:
     type: dict
     description: >
-      Method-specific keyword arguments forwarded to the chosen echopype
-      detector. Unspecified keys fall back to that method's defaults.
+      Keyword arguments for the chosen echopype method, such as var_name,
+      channel, threshold (dB) and offset_m ("basic") or offset ("blackwell").
+      Unset keys use the method's defaults; the full list is in the notes.
+    notes: >
+      basic: var_name (str), the Sv variable in dB, e.g. "Sv"; channel (str),
+      the channel to select; threshold (float or (float, float), default
+      -50.0), the Sv threshold in dB, where a single value is the lower bound
+      (upper = lower + 10 dB) and a 2-tuple gives (tmin, tmax); offset_m
+      (float, default 0.5), metres subtracted from the detected crossing;
+      bin_skip_from_surface (int, default 200), shallow range bins ignored
+      before searching.
 
-      basic:
-        var_name (str): Name of Sv variable (dB), e.g. "Sv".
-        channel (str): Channel identifier to select.
-        threshold (float | (float, float), default -50.0): Sv threshold in
-          dB; a single value is treated as the lower bound (upper = lower
-          + 10 dB), or pass a 2-tuple (tmin, tmax) for both bounds.
-        offset_m (float, default 0.5): Metres subtracted from the detected
-          crossing.
-        bin_skip_from_surface (int, default 200): Number of shallow range
-          bins to ignore before searching.
-
-      blackwell:
-        var_name (str): Name of the Sv variable to use.
-        channel (str): Channel identifier to select.
-        threshold (float | (float, float, float), default -75): Either a
-          single Sv dB threshold (angle thresholds use defaults), or a
-          3-tuple (tSv_dB, ttheta, tphi) after angle smoothing.
-        offset (float, default 0.3): Metres subtracted from the detected
-          bottom.
-        r0 (float, default 0): Shallow bound (m) of the detection range.
-        r1 (float, default 500): Deep bound (m) of the detection range.
-        wtheta (int, default 28): Square smoothing window (pixels) for
-          along-ship angle.
-        wphi (int, default 52): Square smoothing window (pixels) for
-          athwart-ship angle.
+      blackwell: var_name (str), the Sv variable; channel (str), the channel
+      to select; threshold (float or (float, float, float), default -75),
+      either a single Sv dB threshold (angle thresholds use defaults) or a
+      3-tuple (tSv_dB, ttheta, tphi) after angle smoothing; offset (float,
+      default 0.3), metres subtracted from the detected bottom; r0 (float,
+      default 0) and r1 (float, default 500), the shallow and deep bounds in m
+      of the detection range; wtheta (int, default 28) and wphi (int, default
+      52), square smoothing windows in pixels for the along-ship and
+      athwart-ship angles.
     required: false
     default: {}
 implementations:

@@ -3,21 +3,25 @@
  *
  * Pure. elk.ts runs the ELK graph in a web worker; this module only builds it
  * and reads the result, so it can be tested and timed in node. The core is
- * every node but the inputs and outputs boxes, whose lines buses.ts routes
- * around it.
+ * every node but the inputs, outputs and run config boxes, whose lines
+ * buses.ts routes around it.
  */
 import type { ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api';
 import { opLabel } from '../api/graph';
 import type { Direction } from '../state/view';
-import { clip, firstSentence, plainText } from '../text';
+import { clip, firstSentence, plainText, showValue } from '../text';
 import {
+  configRowTag,
   CONTAINER_KINDS,
   includeMeta,
   IN_HANDLE,
+  MORE_HANDLE,
   moreText,
   OUT_HANDLE,
+  rowHandle,
   rowTag,
   rowValue,
+  runConfigCount,
   splitRows,
   type InputRow,
   type Port,
@@ -60,8 +64,10 @@ export interface LayoutNode {
   /** Width of a container's header label. */
   labelWidth?: number;
   ports?: LayoutPort[];
-  /** An inputs ('in') or outputs ('out') box, placed by buses.ts instead of ELK. */
-  bus?: 'in' | 'out';
+  /** An inputs ('in'), outputs ('out') or run config ('config') box, placed by buses.ts instead of ELK. */
+  bus?: 'in' | 'out' | 'config';
+  /** Where the box's row handles are: the distance of each from the box top, by handle id. */
+  rows?: Record<string, number>;
 }
 
 export interface LayoutEdge {
@@ -73,8 +79,8 @@ export interface LayoutEdge {
   targetPort?: string;
   /** The label text and its size, so the layout leaves room for it. */
   label?: { text: string; width: number; height: number };
-  /** A line of an inputs or outputs box. */
-  bus?: 'in' | 'out';
+  /** A line of an inputs, outputs or run config box. */
+  bus?: 'in' | 'out' | 'config';
 }
 
 export interface LayoutRequest {
@@ -164,12 +170,12 @@ export function groupLabelWidth(label: string): number {
 }
 
 /** Nodes sized to their content: the least and most width per kind (diagram.css follows these). */
-export const MIN_WIDTH = { step: 170, include: 220, inputsBox: 220, outputsBox: 200 } as const;
-export const MAX_WIDTH = { step: 360, include: 360, inputsBox: 320, outputsBox: 320 } as const;
+export const MIN_WIDTH = { step: 170, include: 220, inputsBox: 220, outputsBox: 200, runConfig: 220 } as const;
+export const MAX_WIDTH = { step: 360, include: 360, inputsBox: 320, outputsBox: 320, runConfig: 320 } as const;
 /** Horizontal padding and borders inside a node, per kind. */
-export const SIDE_PAD = { step: 32, include: 32, inputsBox: 24, outputsBox: 24 } as const;
+export const SIDE_PAD = { step: 32, include: 32, inputsBox: 24, outputsBox: 24, runConfig: 24 } as const;
 
-/** Room for one header button (chevron, drill or play) beside a node's header text. */
+/** Room for one header button (a 26 px chevron, drill, play, eye or save, and its gap). */
 const TOOLS_WIDTH = 30;
 
 type SizedKind = keyof typeof MIN_WIDTH;
@@ -234,6 +240,24 @@ export function nodeLines(node: ViewNode): NodeLine[] {
           : []),
       ];
     }
+    case 'runConfig': {
+      const { name, inputs, settings, expanded, error } = node.data;
+      return [
+        line(name, 'clip', TOOLS_WIDTH),
+        line(runConfigCount(node.data), 'wrap'),
+        ...(error ? [line(error, 'wrap')] : []),
+        ...(expanded
+          ? [
+              ...inputs.flatMap((row) => {
+                const tag = configRowTag(row);
+                const value = clip(showValue(row.value) || 'null');
+                return [line(row.name, 'wrap'), line(`${value}${tag ? ` ${tag}` : ''}`, 'wrap')];
+              }),
+              ...settings.map((setting) => line(`${setting.name} ${clip(showValue(setting.value))}`, 'wrap')),
+            ]
+          : []),
+      ];
+    }
     default:
       return [];
   }
@@ -276,12 +300,17 @@ function inputListLines(rows: InputRow[], sections: boolean, more: number): Node
   ];
 }
 
+/** The lines a row adds under its value: where it comes from and where it is declared. */
+function rowNotes(row: InputRow): number {
+  return Number(row.from.length > 0) + Number(declaredLine(row) !== null);
+}
+
 /**
  * The height an expanded inputs list adds beyond 32 px a row: 18 px per section
  * header and for the more row, a line per `from` and per `declared in`.
  */
 function listExtra(rows: InputRow[], sections: boolean, more: number): number {
-  const notes = rows.filter((row) => row.from.length > 0).length + rows.filter((row) => declaredLine(row)).length;
+  const notes = rows.reduce((sum, row) => sum + rowNotes(row), 0);
   return (sectionCount(rows, sections) + Number(more > 0)) * scaled(18) + notes * scaled(LINE_HEIGHT);
 }
 
@@ -340,11 +369,58 @@ export function estimateSize(node: ViewNode): Size {
       const list = expanded ? rows.length * scaled(18) + rows.filter((row) => row.kind === 'exit').length * scaled(LINE_HEIGHT) : 0;
       return { width, height: scaled(40) + list + wrapHeight('outputsBox', lines, width) };
     }
+    case 'runConfig': {
+      const { inputs, settings, expanded, error } = node.data;
+      const lines = nodeLines(node);
+      const width = contentWidth('runConfig', lines);
+      const settingRows = settings.length > 0 ? (settings.length + 1) * scaled(18) : 0;
+      const list = expanded ? inputs.length * scaled(32) + settingRows : 0;
+      const note = error ? scaled(LINE_HEIGHT) : 0;
+      return { width, height: scaled(44) + note + list + wrapHeight('runConfig', lines, width) };
+    }
     case 'ghost':
       return { width: Math.max(textWidth(node.data.stepId) + 32, 140), height: 52 };
     default:
       return { width: 150, height: 44 };
   }
+}
+
+/** Where the row list of a box starts below its top, as estimateSize assumes. */
+const ROWS_TOP = 40;
+
+/**
+ * Where the row handles of a box are, as distances from its top by handle id:
+ * the rows of the recipe inputs box a run config line can end on, and the
+ * input rows of the run config box. Only for boxes listing their rows.
+ *
+ * The rows are estimated as estimateSize lays them out, then stretched so the
+ * list fills a measured height.
+ *
+ * Args:
+ *   node: The box.
+ *   height: Its measured height, when the browser has measured it.
+ */
+export function rowOffsets(node: ViewNode, height?: number): Record<string, number> | undefined {
+  let rows: [string, number][];
+  let top = scaled(ROWS_TOP);
+  if (node.kind === 'inputsBox' && node.data.configLines && node.data.expanded && node.data.include === null) {
+    rows = node.data.rows.map((row) => [rowHandle(row.name), scaled(32) + rowNotes(row) * scaled(LINE_HEIGHT)]);
+    if (node.data.more > 0) rows.push([MORE_HANDLE, scaled(18)]);
+  } else if (node.kind === 'runConfig' && node.data.expanded) {
+    rows = node.data.inputs.map((row) => [rowHandle(row.name), scaled(32)]);
+    if (node.data.error) top += scaled(LINE_HEIGHT);
+  } else {
+    return undefined;
+  }
+  const estimated = estimateSize(node).height;
+  const stretch = height === undefined || estimated <= top ? 1 : (height - top) / (estimated - top);
+  const offsets: Record<string, number> = {};
+  let at = 0;
+  for (const [id, rowHeight] of rows) {
+    offsets[id] = top + (at + rowHeight / 2) * stretch;
+    at += rowHeight;
+  }
+  return offsets;
 }
 
 /** Where a handle sits along its side, matching Handles in nodes/common.tsx. */
@@ -384,6 +460,13 @@ function nodePorts(view: View): Map<string, LayoutPort[]> {
   return ports;
 }
 
+/** The node kinds buses.ts places, and their bus kind. */
+const BUS_KINDS: Partial<Record<ViewNode['kind'], LayoutNode['bus']>> = {
+  inputsBox: 'in',
+  outputsBox: 'out',
+  runConfig: 'config',
+};
+
 /**
  * The layout request for a view.
  *
@@ -411,13 +494,16 @@ export function layoutRequest(
           ...(node.parentId ? { parent: node.parentId } : {}),
         };
       }
-      const bus = node.kind === 'inputsBox' ? 'in' : node.kind === 'outputsBox' ? 'out' : null;
+      const bus = BUS_KINDS[node.kind] ?? null;
+      const size = sizes.get(node.id) ?? estimateSize(node);
+      const rows = rowOffsets(node, size.height);
       return {
         id: node.id,
-        ...(sizes.get(node.id) ?? estimateSize(node)),
+        ...size,
         ...(node.parentId ? { parent: node.parentId } : {}),
         ...(ports.has(node.id) ? { ports: ports.get(node.id) } : {}),
         ...(bus ? { bus } : {}),
+        ...(rows ? { rows } : {}),
       };
     }),
     edges: view.edges.map((edge) => ({

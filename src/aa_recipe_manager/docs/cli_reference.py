@@ -39,6 +39,13 @@ EXAMPLES: dict[str, list[str]] = {
         "aa-recipe site-data",
         "aa-recipe site-data --check",
     ],
+    "config init": ["aa-recipe config init dive_analysis.yaml"],
+    "config set": [
+        "aa-recipe config set dive_analysis.yaml executor=dask dask_workers=4",
+        "aa-recipe config set dive_analysis.yaml --input dive_number=3",
+        "aa-recipe config set dive_analysis.yaml user_cache_dir=./cache "
+        "--config shared.config.yaml",
+    ],
     "env create": [
         "aa-recipe env create quickstart.yaml --path .venv-quickstart",
         "aa-recipe env create outputs/provenance/provenance.yaml --path .venv-replay",
@@ -68,6 +75,21 @@ EXAMPLES: dict[str, list[str]] = {
         "aa-recipe preview dive_analysis.yaml --to dive_sv",
         "aa-recipe preview quickstart.yaml --json",
         "aa-recipe preview sub/recipe.yaml --base-dir sub",
+    ],
+    "edit": [
+        "aa-recipe edit dive_analysis.yaml --set dive_remove_noise.SNR_threshold=5"
+        " --dry-run",
+        "aa-recipe edit dive_analysis.yaml --checkpoint dive_apply_mask=always",
+        "aa-recipe edit dive_analysis.yaml --override"
+        " sub_recipes/processing_lvl_2_user.yaml:noise_snr_threshold=5"
+        " -o dive_analysis_v2.yaml",
+        "aa-recipe edit dive_analysis.yaml --ops edits.json --copy-to ./work",
+        "aa-recipe edit dive_analysis.yaml --copy-to ./work"
+        " --set dive_remove_noise.SNR_threshold=5",
+        "aa-recipe edit dive_analysis.yaml --copy-to ./work --undo",
+        "aa-recipe edit dive_analysis.yaml -o ../variants/dive_v2.yaml",
+        "aa-recipe edit dive_analysis.yaml -o ../variants/dive_v2.yaml --keep-paths",
+        "aa-recipe edit dive_analysis.yaml -o ../variants/dive_v2.yaml --dry-run",
     ],
     "artifacts": [
         "aa-recipe artifacts dive_analysis.yaml dive_file_mvbs",

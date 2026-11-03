@@ -530,3 +530,45 @@ def test_builtin_registry_reuses_parses_but_not_objects():
     assert first.list_ops() == second.list_ops()
     assert first.get_spec("compute_sv") == second.get_spec("compute_sv")
     assert first.get_spec("compute_sv") is not second.get_spec("compute_sv")
+
+
+def test_builtin_exclusive_params_name_each_other():
+    params = load_builtin_registry().get_spec("run_hdbscan").params
+    assert params["min_cluster_size"].constraints == {
+        "exclusive_with": ["min_cluster_size_fraction"]
+    }
+    assert params["min_cluster_size_fraction"].constraints == {
+        "exclusive_with": ["min_cluster_size"]
+    }
+
+
+@pytest.mark.parametrize(
+    "names, reason",
+    [
+        ("[min_size_typo]", "names 'min_size_typo', which is not another param"),
+        ("[min_size]", "names 'min_size', which is not another param"),
+        ("min_fraction", "must be a list of param names"),
+    ],
+)
+def test_spec_load_rejects_a_bad_exclusive_with(tmp_path, names, reason):
+    from aa_recipe_manager.registry.loader import load_registry_file
+
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        "op: bad\n"
+        "description: Bad exclusivity.\n"
+        "params:\n"
+        "  min_size:\n"
+        "    type: int\n"
+        "    required: false\n"
+        "    constraints:\n"
+        f"      exclusive_with: {names}\n"
+        "  min_fraction:\n"
+        "    type: float\n"
+        "    required: false\n"
+    )
+    with pytest.raises(ValueError, match="Invalid spec") as raised:
+        load_registry_file(path, Registry())
+    assert f"op 'bad' param 'min_size': constraints.exclusive_with {reason}" in str(
+        raised.value
+    )

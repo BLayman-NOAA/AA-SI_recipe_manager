@@ -107,7 +107,7 @@ aa-recipe generate quickstart.yaml -o quickstart.ipynb
 
 writes a Jupyter notebook with one cell per step, calling the same functions
 with the same parameters, for stepping through and experimenting
-interactively. The **Notebook** tab above shows what it contains.
+interactively. The **Python** tab above shows the calls it makes.
 `--format script` writes a Python script instead.
 
 ## Next

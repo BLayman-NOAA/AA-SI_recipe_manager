@@ -12,18 +12,22 @@ import { estimateSize } from '../src/diagram/layout';
 import { arrowPath } from '../src/diagram/edges/RouteEdge';
 import { edgeTooltip, keepInPlace, layoutKey, resized } from '../src/diagram/useLayout';
 import type { StepBadge } from '../src/runs/badges';
+import { useEditingStore } from '../src/editing/store';
 import { useRunStore } from '../src/runs/store';
 import { RunControlsContext, useRunControls } from '../src/runs/useRunControls';
 import { useSessionStore } from '../src/state/session';
 import { createViewStore, useView, ViewStoreContext } from '../src/state/view';
 import { laidOut, nodeElement, installFlowStubs } from './flowStubs';
 import {
+  apiErrorResponse,
   declaredGraph,
+  editableSession,
   makeSession,
   mappedInputGraph,
   mockApi,
   nestedInputGraph,
   renderWithClient,
+  runConfigBlock,
   withSubGraph,
 } from './helpers';
 
@@ -306,7 +310,7 @@ describe('Diagram', () => {
       await laidOut();
       const step = (id: string) => nodeElement(id).querySelector<HTMLElement>('.rc-step')!;
       await waitFor(() => expect(step('seed')).toHaveClass('rc-pred-survey', 'rc-survey-backed'));
-      expect(nodeElement(CHAIN)).toHaveTextContent('2 survey');
+      expect(nodeElement(CHAIN)).toHaveTextContent('2 loaded (survey)');
       expect(step('total')).toHaveClass('rc-pred-compute');
       expect(step('total').querySelector('.rc-run-pending')).not.toBeNull();
       expect(step('seed').querySelector('.rc-letter-S')).toHaveTextContent('S');
@@ -413,7 +417,7 @@ describe('Diagram', () => {
       const user = userEvent.setup();
       const fetchMock = mockApi({
         [`GET /api/sessions/${SID}`]: makeSession(),
-        [`POST /api/sessions/${SID}/runs`]: { id: 'r5', session: SID, status: 'starting' },
+        [`POST /api/sessions/${SID}/runs`]: { id: 'r5', session: SID, status: 'starting', reloaded: [] },
       });
       useRunStore.getState().resetFor(SID);
       renderWithClient(
@@ -691,3 +695,253 @@ describe('a sub-recipe opened on its own', () => {
     expect(JSON.parse(String(post[1]!.body))).toEqual({ path: 'C:/r/with_sub.yaml' });
   });
 });
+
+describe('the save icon', () => {
+  /** with_sub with `total` checkpointed and `chain_inc` never saved. */
+  function checkpointGraph() {
+    const graph = structuredClone(withSubGraph);
+    for (const node of graph.nodes) {
+      if (node.kind !== 'step') continue;
+      if (node.id === 'total') node.checkpoint = 'always';
+      if (node.id === 'chain_inc') node.checkpoint = 'never';
+    }
+    return graph;
+  }
+
+  function saveIcon(stepId: string): HTMLElement {
+    return nodeElement(stepId).querySelector<HTMLElement>('.rc-save')!;
+  }
+
+  beforeEach(() => {
+    useSessionStore.getState().setSid(null);
+    useView.getState().resetScope();
+    useEditingStore.getState().reset();
+  });
+
+  it('draws the recipe setting in three states and toggles it on click', async () => {
+    const toggle = vi.fn();
+    render(
+      <ViewStoreContext.Provider value={createViewStore()}>
+        <DiagramView
+          graph={checkpointGraph()}
+          scope="with_sub"
+          checkpoint={{ toggle, enabled: (document) => document !== 'sub/leaf.yaml' }}
+        />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    const total = saveIcon('total');
+    expect(total).toHaveClass('rc-save-on');
+    expect(total).toHaveAttribute('title', 'Checkpoint: always in the recipe; click removes it');
+    expect(total.querySelector('path')).toHaveAttribute('d', expect.stringMatching(/^M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5/));
+    const seed = saveIcon('seed');
+    expect(seed).toHaveClass('rc-save-off');
+    expect(seed).toHaveAttribute('title', 'Make this a checkpoint (checkpoint: always)');
+    expect(seed.querySelector('path')?.getAttribute('d')).not.toBe(total.querySelector('path')?.getAttribute('d'));
+
+    const user = userEvent.setup();
+    await user.click(total);
+    await user.click(seed);
+    expect(toggle.mock.calls).toEqual([
+      ['total', false],
+      ['seed', true],
+    ]);
+  });
+
+  it('says when the recipe sets another value, and is disabled for a file the session may not edit', async () => {
+    const toggle = vi.fn();
+    const store = createViewStore();
+    store.setState({ drill: [CHAIN] });
+    const { unmount } = render(
+      <ViewStoreContext.Provider value={store}>
+        <DiagramView graph={checkpointGraph()} scope="with_sub" checkpoint={{ toggle, enabled: () => true }} />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    const chain = saveIcon('chain_inc');
+    expect(chain).toHaveClass('rc-save-set');
+    expect(chain).toHaveAttribute('title', 'checkpoint: never in the recipe; click sets always');
+    await userEvent.setup().click(chain);
+    expect(toggle).toHaveBeenCalledWith('chain_inc', true);
+    unmount();
+
+    render(
+      <ViewStoreContext.Provider value={store}>
+        <DiagramView
+          graph={checkpointGraph()}
+          scope="with_sub"
+          checkpoint={{ toggle, enabled: (document) => document !== 'sub/chain.yaml' }}
+        />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    expect(saveIcon('chain_inc')).toBeDisabled();
+    expect(saveIcon('chain_inc')).toHaveAttribute('title', 'checkpoint: never (this file is read only here)');
+  });
+
+  it('is absent without the checkpoint action, as on the docs site', async () => {
+    render(
+      <ViewStoreContext.Provider value={createViewStore()}>
+        <DiagramView graph={checkpointGraph()} scope="with_sub" />
+      </ViewStoreContext.Provider>,
+    );
+    await laidOut();
+    expect(document.querySelector('.rc-save')).toBeNull();
+  });
+
+  it('posts set_checkpoint from the application diagram', async () => {
+    const user = userEvent.setup();
+    const session = editableSession({ graph: checkpointGraph() });
+    const fetchMock = mockApi({
+      [`GET /api/sessions/${SID}`]: session,
+      [`POST /api/sessions/${SID}/edits`]: { session, changed: true, changed_hashes: [], entries: [] },
+    });
+    useSessionStore.getState().setSid(SID);
+    renderWithClient(<Diagram />);
+    await laidOut();
+    await waitFor(() => expect(saveIcon('total')).toBeEnabled());
+    await user.click(saveIcon('total'));
+    await user.click(saveIcon('seed'));
+    await waitFor(() => expect(edits(fetchMock)).toHaveLength(2));
+    expect(edits(fetchMock)).toEqual([
+      { operations: [{ kind: 'set_checkpoint', step: 'total', value: null, position: null }], version: 0 },
+      { operations: [{ kind: 'set_checkpoint', step: 'seed', value: 'always', position: null }], version: 0 },
+    ]);
+  });
+
+  it('is disabled in a read only session', async () => {
+    mockApi({ [`GET /api/sessions/${SID}`]: makeSession() });
+    useSessionStore.getState().setSid(SID);
+    renderWithClient(<Diagram />);
+    await laidOut();
+    expect(saveIcon('seed')).toBeDisabled();
+  });
+
+  it("shows the DAG builder's refusal in the status bar", async () => {
+    const user = userEvent.setup();
+    const message =
+      "step 'chain_inc' is collected after 'seed' disposes of its inputs; checkpoint it or the collector cannot run";
+    mockApi({
+      [`GET /api/sessions/${SID}`]: editableSession(),
+      [`POST /api/sessions/${SID}/edits`]: apiErrorResponse(422, 'EditRejected', message, { problems: [message] }),
+    });
+    useSessionStore.getState().setSid(SID);
+    renderWithClient(<Diagram />);
+    await laidOut();
+    await waitFor(() => expect(saveIcon('seed')).toBeEnabled());
+    await user.click(saveIcon('seed'));
+    await waitFor(() => expect(useEditingStore.getState().error).toBe(message));
+  });
+});
+
+describe('the run config box', () => {
+  /** A session whose config sets n, the session's value for n coming from `source`. */
+  function configSession(source: 'config' | 'session' | 'missing', value: unknown = 5) {
+    const base = makeSession();
+    const field = { ...base.inputs.declared[0], source, value };
+    return makeSession({
+      inputs: { declared: [field], values: { n: value } },
+      run_config: runConfigBlock({
+        contents: { inputs: { n: 5, stray: 'x' }, settings: { user_cache_dir: './u', temp_dir: null } },
+        unused_inputs: ['stray'],
+      }),
+    });
+  }
+
+  function open(session = configSession('config')) {
+    mockApi({ [`GET /api/sessions/${SID}`]: session });
+    useSessionStore.getState().setSid(SID);
+  }
+
+  const handle = (element: HTMLElement, id: string) => element.querySelector(`.react-flow__handle[data-handleid="${id}"]`);
+
+  beforeEach(() => {
+    useSessionStore.getState().setSid(null);
+    useView.getState().resetScope();
+    useView.setState({ connected: false, direction: 'RIGHT', textSize: 1 });
+  });
+
+  it('draws the box titled with the file name, collapsed, with one line into the inputs box', async () => {
+    open();
+    renderWithClient(<Diagram />);
+    await laidOut();
+    const box = nodeElement('runConfig');
+    expect(box.querySelector('.rc-box-title')).toHaveTextContent('with_sub.config.yaml');
+    expect(box).toHaveTextContent('2 inputs, 1 setting');
+    expect(box.querySelector('.rc-box-rows')).toBeNull();
+    await waitFor(() => expect(document.querySelector('.react-flow__edge.rc-edge-bus-config')).not.toBeNull());
+    expect(document.querySelector('.rc-edge-label.rc-edge-label-config')).toHaveTextContent('n');
+    expect(handle(nodeElement('inputs'), 'config')).not.toBeNull();
+    expect(screen.getByLabelText('Legend')).toHaveTextContent('Run config file');
+  });
+
+  it('lists the rows and settings, and gives each inputs row a handle, when both boxes are expanded', async () => {
+    const user = userEvent.setup();
+    open();
+    renderWithClient(<Diagram />);
+    await laidOut();
+    await user.click(within(nodeElement('runConfig')).getByRole('button', { name: 'Show run config' }));
+    await user.click(within(nodeElement('inputs')).getByRole('button', { name: 'Show inputs' }));
+    await waitFor(() => expect(nodeElement('runConfig').querySelector('.rc-box-rows')).not.toBeNull());
+    const box = nodeElement('runConfig');
+    expect(box.querySelector('.rc-box-row-config-set')).toHaveTextContent('n5');
+    expect(box.querySelector('.rc-box-row-config-unused')).toHaveTextContent('not used by this recipe');
+    expect(box.querySelector('.rc-box-section')).toHaveTextContent('Settings');
+    expect(box.querySelector('.rc-box-row-setting')).toHaveTextContent('user_cache_dir./u');
+    await waitFor(() => expect(handle(nodeElement('inputs'), 'row:n')).not.toBeNull());
+    expect(handle(box, 'row:n')).not.toBeNull();
+    expect(handle(box, 'row:stray')).toBeNull();
+    await waitFor(() =>
+      expect(document.querySelector('.react-flow__edge[data-id="e:runConfig.n->inputs"]')).not.toBeNull(),
+    );
+  });
+
+  it('draws the line of an overridden value muted and dotted', async () => {
+    open(configSession('session', 7));
+    renderWithClient(<Diagram />);
+    await laidOut();
+    await waitFor(() => expect(document.querySelector('.react-flow__edge.rc-edge-bus-config')).not.toBeNull());
+    expect(document.querySelector('.react-flow__edge.rc-edge-bus-config')).toHaveClass('rc-edge-muted');
+    fireEvent.doubleClick(nodeElement('runConfig'));
+    await waitFor(() => expect(nodeElement('runConfig').querySelector('.rc-box-rows')).not.toBeNull());
+    expect(nodeElement('runConfig').querySelector('.rc-box-row-config-overridden')).toHaveTextContent(
+      'overridden in session',
+    );
+  });
+
+  it('draws a required input with no value as a red row', async () => {
+    open(configSession('missing', null));
+    useView.setState({ expandedBoxes: new Set(['inputs']) });
+    renderWithClient(<Diagram />);
+    await laidOut();
+    const row = nodeElement('inputs').querySelector('li.rc-box-row-missing');
+    expect(row).toHaveTextContent('n');
+    expect(row).toHaveTextContent('required');
+  });
+
+  it('selects the box on click and is not drawn drilled in or without a file', async () => {
+    open();
+    const view = renderWithClient(<Diagram />);
+    await laidOut();
+    fireEvent.click(nodeElement('runConfig'));
+    expect(useView.getState().selected).toEqual({ kind: 'runConfig', id: 'runConfig' });
+    act(() => useView.setState({ drill: [CHAIN] }));
+    await laidOut();
+    expect(document.querySelector('.react-flow__node[data-id="runConfig"]')).toBeNull();
+    view.unmount();
+
+    useView.getState().resetScope();
+    open(makeSession());
+    renderWithClient(<Diagram />);
+    await laidOut();
+    expect(document.querySelector('.react-flow__node[data-id="runConfig"]')).toBeNull();
+    expect(handle(nodeElement('inputs'), 'config')).toBeNull();
+  });
+});
+
+/** The bodies posted to the session's edits route. */
+function edits(fetchMock: ReturnType<typeof mockApi>): unknown[] {
+  return fetchMock.mock.calls
+    .filter(([url, init]) => init?.method === 'POST' && String(url).endsWith('/edits'))
+    .map(([, init]) => JSON.parse(String(init?.body)));
+}

@@ -3,12 +3,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { findStep } from '../api/graph';
 import type { SessionDocument } from '../api/models';
-import { queryKeys, useCloseSession } from '../api/queries';
+import { queryKeys, useCloseSession, useRedo, useRevert, useUndo } from '../api/queries';
 import { showEchogram } from '../echogram/show';
 import type { RunControls } from '../runs/useRunControls';
 import { useSessionStore } from '../state/session';
 import { useView } from '../state/view';
-import { resetLayout, showPane, togglePane } from './dock';
+import { afterFlush } from '../yaml/editors';
+import { popoutPane, resetLayout, returnPane, showPane, togglePane } from './dock';
 import { useDialogs } from './dialogs';
 import type { Commands } from './menus';
 
@@ -16,9 +17,18 @@ import type { Commands } from './menus';
 export function useCommands(run: RunControls): Commands {
   const { mutate: closeSession } = useCloseSession();
   const client = useQueryClient();
+  const sid = useSessionStore((state) => state.sid);
+  const { mutate: undo } = useUndo(sid);
+  const { mutate: redo } = useRedo(sid);
+  const { mutate: revert } = useRevert(sid);
 
   return useMemo<Commands>(() => {
     const view = () => useView.getState();
+    /** The open session as the client holds it. */
+    const session = () => {
+      const sid = useSessionStore.getState().sid;
+      return sid ? client.getQueryData<SessionDocument>(queryKeys.session(sid)) : undefined;
+    };
     return {
       openRecipe: () => showPane('recipes'),
       openSession: (sid) => useSessionStore.getState().setSid(sid),
@@ -27,12 +37,34 @@ export function useCommands(run: RunControls): Commands {
         const message = 'Delete this session? Its saved inputs and settings are removed.';
         if (sid && window.confirm(message)) closeSession(sid);
       },
+      // Save and Save As first send the YAML typing still waiting, so they write it.
+      save: () =>
+        afterFlush(client, () => {
+          if (session()?.dirty.length) useDialogs.getState().show('save');
+        }),
+      saveAs: () =>
+        afterFlush(client, () => {
+          if (session()) useDialogs.getState().show('saveAs');
+        }),
+      revert: () => {
+        const message =
+          'Discard every unsaved change? The recipe files go back to what is saved on disk, and the undo history is cleared.';
+        if (session()?.dirty.length && window.confirm(message)) revert();
+      },
+      undo: () => {
+        if (session()?.history.can_undo) undo();
+      },
+      redo: () => {
+        if (session()?.history.can_redo) redo();
+      },
       findStep: () => {
         showPane('diagram');
         view().requestFind();
       },
       showPane,
       togglePane,
+      popoutPane,
+      returnPane,
       toggleConnected: () => view().setConnected(!view().connected),
       expandAll: () => {
         showPane('diagram');
@@ -75,5 +107,5 @@ export function useCommands(run: RunControls): Commands {
         if (step) showEchogram(sid, step);
       },
     };
-  }, [closeSession, client, run]);
+  }, [closeSession, client, run, undo, redo, revert]);
 }

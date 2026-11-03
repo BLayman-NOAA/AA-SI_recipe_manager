@@ -1,33 +1,37 @@
 /**
- * Keep the echogram layers' out of date marks current, and draw a step a run
- * was started to save once that run finishes. Mounted by the Shell, so both
+ * Keep the echogram layers' freshness current, and draw a step a run was
+ * started to save once that run finishes. Mounted by the Shell, so both
  * happen while the pane is closed too.
  */
 import { useEffect } from 'react';
 import { useRunStore } from '../runs/store';
-import { useCurrentPreview } from '../runs/usePreviewIntent';
-import { computedSteps, previewHashes } from './layers';
+import { useRunAllPreview } from '../runs/usePreviewIntent';
+import { computedSteps } from './layers';
 import { useEchogramStore } from './store';
 
 /** Renders nothing; a component of its own, so its updates render nothing else of the Shell. */
 export function EchogramWatcher() {
-  const preview = useCurrentPreview().data;
+  // The run all preview, since a preview for the selection leaves the other steps untargeted.
+  const preview = useRunAllPreview().data ?? null;
   const last = useRunStore((state) => state.last);
-  // The fields the marks read, so a mark's own change does not run this again.
-  const drawn = useEchogramStore((state) =>
-    state.layers.map((layer) => `${layer.id}@${layer.stepHash}@${layer.addedAt}`).join('|'),
-  );
+  const start = useRunStore((state) => (state.last ? state.previews[state.last.runId] ?? null : null));
+  const sid = useEchogramStore((state) => state.sid);
   const pendingRun = useEchogramStore((state) => state.pendingRun?.runId ?? null);
+  const followed = useRunStore((state) => [state.current, state.last].some((run) => run && run.runId === pendingRun));
 
   useEffect(() => {
-    useEchogramStore.getState().markOutOfDate(previewHashes(preview), computedSteps(last));
-  }, [preview, last, drawn]);
+    useEchogramStore.getState().track(preview, computedSteps(last, start));
+  }, [preview, last, start, sid]);
 
   useEffect(() => {
     if (!last || pendingRun !== last.runId) return;
-    const start = useRunStore.getState().previews[last.runId] ?? null;
     useEchogramStore.getState().runFinished(last, start);
-  }, [last, pendingRun]);
+  }, [last, start, pendingRun]);
+
+  // A run lost without its run_finished, as when the server restarts, no longer blocks the pane.
+  useEffect(() => {
+    if (pendingRun && !followed) useEchogramStore.getState().cancelRun();
+  }, [pendingRun, followed]);
 
   return null;
 }

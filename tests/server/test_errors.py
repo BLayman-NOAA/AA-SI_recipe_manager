@@ -4,9 +4,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from aa_recipe_manager.editing import (
+    ChangedOnDisk,
+    EditError,
+    EditRejected,
+    TargetExists,
+    UnknownTarget,
+    WorkspaceError,
+)
 from aa_recipe_manager.exceptions import (
     RecipeValidationError,
     UpstreamNotCachedError,
@@ -17,6 +27,7 @@ from aa_recipe_manager.server.errors import (
     InvalidRecipe,
     RunNotActive,
     RunNotFound,
+    StaleVersion,
     StepNotFound,
     translate_error,
 )
@@ -80,6 +91,29 @@ def test_invalid_recipe_is_422_with_its_problems():
     assert status == 422
     assert body["error"] == "InvalidRecipe"
     assert body["details"] == problems
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "details"),
+    [
+        (
+            TargetExists("Exists.", [Path("C:/r/a.yaml")]),
+            409,
+            {"paths": ["C:/r/a.yaml"]},
+        ),
+        (ChangedOnDisk([Path("C:/r/b.yaml")]), 409, {"paths": ["C:/r/b.yaml"]}),
+        (StaleVersion("Stale.", 4), 409, {"version": 4}),
+        (EditRejected(["bad", "worse"]), 422, {"problems": ["bad", "worse"]}),
+        (UnknownTarget("No step 'x' in the recipe."), 404, None),
+        (WorkspaceError("Cannot."), 400, None),
+        (EditError("Cannot either."), 400, None),
+    ],
+)
+def test_editing_errors(exc, status, details):
+    code, body = translate_error(exc)
+    assert code == status
+    assert body["error"] == type(exc).__name__
+    assert body["details"] == details
 
 
 def test_step_not_found_is_404_naming_the_step():

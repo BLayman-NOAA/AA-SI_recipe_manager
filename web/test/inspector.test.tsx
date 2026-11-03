@@ -1,17 +1,37 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
+import type { DockviewApi } from 'dockview-react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Graph, StepNode } from '../src/api/graph';
+import { findInclude, type Graph, type GraphParam, type StepNode } from '../src/api/graph';
+import type { SessionDocument } from '../src/api/models';
+import { STALE_VERSION_MESSAGE } from '../src/api/queries';
+import { useEditingStore } from '../src/editing/store';
 import { opReferenceUrl, paramRows } from '../src/inspector/details';
+import { SURVEY_BANNER } from '../src/inspector/StepParamForm';
 import { InputsPane } from '../src/inputs/InputsPane';
 import { DocsEnvContext } from '../src/env';
 import { Inspector } from '../src/inspector/Inspector';
 import { InspectorBody } from '../src/inspector/InspectorBody';
 import { useRunStore } from '../src/runs/store';
+import { useDock } from '../src/shell/dock';
 import { useSessionStore } from '../src/state/session';
 import { createViewStore, useView, ViewStoreContext } from '../src/state/view';
 import artifactsFixture from './fixtures/artifacts.sv_mapped.json';
-import { declaredGraph, makeSession, mockApi, nestedInputGraph, renderWithClient, withSubGraph } from './helpers';
+import {
+  apiErrorResponse,
+  declaredGraph,
+  editableSession,
+  makePreview,
+  makeSession,
+  mockApi,
+  nestedInputGraph,
+  previewStep,
+  renderWithClient,
+  runConfigBlock,
+  testQueryClient,
+  withSubGraph,
+} from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
 const CHAIN = 'inc:sub/chain.yaml';
@@ -156,7 +176,7 @@ describe('Inspector', () => {
 
     expect(await screen.findByText('abc123')).toBeInTheDocument();
     expect(screen.getByText('held by').closest('tr')).toHaveTextContent('user');
-    expect(screen.getByText('predicted').closest('tr')).toHaveTextContent('load-user');
+    expect(screen.getByText('predicted').closest('tr')).toHaveTextContent('loaded from user cache');
     expect(screen.getByText('last run').closest('tr')).toHaveTextContent('computed in 2.5 s (user)');
     expect(screen.getByText('this run').closest('tr')).toHaveTextContent('saved, pinned as a target');
     expect(screen.getByText('The hash changed since the last run.')).toBeInTheDocument();
@@ -166,6 +186,17 @@ describe('Inspector', () => {
     await user.click(screen.getByRole('button', { name: 'Open log' }));
     expect(useRunStore.getState().logStep).toBe('total');
     expect(useRunStore.getState().logFocus).toBeGreaterThan(0);
+  });
+
+  it('words what becomes of the step in this run', async () => {
+    mockApi({
+      [`GET /api/sessions/${SID}`]: makeSession(),
+      [`GET /api/sessions/${SID}/preview?targets=seed`]: makePreview([previewStep('seed', { checkpoint: 'memory-only' })]),
+    });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+    await waitFor(() => expect(screen.getByText('this run').closest('tr')).toHaveTextContent('kept in memory'));
   });
 
   it('shows an include with its inputs, where its outputs go, and drills in', async () => {
@@ -409,6 +440,35 @@ describe('Inspector', () => {
     expect(offset).toHaveTextContent('(from the run config)');
   });
 
+  it('shows the run config file, its inputs with what becomes of each and its settings for the box', async () => {
+    const base = makeSession();
+    const session = makeSession({
+      inputs: { declared: [{ ...base.inputs.declared[0], source: 'session', value: 7 }], values: { n: 7 } },
+      run_config: runConfigBlock({
+        contents: { inputs: { n: 5, stray: 'x' }, settings: { user_cache_dir: './u', temp_dir: null } },
+        unused_inputs: ['stray'],
+        shared_with: ['C:/recipes/other.yaml'],
+      }),
+    });
+    mockApi({ [`GET /api/sessions/${SID}`]: session });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'runConfig', id: 'runConfig' });
+    renderWithClient(<Inspector />);
+
+    const title = await screen.findByText('with_sub.config.yaml');
+    const pane = title.closest('.rc-inspector') as HTMLElement;
+    expect(pane).toHaveTextContent('C:/recipes/with_sub.config.yaml');
+    expect(pane).toHaveTextContent('as the CLI finds it');
+    expect(within(pane).getByTitle('C:/recipes/other.yaml')).toHaveTextContent('other.yaml');
+    const row = (name: string) => within(pane).getByText(name, { selector: 'th' }).closest('tr')!;
+    expect(row('n')).toHaveTextContent('5 overridden in session');
+    expect(row('n')).toHaveTextContent('The session uses 7.');
+    expect(row('stray')).toHaveTextContent('not used by this recipe');
+    expect(row('user_cache_dir')).toHaveTextContent('./u');
+    expect(row('temp_dir')).toHaveTextContent('null');
+    expect(within(pane).getByRole('button', { name: 'Open the Run Config pane' })).toBeInTheDocument();
+  });
+
   it('lists an outputs box with where each output goes', async () => {
     openSession(declaredGraph());
     useView.getState().select({ kind: 'outputsBox', id: 'total' });
@@ -456,8 +516,887 @@ describe('Inspector', () => {
   });
 });
 
+const EDITS = `POST /api/sessions/${SID}/edits`;
+
+function edited(session: SessionDocument) {
+  return { session, changed: true, changed_hashes: [], entries: [] };
+}
+
+/** Open an editable session on a graph, answering edits with the same session. */
+function openEditable(graph: Graph, routes: Record<string, unknown> = {}) {
+  const session = editableSession({ graph, version: 2 });
+  const post = vi.fn((_init: RequestInit | undefined) => edited(session));
+  const fetchMock = mockApi({ [`GET /api/sessions/${SID}`]: session, [EDITS]: post, ...routes });
+  useSessionStore.getState().setSid(SID);
+  return { post, fetchMock };
+}
+
+function sent(post: ReturnType<typeof vi.fn>, call = 0): unknown {
+  return JSON.parse(String((post.mock.calls[call][0] as RequestInit | undefined)?.body));
+}
+
+function param(name: string, type: string | null, value: unknown, overrides: Partial<GraphParam> = {}): GraphParam {
+  return {
+    name,
+    type,
+    units: null,
+    description: null,
+    default: null,
+    set: value !== undefined,
+    value: value ?? null,
+    required: false,
+    constraints: {},
+    fingerprint_mode: 'off',
+    ...overrides,
+  };
+}
+
+/** with_sub with seed given a parameter of each kind next to its bound n. */
+function typesGraph(): Graph {
+  const graph = structuredClone(withSubGraph);
+  const seed = graph.nodes.find((node) => node.id === 'seed') as StepNode;
+  seed.params.push(
+    param('gain', 'float', 5, { units: 'dB', description: 'Gain to add.' }),
+    param('count', 'int', undefined, { default: 2 }),
+    param('flag', 'bool', undefined, { default: false }),
+    param('items', 'list', [1]),
+    param('out', 'path', '/a', { required: true, constraints: { must_exist: true } }),
+    param('label', 'str', 'old'),
+    param('extra', null, 3, { fingerprint_mode: null }),
+    param('rate', 'float', '.nan'),
+  );
+  return graph;
+}
+
+/** The rows of an Overrides section. */
+function overrideRows(section: Element): HTMLDetailsElement[] {
+  return [...section.querySelectorAll<HTMLDetailsElement>('details.rc-row-details')];
+}
+
+/** nestedInputGraph with leaf_add reading `offset` as a param. */
+function offsetGraph(): Graph {
+  const graph = nestedInputGraph();
+  const leaf = graph.nodes.find((node) => node.id === 'leaf_add') as StepNode;
+  leaf.params.push(param('offset', 'int', '${inputs.offset}'));
+  return graph;
+}
+
+describe('Inspector edit forms', () => {
+  it('edits a bound param where its value is set, with no choice to make', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(withSubGraph);
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+
+    const value = await screen.findByLabelText('k');
+    const field = value.closest('.rc-field') as HTMLElement;
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(value).toHaveValue(5);
+    expect(within(field).getByText('Set in with_sub.yaml (override of sub/chain.yaml)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await user.clear(value);
+    await user.type(value, '7');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(sent(post)).toEqual({
+      operations: [{ kind: 'set_include_override', include: 'sub/chain.yaml', name: 'k', value: 7, position: null }],
+      version: 2,
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled());
+  });
+
+  it('edits an input default the parent overrides at that override', async () => {
+    const user = userEvent.setup();
+    const graph = offsetGraph();
+    // As the server gives it: the loader puts the override into the step and binds it there.
+    const leafInclude = findInclude(graph, LEAF)!;
+    leafInclude.overrides.offset = 4;
+    leafInclude.bindings = { ...leafInclude.bindings, offset: [{ step: 'leaf_add', slot: 'params.offset' }] };
+    const leaf = graph.nodes.find((node) => node.id === 'leaf_add') as StepNode;
+    leaf.params.find((field) => field.name === 'offset')!.value = 4;
+    const { post } = openEditable(graph);
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+
+    const value = await screen.findByLabelText('offset');
+    expect(value).toHaveValue(4);
+    expect(value.closest('.rc-field')).toHaveTextContent('Set in sub/chain.yaml (override of sub/leaf.yaml)');
+    await user.clear(value);
+    await user.type(value, '6');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [{ kind: 'set_include_override', include: 'sub/leaf.yaml', name: 'offset', value: 6 }],
+    });
+  });
+
+  it('changes a value this session sets through the session inputs', async () => {
+    const user = userEvent.setup();
+    const session = editableSession({ graph: withSubGraph, version: 2 });
+    session.inputs.declared[0] = { ...session.inputs.declared[0], source: 'session', value: 6 };
+    session.inputs.values = { n: 6 };
+    const post = vi.fn((_init: RequestInit | undefined) => edited(session));
+    const put = vi.fn((_init: RequestInit | undefined) => session);
+    mockApi({ [`GET /api/sessions/${SID}`]: session, [EDITS]: post, [`PUT /api/sessions/${SID}/inputs`]: put });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const value = await screen.findByLabelText('n');
+    expect(value).toHaveValue(6);
+    expect(value.closest('.rc-field')).toHaveTextContent('Set in this session');
+    await user.clear(value);
+    await user.type(value, '8');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(sent(put)).toEqual({ values: { n: 8 } });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('shows a value the run config sets read only, with a way to the Run Config pane', async () => {
+    const user = userEvent.setup();
+    const session = editableSession({ graph: withSubGraph, version: 2, run_config: runConfigBlock() });
+    session.inputs.declared[0] = { ...session.inputs.declared[0], source: 'config', value: 4 };
+    session.inputs.values = { n: 4 };
+    mockApi({ [`GET /api/sessions/${SID}`]: session });
+    useSessionStore.getState().setSid(SID);
+    const setActive = vi.fn();
+    useDock.setState({ api: { getPanel: () => ({ api: { setActive } }) } as unknown as DockviewApi });
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const line = await screen.findByText(/Set in with_sub\.config\.yaml; edit it in the Run Config pane/);
+    const field = line.closest('.rc-field') as HTMLElement;
+    expect(field).toHaveTextContent('4');
+    expect(field.querySelector('input, textarea')).toBeNull();
+    await user.click(within(field).getByRole('button', { name: 'Open Run Config' }));
+    expect(setActive).toHaveBeenCalledTimes(1);
+    useDock.setState({ api: null });
+  });
+
+  it('asks before changing a value other steps use, listing them, and Cancel sends nothing', async () => {
+    const user = userEvent.setup();
+    const graph = structuredClone(withSubGraph);
+    const total = graph.nodes.find((node) => node.id === 'total') as StepNode;
+    total.params.push(param('n', 'int', '${inputs.n}'));
+    graph.edges.push({ ...graph.edges.find((edge) => edge.source === 'in:n')!, target: 'total' });
+    const { post } = openEditable(graph);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const value = await screen.findByLabelText('n');
+    expect(value.closest('.rc-field')).toHaveTextContent('Default of input n in with_sub.yaml');
+    await user.clear(value);
+    await user.type(value, '4');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Shared value' });
+    expect(dialog).toHaveTextContent('This value also feeds 1 other step:');
+    expect(within(dialog).getByText('Top level')).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['total']);
+    expect(within(dialog).getByRole('button', { name: 'Change for all 2 steps' })).toHaveFocus();
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    await user.click(cancel);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('n')).toHaveValue(4);
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await user.click(await screen.findByRole('button', { name: 'Change for all 2 steps' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [{ kind: 'set_recipe_input', document: 'with_sub.yaml', name: 'n', field: 'default', value: 4 }],
+    });
+  });
+
+  it('asks before a sub-recipe default change only when steps outside it use the value', async () => {
+    const user = userEvent.setup();
+    const graph = nestedInputGraph();
+    graph.edges.push({ ...graph.edges.find((edge) => edge.source === 'in:offset')!, target: 'total' });
+    const { post } = openEditable(graph);
+    useView.getState().select({ kind: 'include', id: LEAF });
+    renderWithClient(<Inspector />);
+
+    const inputs = (await screen.findByRole('heading', { name: 'Inputs' })).closest('section')!;
+    const row = inputs.querySelector<HTMLDetailsElement>('details.rc-row-details')!;
+    await user.click(row.querySelector('summary')!);
+    const offset = within(row).getByLabelText('offset');
+    await user.clear(offset);
+    await user.type(offset, '3');
+    await user.click(within(inputs).getByRole('button', { name: 'Apply' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Shared value' });
+    expect(dialog).toHaveTextContent('This value also feeds 1 step outside client_leaf:');
+    expect(within(dialog).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['total']);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(post).not.toHaveBeenCalled();
+
+    await user.click(within(inputs).getByRole('button', { name: 'Apply' }));
+    await user.click(await screen.findByRole('button', { name: 'Change for all 2 steps' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [{ kind: 'set_recipe_input', document: 'sub/leaf.yaml', name: 'offset', field: 'default', value: 3 }],
+    });
+  });
+
+  it('gives each type its control, shows units, required, constraints and an undeclared param, and applies once', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(typesGraph());
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const gain = await screen.findByLabelText('gain');
+    const field = (name: string) => screen.getByLabelText(name).closest('.rc-field') as HTMLElement;
+    expect(gain).toHaveAttribute('type', 'number');
+    expect(gain).toHaveValue(5);
+    expect(field('gain')).toHaveTextContent('dB');
+    expect(field('gain')).toHaveTextContent('Gain to add.');
+    expect(within(field('gain')).getByText('set')).toBeInTheDocument();
+    expect(within(field('count')).getByText('default')).toBeInTheDocument();
+    expect(screen.getByLabelText('count')).toHaveValue(2);
+    expect(screen.getByLabelText('flag')).toHaveAttribute('type', 'checkbox');
+    expect(screen.getByLabelText('items').tagName).toBe('TEXTAREA');
+    expect(screen.getByLabelText('out')).toHaveAttribute('type', 'text');
+    expect(within(field('out')).getByText('required')).toBeInTheDocument();
+    expect(field('out')).toHaveTextContent('The path must exist.');
+    expect(within(field('out')).getByText('fingerprint off')).toHaveAttribute(
+      'title',
+      'Only the path text goes into the step hash.',
+    );
+    expect(within(field('extra')).getByText('not declared by the op')).toBeInTheDocument();
+    expect(screen.getByLabelText('extra')).toHaveAttribute('type', 'number');
+    expect(screen.getByLabelText('rate')).toHaveAttribute('type', 'text');
+    expect(field('rate')).toHaveTextContent('NaN and infinity can only be written in the YAML pane.');
+
+    // A whole number typed for a float that holds it changes nothing.
+    await user.clear(gain);
+    await user.type(gain, '5.0');
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    await user.clear(gain);
+    await user.type(gain, '2.5');
+    await user.clear(screen.getByLabelText('count'));
+    await user.type(screen.getByLabelText('count'), '4');
+    await user.click(screen.getByLabelText('flag'));
+    fireEvent.change(screen.getByLabelText('items'), { target: { value: '[1, 2]' } });
+    await user.clear(screen.getByLabelText('out'));
+    await user.type(screen.getByLabelText('out'), '/b');
+    await user.click(within(field('label')).getByRole('button', { name: 'Reset' }));
+    expect(field('label')).toHaveTextContent('reset on apply');
+    await user.clear(screen.getByLabelText('extra'));
+    await user.type(screen.getByLabelText('extra'), '9');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toEqual({
+      operations: [
+        { kind: 'set_param', step: 'seed', name: 'gain', value: 2.5, path: [], position: null },
+        { kind: 'set_param', step: 'seed', name: 'count', value: 4, path: [], position: null },
+        { kind: 'set_param', step: 'seed', name: 'flag', value: true, path: [], position: null },
+        { kind: 'set_param', step: 'seed', name: 'items', value: [1, 2], path: [], position: null },
+        { kind: 'set_param', step: 'seed', name: 'out', value: '/b', path: [], position: null },
+        { kind: 'unset_param', step: 'seed', name: 'label', path: [] },
+        { kind: 'set_param', step: 'seed', name: 'extra', value: 9, path: [], position: null },
+      ],
+      version: 2,
+    });
+  });
+
+  it('blocks Apply while a draft does not parse, and refuses NaN', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(typesGraph());
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const count = await screen.findByLabelText('count');
+    await user.clear(count);
+    await user.type(count, '2.5');
+    expect(screen.getByText('Enter a whole number.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await user.clear(count);
+    await user.type(count, '2');
+    await user.type(screen.getByLabelText('rate'), '.inf');
+    expect(screen.getByText('Enter a number.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('button', { name: 'Apply' }).closest('form')!);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('shows the problems of a refused edit inline', async () => {
+    const user = userEvent.setup();
+    const refused = apiErrorResponse(422, 'EditRejected', 'k must be positive\ntotal: bad input', {
+      problems: ['k must be positive', 'total: bad input'],
+    });
+    openEditable(withSubGraph, { [EDITS]: refused });
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+
+    await user.clear(await screen.findByLabelText('k'));
+    await user.type(screen.getByLabelText('k'), '-1');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    const items = await screen.findAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(
+      expect.arrayContaining(['k must be positive', 'total: bad input']),
+    );
+    // The edit is kept for another try.
+    expect(screen.getByLabelText('k')).toHaveValue(-1);
+  });
+
+  it('shows the validation problems naming a param beside it', async () => {
+    const graph = typesGraph();
+    const session = editableSession({
+      graph,
+      validation: {
+        valid: false,
+        problems: [
+          { severity: 'error', step: 'seed', message: "param 'gain' must be below 3" },
+          { severity: 'error', step: 'total', message: 'gain is not used' },
+        ],
+      },
+    });
+    mockApi({ [`GET /api/sessions/${SID}`]: session });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+    const gain = (await screen.findByLabelText('gain')).closest('.rc-field')!;
+    expect(gain).toHaveTextContent("param 'gain' must be below 3");
+    expect(gain).not.toHaveTextContent('gain is not used');
+  });
+
+  it('puts the survey banner above the form of a survey backed step', async () => {
+    openEditable(withSubGraph, {
+      [`GET /api/sessions/${SID}/preview?targets=leaf_add`]: makePreview([
+        previewStep('leaf_add', { held_by: ['survey'], planned: 'load-survey', tier: 'survey' }),
+      ]),
+      [`GET /api/sessions/${SID}/preview?targets=seed`]: makePreview([previewStep('seed', { held_by: ['user'] })]),
+    });
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+
+    const banner = await screen.findByText(SURVEY_BANNER);
+    const form = document.querySelector('.rc-inspector form')!;
+    expect(banner.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    act(() => useView.getState().select({ kind: 'step', id: 'seed' }));
+    expect(await screen.findByText('Default of input n in with_sub.yaml')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(SURVEY_BANNER)).toBeNull());
+  });
+
+  it('keeps the read only table in a read only session', async () => {
+    openSession(withSubGraph);
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+    expect(await screen.findByText('k')).toBeInTheDocument();
+    expect(screen.getByText('k').closest('tr')).toHaveTextContent('set');
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+  });
+
+  it('gives each override row its control, then its facts, with one Apply for the section', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(withSubGraph);
+    useView.getState().select({ kind: 'include', id: CHAIN });
+    renderWithClient(<Inspector />);
+
+    const overrides = (await screen.findByRole('heading', { name: 'Overrides' })).closest('section')!;
+    expect(screen.getAllByRole('heading', { name: 'Overrides' })).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { name: 'Inputs' })).toHaveLength(1);
+    expect(screen.queryByRole('heading', { name: 'Edit overrides' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Edit defaults' })).toBeNull();
+    expect(within(overrides).getByText(/written in/)).toHaveTextContent(
+      'Values the parent sets where it includes this sub-recipe, written in with_sub.yaml.',
+    );
+    const rows = overrideRows(overrides);
+    expect(rows.map((row) => row.querySelector('summary')!.textContent)).toEqual(['source${seed.items}', 'k5']);
+    expect(document.querySelectorAll('details.rc-row-details')).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Apply' })).toHaveLength(1);
+    expect(within(overrides).getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    const [source, k] = rows;
+    await user.click(source.querySelector('summary')!);
+    expect(source).toHaveTextContent('Wired from another step');
+    expect(source.querySelector('.rc-field')!.querySelector('button')).toBeNull();
+    expect(within(source).getByRole('button', { name: 'seed' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Add an override' })).toBeNull();
+
+    await user.click(k.querySelector('summary')!);
+    const control = within(k).getByLabelText('k');
+    const facts = k.querySelector('.rc-facts')!;
+    expect(control.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(facts).toHaveTextContent('used by');
+    await user.clear(control);
+    await user.type(control, '7');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    // An override reaches only steps inside the sub-recipe, so nothing is asked.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(sent(post)).toMatchObject({
+      operations: [{ kind: 'set_include_override', include: 'sub/chain.yaml', name: 'k', value: 7, position: null }],
+    });
+
+    const kField = within(k).getByLabelText('k').closest('.rc-field') as HTMLElement;
+    await user.click(within(kField).getByRole('button', { name: 'Remove' }));
+    expect(kField).toHaveTextContent('removed on apply');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(sent(post, 1)).toMatchObject({
+      operations: [{ kind: 'unset_include_override', include: 'sub/chain.yaml', name: 'k' }],
+    });
+  });
+
+  it('adds an override for a declared input the entry leaves alone, below the rows', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(nestedInputGraph());
+    useView.getState().select({ kind: 'inputsBox', id: `overrides:${LEAF}` });
+    renderWithClient(<Inspector />);
+
+    const add = await screen.findByRole('combobox', { name: 'Add an override' });
+    const overrides = screen.getByRole('heading', { name: 'Overrides' }).closest('section')!;
+    expect(overrides).toContainElement(add);
+    for (const row of overrideRows(overrides)) {
+      expect(row.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(within(add).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Add an override',
+      'offset',
+    ]);
+    // One Apply per section: the overrides and the defaults.
+    expect(screen.getAllByRole('button', { name: 'Apply' })).toHaveLength(2);
+    // A passed on parent input stays editable as text.
+    expect(within(overrides).getByLabelText('k')).toHaveValue('${inputs.k}');
+    await user.selectOptions(add, 'offset');
+    const added = overrideRows(overrides).find((row) => row.querySelector('summary')!.textContent!.includes('new'))!;
+    expect(added.open).toBe(true);
+    expect(added.querySelector('summary')).toHaveTextContent('new');
+    expect(within(added).getByLabelText('offset')).toHaveValue(2);
+    await user.click(within(overrides).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [{ kind: 'set_include_override', include: 'sub/leaf.yaml', name: 'offset', value: 2 }],
+    });
+  });
+
+  it('puts the control for a default a sub-recipe declares inside its Inputs row', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(nestedInputGraph());
+    useView.getState().select({ kind: 'include', id: LEAF });
+    renderWithClient(<Inspector />);
+
+    const inputs = (await screen.findByRole('heading', { name: 'Inputs' })).closest('section')!;
+    expect(screen.queryByRole('heading', { name: 'Edit defaults' })).toBeNull();
+    const rows = [...inputs.querySelectorAll<HTMLDetailsElement>('details.rc-row-details')];
+    expect(rows.map((row) => row.querySelector('summary')!.textContent)).toEqual(['offset2default']);
+    const [row] = rows;
+    await user.click(row.querySelector('summary')!);
+    const offset = within(row).getByLabelText('offset');
+    expect(offset).toHaveValue(2);
+    const facts = row.querySelector('.rc-facts')!;
+    expect(offset.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(facts).toHaveTextContent('declared insub/leaf.yaml');
+    expect(row).toHaveTextContent('Added after k.');
+    await user.clear(offset);
+    await user.type(offset, '3');
+    await user.click(within(inputs).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [
+        { kind: 'set_recipe_input', document: 'sub/leaf.yaml', name: 'offset', field: 'default', value: 3, position: null },
+      ],
+    });
+  });
+
+  it('says a default the parent overrides changes nothing and switches to that override', async () => {
+    const user = userEvent.setup();
+    const graph = nestedInputGraph();
+    findInclude(graph, CHAIN)!.overrides.offset = 4;
+    openEditable(graph);
+    useView.getState().select({ kind: 'include', id: LEAF });
+    renderWithClient(<Inspector />);
+
+    const inputs = (await screen.findByRole('heading', { name: 'Inputs' })).closest('section')!;
+    const row = inputs.querySelector<HTMLDetailsElement>('details.rc-row-details')!;
+    await user.click(row.querySelector('summary')!);
+    const note = within(row).getByText(/The parent sets this input where it includes the file \(override: 4\)/);
+    expect(note.closest('.rc-field')).toContainElement(within(row).getByLabelText('offset'));
+    await user.click(within(row).getByRole('button', { name: 'Edit the override' }));
+    expect(useView.getState().selected).toEqual({ kind: 'include', id: CHAIN });
+  });
+
+  it('keeps the read only rows of a sub-recipe in a read only session', async () => {
+    openSession(nestedInputGraph());
+    useView.getState().select({ kind: 'include', id: LEAF });
+    renderWithClient(<Inspector />);
+    expect(await screen.findByText('Values the parent sets where it includes this sub-recipe.')).toBeInTheDocument();
+    expect(document.querySelector('form')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Add an override' })).toBeNull();
+  });
+
+  it('shows a description behind an info icon that Escape and an outside click close', async () => {
+    const user = userEvent.setup();
+    openEditable(typesGraph());
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const gain = (await screen.findByLabelText('gain')).closest('.rc-field') as HTMLElement;
+    const count = screen.getByLabelText('count').closest('.rc-field') as HTMLElement;
+    expect(count.querySelector('.rc-info')).toBeNull();
+    expect(gain.querySelector('.rc-field-help')).toBeNull();
+    const info = gain.querySelector<HTMLDetailsElement>('details.rc-info')!;
+    const icon = within(gain).getByLabelText('Description of gain');
+    expect(icon).toHaveAttribute('title', 'Description of gain');
+    expect(icon.closest('.rc-field-head')).toBeInTheDocument();
+    expect(info.open).toBe(false);
+
+    await user.click(icon);
+    expect(info.open).toBe(true);
+    expect(info.querySelector('.rc-info-card')).toHaveTextContent('Gain to add.');
+    const shortcut = vi.fn();
+    window.addEventListener('keydown', shortcut);
+    await user.keyboard('{Escape}');
+    window.removeEventListener('keydown', shortcut);
+    expect(info.open).toBe(false);
+    // The window's shortcuts (Escape clears the selection) do not see it.
+    expect(shortcut).not.toHaveBeenCalled();
+
+    await user.click(icon);
+    expect(info.open).toBe(true);
+    await user.click(info.querySelector('.rc-info-card')!);
+    expect(info.open).toBe(true);
+    await user.click(screen.getByLabelText('count'));
+    expect(info.open).toBe(false);
+    await user.click(icon);
+    await user.click(icon);
+    expect(info.open).toBe(false);
+  });
+
+  it('closes a description card on Escape and an outside click in a popout window', async () => {
+    openEditable(typesGraph());
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument!;
+    const container = doc.body.appendChild(doc.createElement('div'));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <Inspector />
+      </QueryClientProvider>,
+      { container },
+    );
+
+    const icon = await within(container).findByLabelText('Description of gain');
+    const info = icon.closest('details')!;
+    fireEvent.click(icon);
+    expect(info.open).toBe(true);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(info.open).toBe(true);
+    fireEvent.keyDown(doc.body, { key: 'Escape' });
+    expect(info.open).toBe(false);
+    fireEvent.click(icon);
+    expect(info.open).toBe(true);
+    fireEvent.pointerDown(within(container).getByLabelText('count'));
+    expect(info.open).toBe(false);
+    frame.remove();
+  });
+
+  it('marks both of a mutually exclusive pair being edited and blocks Apply until one is reset', async () => {
+    const user = userEvent.setup();
+    const graph = structuredClone(withSubGraph);
+    const seed = graph.nodes.find((node) => node.id === 'seed') as StepNode;
+    seed.params.push(
+      param('size', 'int', 10, { constraints: { exclusive_with: ['fraction'] } }),
+      param('fraction', 'float', 0.01, { constraints: { exclusive_with: ['size'] } }),
+    );
+    openEditable(graph);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const size = (await screen.findByLabelText('size')).closest('.rc-field') as HTMLElement;
+    const fraction = screen.getByLabelText('fraction').closest('.rc-field') as HTMLElement;
+    expect(size).toHaveTextContent('Mutually exclusive with fraction.');
+    expect(fraction).toHaveTextContent('Mutually exclusive with size.');
+    expect(size).not.toHaveTextContent('Set only one of');
+
+    await user.clear(within(size).getByLabelText('size'));
+    await user.type(within(size).getByLabelText('size'), '12');
+    expect(within(size).getByText('Set only one of size and fraction.')).toHaveClass('rc-field-error');
+    expect(within(fraction).getByText('Set only one of size and fraction.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    await user.click(within(fraction).getByRole('button', { name: 'Reset' }));
+    expect(size).not.toHaveTextContent('Set only one of');
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+  });
+
+  it('sends a recipe input default to its file before the session values', async () => {
+    const user = userEvent.setup();
+    const put = vi.fn((_init: RequestInit | undefined) => editableSession());
+    const { post, fetchMock } = openEditable(withSubGraph, { [`PUT /api/sessions/${SID}/inputs`]: put });
+    useView.getState().select({ kind: 'inputsBox', id: 'inputs' });
+    renderWithClient(<Inspector />);
+
+    expect(await screen.findByText('Recipe inputs')).toBeInTheDocument();
+    const row = document.querySelector<HTMLDetailsElement>('details.rc-row-details')!;
+    await user.click(row.querySelector('summary')!);
+    await user.click(within(row).getByRole('button', { name: 'Change the default in with_sub.yaml' }));
+    const fallback = within(row).getByLabelText('default in with_sub.yaml');
+    expect(fallback).toHaveValue(3);
+    await user.clear(fallback);
+    await user.type(fallback, '4');
+    const value = within(row).getByLabelText('n');
+    await user.clear(value);
+    await user.type(value, '5');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toMatchObject({
+      operations: [
+        { kind: 'set_recipe_input', document: 'with_sub.yaml', name: 'n', field: 'default', value: 4, position: null },
+      ],
+    });
+    expect(sent(put)).toEqual({ values: { n: 5 } });
+    const order = fetchMock.mock.calls
+      .map(([url, init]) => `${init?.method ?? 'GET'} ${url}`)
+      .filter((key) => key === EDITS || key.startsWith('PUT'));
+    expect(order).toEqual([EDITS, `PUT /api/sessions/${SID}/inputs`]);
+  });
+});
+
+/** with_sub with total also reading input n, whose default is `n`. */
+function sharedGraph(n = 3): Graph {
+  const graph = structuredClone(withSubGraph);
+  const total = graph.nodes.find((node) => node.id === 'total') as StepNode;
+  total.params.push(param('n', 'int', '${inputs.n}'));
+  graph.edges.push({ ...graph.edges.find((edge) => edge.source === 'in:n')!, target: 'total' });
+  const input = graph.nodes.find((node) => node.id === 'in:n');
+  if (input?.kind === 'input') input.default = n;
+  return graph;
+}
+
+/** An editable session on sharedGraph with the default of n at `n`. */
+function sharedSession(n: number, version: number): SessionDocument {
+  const session = editableSession({ graph: sharedGraph(n), version });
+  session.inputs.declared[0] = { ...session.inputs.declared[0], default: n, value: n };
+  session.inputs.values = { n };
+  return session;
+}
+
+/** The field holding a labelled control. */
+function fieldOf(label: string, container: HTMLElement = document.body): HTMLElement {
+  return within(container).getByLabelText(label).closest('.rc-field') as HTMLElement;
+}
+
+function notApplied(field: HTMLElement): HTMLElement | null {
+  return within(field).queryByText('not applied');
+}
+
+/** Type 4 into the seed step's n and press Apply, which asks first. */
+async function applySharedN(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  const value = await screen.findByLabelText('n');
+  expect(notApplied(fieldOf('n'))).toBeNull();
+  await user.clear(value);
+  await user.type(value, '4');
+  await user.click(screen.getByRole('button', { name: 'Apply' }));
+  return screen.findByRole('dialog', { name: 'Shared value' });
+}
+
+describe('edits not applied', () => {
+  it('focuses Change for all, so Apply then Enter confirms, and updates the other step', async () => {
+    const user = userEvent.setup();
+    const post = vi.fn((_init: RequestInit | undefined) => edited(sharedSession(4, 3)));
+    mockApi({ [`GET /api/sessions/${SID}`]: sharedSession(3, 2), [EDITS]: post });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const dialog = await applySharedN(user);
+    expect(within(dialog).getByRole('button', { name: 'Change for all 2 steps' })).toHaveFocus();
+    expect(notApplied(fieldOf('n'))).not.toBeNull();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(notApplied(fieldOf('n'))).toBeNull());
+    expect(screen.getByLabelText('n')).toHaveValue(4);
+
+    act(() => useView.getState().select({ kind: 'step', id: 'total' }));
+    await waitFor(() => expect(fieldOf('n')).toHaveTextContent('Default of input n'));
+    expect(screen.getByLabelText('n')).toHaveValue(4);
+    expect(notApplied(fieldOf('n'))).toBeNull();
+  });
+
+  it('keeps the shared value dialog open on a click outside it', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(sharedGraph());
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+
+    const dialog = await applySharedN(user);
+    fireEvent.mouseDown(dialog.parentElement!);
+    fireEvent.click(dialog.parentElement!);
+    expect(screen.getByRole('dialog', { name: 'Shared value' })).toBe(dialog);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(['Cancel', 'Escape'])(
+    'marks the draft not applied after %s closes the dialog, leaving the other step as it was',
+    async (how) => {
+      const user = userEvent.setup();
+      const { post } = openEditable(sharedGraph());
+      useView.getState().select({ kind: 'step', id: 'seed' });
+      renderWithClient(<Inspector />);
+
+      const dialog = await applySharedN(user);
+      if (how === 'Cancel') await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      else await user.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(post).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('n')).toHaveValue(4);
+      expect(notApplied(fieldOf('n'))).toHaveAttribute('title', 'Apply sends this change.');
+
+      // The marker goes once the draft equals the value again.
+      await user.clear(screen.getByLabelText('n'));
+      await user.type(screen.getByLabelText('n'), '3');
+      expect(notApplied(fieldOf('n'))).toBeNull();
+      await user.clear(screen.getByLabelText('n'));
+      await user.type(screen.getByLabelText('n'), '4');
+      expect(notApplied(fieldOf('n'))).not.toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+      expect(notApplied(fieldOf('n'))).toBeNull();
+
+      act(() => useView.getState().select({ kind: 'step', id: 'total' }));
+      await waitFor(() => expect(fieldOf('n')).toHaveTextContent('Default of input n'));
+      expect(screen.getByLabelText('n')).toHaveValue(3);
+      expect(notApplied(fieldOf('n'))).toBeNull();
+    },
+  );
+
+  it('says inline that a stale version was not applied and keeps the draft marked', async () => {
+    const user = userEvent.setup();
+    openEditable(withSubGraph, {
+      [EDITS]: () => apiErrorResponse(409, 'StaleVersion', 'The session is at version 3.', { version: 3 }),
+    });
+    useView.getState().select({ kind: 'step', id: 'leaf_add' });
+    renderWithClient(<Inspector />);
+
+    await user.clear(await screen.findByLabelText('k'));
+    await user.type(screen.getByLabelText('k'), '7');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    const form = screen.getByLabelText('k').closest('form')!;
+    expect(
+      await within(form).findByText(
+        'The recipe changed in another tab; the edit was not applied. Apply again to retry.',
+      ),
+    ).toHaveClass('rc-field-error');
+    expect(useEditingStore.getState().error).toBe(STALE_VERSION_MESSAGE);
+    expect(screen.getByLabelText('k')).toHaveValue(7);
+    expect(notApplied(fieldOf('k'))).not.toBeNull();
+  });
+
+  it('marks a changed or added override not applied until it is applied', async () => {
+    const user = userEvent.setup();
+    const { post } = openEditable(nestedInputGraph());
+    useView.getState().select({ kind: 'inputsBox', id: `overrides:${LEAF}` });
+    renderWithClient(<Inspector />);
+
+    const add = await screen.findByRole('combobox', { name: 'Add an override' });
+    const overrides = screen.getByRole('heading', { name: 'Overrides' }).closest('section')!;
+    const k = within(overrides).getByLabelText('k');
+    expect(notApplied(fieldOf('k', overrides))).toBeNull();
+    await user.clear(k);
+    await user.type(k, '9');
+    expect(notApplied(fieldOf('k', overrides))).not.toBeNull();
+    await user.clear(k);
+    await user.type(k, '${{inputs.k}');
+    expect(notApplied(fieldOf('k', overrides))).toBeNull();
+
+    await user.selectOptions(add, 'offset');
+    expect(notApplied(fieldOf('offset', overrides))).not.toBeNull();
+    await user.click(within(overrides).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(within(overrides).queryByText('not applied')).toBeNull());
+  });
+
+  it('marks a changed sub-recipe default not applied, and Cancel in the dialog keeps the mark', async () => {
+    const user = userEvent.setup();
+    const graph = nestedInputGraph();
+    graph.edges.push({ ...graph.edges.find((edge) => edge.source === 'in:offset')!, target: 'total' });
+    const { post } = openEditable(graph);
+    useView.getState().select({ kind: 'include', id: LEAF });
+    renderWithClient(<Inspector />);
+
+    const inputs = (await screen.findByRole('heading', { name: 'Inputs' })).closest('section')!;
+    const row = inputs.querySelector<HTMLDetailsElement>('details.rc-row-details')!;
+    await user.click(row.querySelector('summary')!);
+    const offset = within(row).getByLabelText('offset');
+    expect(notApplied(fieldOf('offset', row))).toBeNull();
+    await user.clear(offset);
+    await user.type(offset, '3');
+    expect(notApplied(fieldOf('offset', row))).not.toBeNull();
+    await user.click(within(inputs).getByRole('button', { name: 'Apply' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Shared value' });
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(post).not.toHaveBeenCalled();
+    expect(notApplied(fieldOf('offset', row))).not.toBeNull();
+
+    await user.click(within(inputs).getByRole('button', { name: 'Apply' }));
+    await user.click(await screen.findByRole('button', { name: 'Change for all 2 steps' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(notApplied(fieldOf('offset', row))).toBeNull());
+  });
+
+  it('marks a recipe input draft and a default draft not applied in the inputs box', async () => {
+    const user = userEvent.setup();
+    openEditable(withSubGraph);
+    useView.getState().select({ kind: 'inputsBox', id: 'inputs' });
+    renderWithClient(<Inspector />);
+
+    expect(await screen.findByText('Recipe inputs')).toBeInTheDocument();
+    const row = document.querySelector<HTMLDetailsElement>('details.rc-row-details')!;
+    await user.click(row.querySelector('summary')!);
+    await user.click(within(row).getByRole('button', { name: 'Change the default in with_sub.yaml' }));
+    expect(notApplied(fieldOf('default in with_sub.yaml', row))).toBeNull();
+    await user.clear(within(row).getByLabelText('default in with_sub.yaml'));
+    await user.type(within(row).getByLabelText('default in with_sub.yaml'), '4');
+    expect(notApplied(fieldOf('default in with_sub.yaml', row))).not.toBeNull();
+    expect(notApplied(fieldOf('n', row))).toBeNull();
+    await user.clear(within(row).getByLabelText('n'));
+    await user.type(within(row).getByLabelText('n'), '5');
+    expect(notApplied(fieldOf('n', row))).not.toBeNull();
+  });
+});
+
 describe('InspectorBody', () => {
   const site = { docsUrl: 'https://site.example/docs/', linkTarget: '_self' as const, pages: {} };
+
+  it('has nothing to show for a run config selection on the site', () => {
+    render(<InspectorBody graph={withSubGraph} selected={{ kind: 'runConfig', id: 'runConfig' }} drill={[]} />);
+    expect(screen.getByText('The selected node is not in this recipe.')).toBeInTheDocument();
+  });
+
+  it('keeps the read only parameter table on the site, with no form', () => {
+    render(<InspectorBody graph={withSubGraph} selected={{ kind: 'step', id: 'leaf_add' }} drill={[]} />);
+    expect(screen.getByText('k').closest('tr')).toHaveTextContent('5');
+    expect(document.querySelector('form')).toBeNull();
+  });
+
+  it('keeps the read only Overrides and Inputs rows of a sub-recipe on the site', () => {
+    render(<InspectorBody graph={nestedInputGraph()} selected={{ kind: 'include', id: LEAF }} drill={[]} />);
+    expect(screen.getByText('Values the parent sets where it includes this sub-recipe.')).toBeInTheDocument();
+    expect(screen.getByText(/declares; each shows the value a run would use\./)).toHaveTextContent(
+      'What sub/leaf.yaml declares; each shows the value a run would use.',
+    );
+    const rows = [...document.querySelectorAll('details.rc-row-details')];
+    expect(rows.map((row) => row.querySelector('summary')!.textContent)).toEqual([
+      'value${chain_inc.out}',
+      'k${inputs.k} = 5',
+      'offset2default',
+    ]);
+    expect(rows[2]).toHaveTextContent('Added after k.');
+    expect(rows[2]).toHaveTextContent('(the default)');
+    expect(document.querySelector('form')).toBeNull();
+    expect(document.querySelector('input, select, textarea')).toBeNull();
+    expect(document.querySelector('.rc-info')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+  });
 
   it('links the op reference in the same tab on the site, with no session or query client', () => {
     render(
@@ -532,5 +1471,42 @@ describe('inspector details', () => {
       ['n', '${inputs.n}', true],
       ['waveform_mode', 'CW', false],
     ]);
+  });
+});
+
+describe('the Cache section checkpoint toggle', () => {
+  beforeEach(() => {
+    useSessionStore.getState().setSid(null);
+    useView.getState().resetScope();
+  });
+
+  it('sets checkpoint always, or removes it, as the save icon does', async () => {
+    const user = userEvent.setup();
+    const graph = structuredClone(withSubGraph);
+    const total = graph.nodes.find((node) => node.id === 'total') as StepNode;
+    total.checkpoint = 'always';
+    const { post } = openEditable(graph);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+    await user.click(await screen.findByRole('button', { name: 'Make this a checkpoint' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sent(post)).toEqual({
+      operations: [{ kind: 'set_checkpoint', step: 'seed', value: 'always', position: null }],
+      version: 2,
+    });
+
+    act(() => useView.getState().select({ kind: 'step', id: 'total' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove the checkpoint' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(sent(post, 1)).toMatchObject({ operations: [{ kind: 'set_checkpoint', step: 'total', value: null }] });
+  });
+
+  it('is absent in a read only session', async () => {
+    mockApi({ [`GET /api/sessions/${SID}`]: makeSession() });
+    useSessionStore.getState().setSid(SID);
+    useView.getState().select({ kind: 'step', id: 'seed' });
+    renderWithClient(<Inspector />);
+    expect(await screen.findByText('Cache')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Make this a checkpoint' })).toBeNull();
   });
 });

@@ -1,7 +1,4 @@
-# Processing Level 4 - Machine Learning
-#
-# Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
-# runs HDBSCAN clustering, and produces the clustering report outputs.
+# Processing level 4: ML features, HDBSCAN clustering and the cluster report.
 
 recipe:
   name: "processing_lvl_4"
@@ -13,22 +10,23 @@ recipe:
 inputs:
   mvbs_with_lines:
     type: dataset
-    description: "MVBS dataset with line overlay variables added."
+    description: "Gridded MVBS with the line overlay variables added, flattened into one ML sample per cell."
+  # The cell_cv feature used here does not need echodata.
   echodata:
     type: echodata
-    description: "EchoData object used for auxiliary ML features."
+    description: "Raw EchoData supplying the echosounder's own bottom pick for the 'seafloor_depth' and 'altitude' features. Used only when seafloor_depth is not wired."
   overlay_line_var:
     type: str
     default: "overlay_line"
-    description: "Line variable to overlay on the clustering report plot."
+    description: "Name of the line variable drawn over the clustering report plots."
   sv_clean_unmasked:
     type: dataset
     description: >
-      Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
-      and cluster echogram plots.
+      Noise-removed Sv before sparse-bin masking, used as the backdrop and ping
+      reference for the ML and cluster echograms.
   cell_stats_sv:
     type: dataset
-    description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+    description: "Per-cell statistics, such as the coefficient of variation, on the MVBS grid. Needed when the cell_cv feature is listed."
 
 steps:
 

@@ -1,8 +1,4 @@
-# Processing Level 2 - Sv Computation and Noise Removal
-#
-# Starts from the combined echodata plus extracted calibration parameters,
-# computes Sv, builds and applies the masking stack, and performs background
-# noise removal.
+# Processing level 2: Sv, masking and noise removal on the combined EchoData
 
 recipe:
   name: "processing_lvl_2"
@@ -14,85 +10,84 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Combined EchoData object from the raw ingest stage."
+    description: "Combined raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters extracted from the standardized mapping."
+    description: "Calibration values for each channel, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters extracted from the standardized mapping."
+    description: "Environmental values for each channel, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
   datum_correction_m:
     type: float
     default: 0.0
     description: >
-      Metres added to the file's recorded drop keel offset to reach depth below
-      the waterline. 0 takes the recorded offset as already waterline referenced.
+      Metres added to each file's recorded drop keel offset to give depth below
+      the waterline; positive pushes the transducer deeper. 0 takes the
+      recorded offset as waterline referenced.
   use_heave:
     type: bool
     default: true
-    description: "Add the per-ping platform heave term to transducer depth."
+    description: "Add the per-ping platform heave to transducer depth. False holds the static keel depth on every ping."
+  # Found by correlating raw heave against the EVL line: 0.14 m residual for
+  # +1.0 against 0.75 m for -1.0.
   heave_sign:
     type: float
     default: 1.0
     description: >
-      Sign applied to platform heave. Determined empirically for this survey
-      by correlating raw heave against the hand-verified EVL seabed line
-      (0.14 m residual for +1.0 vs 0.75 m for -1.0).
+      Sign applied to platform heave when computing transducer depth, +1.0 or
+      -1.0. +1.0 fits the hand-verified EVL seabed line best on HB2407.
   seabed_line_folder:
     type: path
     description: >
-      Folder of Echoview .evl seabed line exports; the ones covering
-      file_time_start to file_time_end are combined into the seafloor used for
-      masking. A single .evl file also works, and is then read whole regardless
-      of the window.
+      Folder of Echoview .evl seabed line exports, a local path or a gs:// URL.
+      The files covering the time window are combined into the seafloor; a
+      single .evl file is read whole.
   file_time_start:
     type: str
     required: false
     description: >
-      Optional inclusive ISO datetime selecting which seabed line files to read,
-      by the d{YYYYMMDD}_t{HHMMSS}-t{HHMMSS} span in their names. Pass the same
-      window that selected the raw files in processing level 1; leave unset to
-      read every line file in the folder.
+      Optional inclusive ISO datetime selecting the seabed line files to read,
+      by the time span in their names. Pass the window that selected the raw
+      files; unset reads every line file.
   file_time_end:
     type: str
     required: false
-    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+    description: "Optional inclusive ISO datetime selecting the seabed line files to read, by the time span in their names. Pass the window that selected the raw files; unset reads every line file."
+  # Consecutive line files meet to within a second, so this only bites across a
+  # leg gap, where interpolating would draw a straight seafloor over days of
+  # missing line.
   seabed_line_max_gap_s:
     type: float
     default: 600
     description: >
-      Widest hole in the combined seabed line, in seconds, to interpolate
-      across. Consecutive line files butt up against each other to within a
-      second, so this only bites across a survey-leg gap, where interpolating
-      would otherwise draw a straight seafloor over days of missing line.
+      Widest gap in the combined seabed line, in seconds, to interpolate across;
+      pings in a wider gap get no seafloor. Only a break between survey legs is
+      this wide.
   surface_depth_m:
     type: float
     default: 10.0
-    description: "Depth in meters above which the surface mask excludes samples." 
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
   seafloor_buffer_m:
     type: float
     default: 1.0
-    description: "Height of buffer above seabed line to mask."    
+    description: "Height above the seabed line, in metres, that is also masked, to drop the bottom echo and detection error."
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Number of range samples per bin used for background noise estimation."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Number of pings per bin used for background noise estimation."
+    description: "Pings per bin for the background noise estimate."
+  # Independent of combine_raw_files's ping_time_chunk, which is for checkpoint
+  # writes. Must be smaller than the window's ping count or it is one chunk.
   noise_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size to apply before remove_noise, so its coarsen()-based
-      noise estimate can run in dask-parallel chunks instead of as one
-      in-memory block. Deliberately independent of combine_raw_files's own
-      ping_time_chunk (that one exists for zarr checkpoint-write efficiency,
-      not for this) -- a standalone rechunk step here means remove_noise's
-      parallelism doesn't depend on the raw-ingest stage's chunk choice.
-      Should stay a multiple of noise_ping_num so coarsen() dispatches across
-      chunks cleanly.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      noise_ping_num.
 
 steps:
 
@@ -106,9 +101,8 @@ steps:
       waveform_mode: "CW" 
       encode_mode: "power"
 
-  # Transducer depth comes from the file's own drop keel offset plus per-ping
-  # heave. Checkpointed because it is tiny and is the record of what vertical
-  # reference the run used, so it can be inspected without recomputing Sv.
+  # Checkpointed because it is tiny and records the vertical reference the run
+  # used, so it can be inspected without recomputing Sv.
   - id: compute_transducer_depth
     op: compute_transducer_depth
     checkpoint: always
@@ -138,6 +132,7 @@ steps:
       encode_mode: "power"
       to_disk: false
 
+  # Alternative: echopype's basic bottom detector instead of the .evl line.
   # - id: detect_seafloor
   #   op: ep_detect_seafloor
   #   checkpoint: save
@@ -156,14 +151,13 @@ steps:
       ds_Sv: ${ep_add_depth.ds_Sv}
     params:
       evl_path: ${inputs.seabed_line_folder}
-      # Same window that selects the raw files, so the line always spans the
-      # pings. A line file's span runs from its own name stamp to the next
-      # file's, which is what pulls in the export straddling the window start.
+      # Same window that selects the raw files. A line file spans from its own
+      # name stamp to the next file's, which pulls in the export straddling the
+      # window start.
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
       # No extrapolation past the line's ends: pings outside it come back NaN
-      # and create_seafloor_mask drops them entirely, so min_coverage below
-      # fails the run rather than letting that happen quietly.
+      # and are masked entirely, so min_coverage fails the run instead.
       edge_extend_s: 0.0
       max_gap_s: ${inputs.seabed_line_max_gap_s}
       min_coverage: 0.99

@@ -1,26 +1,33 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/calibration_standardize.yaml
 
-# RL2307 calibration, phase 1: standardize
+# RL2307 calibration, phase 1: standardize.
+# Scans the raw channel configurations and turns the manufacturer calibration
+# files into one standardized file per channel, stopping before the mapping so
+# a user can review and correct them. Phase 2 is calibration_mapping.yaml;
+# save_calibration.yaml (phase 3) archives the result.
 #
-# Scans the raw channel configurations and writes one standardized calibration
-# file per channel, then stops so you can review them before the mapping.
-# Phase 2 is calibration_mapping.yaml; phase 3, save_calibration.yaml, archives.
+# The four steps below are copied verbatim into calibration_mapping.yaml and
+# must stay that way: once the copies drift, phase 2 stops reusing the raw
+# scan and reads every file again, with no error.
+# tests/test_calibration_phase_recipes.py asserts the hashes match; run it
+# after editing either file.
 #
-#   aa-recipe run calibration_standardize.yaml
-#
-# Keep the four steps identical to calibration_mapping.yaml, or phase 2 rescans
-# every raw file. tests/test_calibration_phase_recipes.py checks this.
-# Both phases need the same user_cache_dir and outputs_dir: keep their config
-# files identical or pass --config.
-# To edit channels without the folder, change single_channel_data and pass it
-# to phase 2 as override_channels.
-#
-# Outputs under <outputs_dir>/<calibration_outputs>/:
-#
+# Artifacts land under <outputs_dir>/<calibration_outputs>/:
 #   raw_file_configs/                  raw_file_configs.yaml
-#   single_channel_calibration_files/  one .yaml per channel, required by NCEI
+#   single_channel_calibration_files/  one standardized .yaml per channel (required by NCEI)
 #   logs/                              calibration_flags.json
-#   standardization.fingerprint.json   which manufacturer files were used
+#   standardization.fingerprint.json   which manufacturer files produced the
+#                                      single-channel files above
+#
+# Both phases must resolve to the same user_cache_dir and outputs_dir or the
+# cache is silently not shared: keep the two <recipe_stem>.config.yaml files
+# identical or pass --config explicitly.
+#
+# The three phase recipes back the calibration service's three HTTP calls; see
+# calibration_service_api.md in AA-SI_calibration/recipes/documentation/.
+#
+# Usage:
+#   aa-recipe run calibration_standardize.yaml
 
 recipe:
   name: "RL2307_calibration_standardize"
@@ -34,39 +41,57 @@ inputs:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw"
     fingerprint_mode: auto
-    description: "Folder of .raw files, read for channel configuration only."
+    description: >
+      Folder of raw .raw files, a local path or a gs:// URL, read for channel
+      configuration only.
   cal_input_folder:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS"
-    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+    description: >
+      Name of the subfolder of the run's outputs folder that calibration
+      artifacts are written to.
   cruise_id:
     type: str
     default: "RL2307"
-    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
-    description: "Recorded as the author of every generated single-channel file."
+    description: "Name recorded as the author of every generated single-channel calibration file."
   file_time_start:
     type: str
     required: false
     default: "2023-07-17T16:30:46"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it
+      are scanned for calibration. Unset takes every file.
   file_time_end:
     type: str
     required: false
     default: "2023-07-18T19:50:19"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it
+      are scanned for calibration. Unset takes every file.
+  # override_channels is declared and left unset in both phase recipes: an
+  # unset value hashes identically, so standardize_cal shares its cache entry
+  # until a caller supplies edits.
   override_channels:
     type: dict
     required: false
     description: >
-      Reviewed channels from single_channel_data, written in place of the
-      manufacturer files. Unset, both phases share standardize_cal's cache.
+      Reviewed standardized channels, in the shape of the single_channel_data
+      output, written in place of parsing the manufacturer files. Unset parses
+      the files.
 
 steps:
 
@@ -79,7 +104,8 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # One cached instance per raw file, so an interrupted scan resumes.
+  # One instance per raw file, so an interrupted scan resumes from what it
+  # already read. verbose is off: one banner per file buries the log.
   - id: scan_raw_config
     op: read_raw_file_config
     map_over: ${initial_setup.raw_file_paths}
@@ -87,8 +113,9 @@ steps:
     params:
       raw_file_path: ${_item}
       verbose: false
-      # Reads a prefix that doubles from 8 MiB up to this cap, not the whole
-      # file. A file that needs more is read whole.
+      # Reads a growing prefix, 8 MiB doubling to this cap, until every
+      # channel's Parameter datagram is in hand. RL2307's FM files climb past
+      # the first rung; a file that never settles is read whole.
       max_scan_bytes: 134217728  # 128 MiB
 
   - id: record_raw_configs
@@ -101,8 +128,10 @@ steps:
     params:
       output_base: ${initial_setup.calibration_output_dir}
 
-  # Deleting the whole folder rebuilds it; deleting one file inside it does not,
-  # which is how the conflict workflow drops a channel.
+  # regenerate: if-missing is safe only because this step records its output
+  # directory: wiping the folder rebuilds it, deleting one file inside does
+  # not, which the conflict workflow relies on. A run in a fresh container
+  # rebuilds the folder, from override_channels or the manufacturer files.
   - id: standardize_cal
     op: standardize_calibration_files
     checkpoint: always
@@ -122,8 +151,9 @@ outputs:
     step_id: standardize_cal
     output_name: single_channel_data
     description: >
-      The standardized channels to review. Pass an edited copy to
-      calibration_mapping.yaml as override_channels.
+      The standardized channels, for a caller to review and edit before the
+      mapping runs. Feed the edited version back to calibration_mapping.yaml as
+      override_channels.
   single_channel_dir:
     step_id: standardize_cal
     output_name: single_channel_dir

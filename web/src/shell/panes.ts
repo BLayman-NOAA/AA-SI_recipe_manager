@@ -8,6 +8,7 @@ export type PaneId =
   | 'inspector'
   | 'inputs'
   | 'runSettings'
+  | 'runConfig'
   | 'logs'
   | 'runs'
   | 'outputs'
@@ -41,6 +42,7 @@ export const PANES: PaneDef[] = [
   { id: 'inspector', title: 'Inspector', placement: { reference: 'diagram', direction: 'right' }, initialWidth: 340 },
   { id: 'inputs', title: 'Inputs', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
   { id: 'runSettings', title: 'Run Settings', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
+  { id: 'runConfig', title: 'Run Config', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
   { id: 'logs', title: 'Logs', placement: { direction: 'below' }, initialHeight: 220 },
   { id: 'runs', title: 'Runs', placement: { reference: 'logs', direction: 'within' }, inactive: true },
   { id: 'outputs', title: 'Outputs', placement: { reference: 'logs', direction: 'within' }, inactive: true },

@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { vi } from 'vitest';
 import type { Graph, GraphEdge } from '../src/api/graph';
-import type { SessionDocument } from '../src/api/models';
+import type { Preview, RunConfigBlock, SessionDocument, StepPreview } from '../src/api/models';
 import mapped from './fixtures/mapped.graph.json';
 import withSub from './fixtures/with_sub.graph.json';
 
@@ -64,9 +64,9 @@ export function makeSession(overrides: Partial<SessionDocument> = {}): SessionDo
     read_only: true,
     version: 0,
     files: [
-      { path: 'with_sub.yaml', origin: 'C:/recipes/with_sub.yaml', editable: false },
-      { path: 'sub/chain.yaml', origin: 'C:/recipes/sub/chain.yaml', editable: false },
-      { path: 'sub/leaf.yaml', origin: 'C:/recipes/sub/leaf.yaml', editable: false },
+      { path: 'with_sub.yaml', origin: 'C:/recipes/with_sub.yaml', editable: false, dirty: false },
+      { path: 'sub/chain.yaml', origin: 'C:/recipes/sub/chain.yaml', editable: false, dirty: false },
+      { path: 'sub/leaf.yaml', origin: 'C:/recipes/sub/leaf.yaml', editable: false, dirty: false },
     ],
     inputs: {
       declared: [
@@ -93,11 +93,96 @@ export function makeSession(overrides: Partial<SessionDocument> = {}): SessionDo
       storage_options: null,
       source: null,
       overrides: {},
+      path: null,
+      chosen: null,
+      candidate: '/recipes/with_sub.config.yaml',
+      error: null,
+      contents: null,
+      shared_with: [],
+      unused_inputs: [],
     },
     graph: withSubGraph,
     validation: { valid: true, problems: [] },
+    dirty: [],
+    conflicts: [],
+    history: {
+      can_undo: false,
+      can_redo: false,
+      undo_kind: null,
+      redo_kind: null,
+      seq: 0,
+      note: null,
+    },
     ...overrides,
   };
+}
+
+/** The run config file a test session uses. */
+export const CONFIG_PATH = 'C:/recipes/with_sub.config.yaml';
+
+/**
+ * A session's run config with a file in use, as WP7 reports it: `contents` as
+ * written, empty unless overridden.
+ */
+export function runConfigBlock(overrides: Partial<RunConfigBlock> = {}): RunConfigBlock {
+  return {
+    ...makeSession().run_config,
+    path: CONFIG_PATH,
+    source: CONFIG_PATH,
+    candidate: CONFIG_PATH,
+    contents: { inputs: {}, settings: {} },
+    ...overrides,
+  };
+}
+
+/** A session the client may edit (schema 2 sessions): every file editable. */
+export function editableSession(overrides: Partial<SessionDocument> = {}): SessionDocument {
+  const base = makeSession();
+  return makeSession({
+    read_only: false,
+    files: base.files.map((file) => ({ ...file, editable: true })),
+    ...overrides,
+  });
+}
+
+/** One step of a preview, computed and held nowhere unless overridden. */
+export function previewStep(id: string, overrides: Partial<StepPreview> = {}): StepPreview {
+  return {
+    step_id: id,
+    step_hash: `hash-${id}`,
+    held_by: [],
+    planned: 'compute',
+    tier: null,
+    checkpoint: 'memory-only',
+    pinned: false,
+    recipe_checkpoint: null,
+    fanned_out: false,
+    instances: null,
+    instances_held: {},
+    note: null,
+    ...overrides,
+  };
+}
+
+/** A run all preview of the with_sub recipe with these steps. */
+export function makePreview(steps: StepPreview[]): Preview {
+  return {
+    recipe: 'client_with_sub',
+    version: '1.0',
+    mode: 'all',
+    targets: [],
+    force_steps: [],
+    tiers: { user: '/u', survey: '/s' },
+    write_tier: 'user',
+    blockers: [],
+    warnings: [],
+    steps,
+  };
+}
+
+/** An error response with a server error code and details. */
+export function apiErrorResponse(status: number, error: string, message: string, details: unknown = null): Response {
+  return new Response(JSON.stringify({ error, message, details, step_id: null }), { status });
 }
 
 /** with_sub with `total.total` declared as a recipe output, so the top level has an outputs box. */

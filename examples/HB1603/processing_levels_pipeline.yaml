@@ -1,9 +1,5 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline Recipe
-#
-# Refactored variant of the HB1603 modular recipe that organizes the acoustic
-# processing flow into explicit processing levels 0 through 4. The dataset-
-# specific line overlay and visualization steps are defined directly here in
-# the parent recipe.
+# HB1603 pipeline organized into processing levels 0 to 4, with the line
+# overlay and plots defined here in the parent.
 #
 # Usage: aa-recipe generate processing_levels_pipeline.yaml
 
@@ -18,18 +14,23 @@ inputs:
   raw_input_folder:
     type: path
     default: "./raw_file_inputs"
+    description: "Local folder the NCEI download writes raw files into."
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 

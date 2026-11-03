@@ -1,32 +1,26 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket)
+# processing_levels_pipeline.yaml for raw data already in a bucket, with no
+# NCEI download (level 0) and level 1 from processing_lvl_1_gcs_parallel.yaml,
+# which maps read_raw over the raw files; add --executor dask to run them
+# concurrently. Each raw file is downloaded to local scratch, converted to zarr
+# and deleted.
 #
-# Fully-bucket variant of processing_levels_pipeline.yaml for the "raw data
-# already lives in a GCS bucket" use case. There is NO NCEI download stage
-# (processing_lvl_0): raw, calibration, and line inputs are read straight from
-# gs:// URLs. Raw files are downloaded one at a time to local scratch, converted
-# to zarr intermediates, and deleted before the next file — the workstation only
-# ever holds ~1 raw file at a time.
-#
-# Fill in the three gs:// URLs below (or override them with --input).
-#
-# Authentication: gcsfs uses Application Default Credentials by default (e.g.
-# `gcloud auth application-default login`, or a Cloud Workstation's identity).
+# Authentication uses Application Default Credentials, for example
+# `gcloud auth application-default login` or a Cloud Workstation's identity.
 #
 # Requirements:
 #   pip install -e AA-SI_recipe_manager[gcs] AA-SI_Utils[gcs] AA-SI_calibration[gcs]
 #
-# Run (low-disk survey — cache + scratch in the bucket, zarr intermediates so
-# local disk stays at ~1 raw file for the whole run):
-#   aa-recipe run processing_levels_pipeline_gcs.yaml \
+# Low-disk run, with the cache and scratch in the bucket:
+#   aa-recipe run processing_levels_pipeline_gcs_parallel.yaml \
 #     --output-dir gs://YOUR_BUCKET/runs/hb1603/recipe_cache \
 #     --temp-dir   gs://YOUR_BUCKET/runs/hb1603/exe_temp \
 #     --outputs-dir ./outputs
 #
-# Run (simple test — local cache + scratch; raws still stream from the bucket):
-#   aa-recipe run processing_levels_pipeline_gcs.yaml --output-dir ./recipe_cache
+# Simple test, with a local cache and scratch:
+#   aa-recipe run processing_levels_pipeline_gcs_parallel.yaml --output-dir ./recipe_cache
 #
-# NOTE: --outputs-dir must stay LOCAL for now (calibration artifacts and images
-# are written through pathlib); the checkpoint cache and exe_temp may be gs://.
+# --outputs-dir must stay local: calibration artifacts and images are written
+# through pathlib.
 
 recipe:
   name: "processing_levels_pipeline_gcs"
@@ -39,28 +33,36 @@ inputs:
   raw_input_folder:
     type: path
     default: "gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/raw"
-    # Fingerprint the (remote) folder so the cache key tracks the file set
-    # ("auto" = names+checksum on GCS); the folder path is excluded from the hash
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
+    # auto hashes the folder's contents (names and checksums on GCS), not its
+    # path.
     fingerprint_mode: auto
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
-  # Leave unset / override to process the whole bucket folder.
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
+  # The defaults select a short test window; widen them to process more of
+  # the folder.
   file_time_start:
     type: str
     default: "2016-07-25T20:58"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are processed and scanned for calibration. Unset takes every file."
   file_time_end:
     type: str
     default: "2016-07-25T21:45"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are processed and scanned for calibration. Unset takes every file."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 

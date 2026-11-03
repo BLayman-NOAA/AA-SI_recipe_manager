@@ -47,6 +47,9 @@ class PortDeclaration(BaseModel):
 
     type: str
     description: str | None = None
+    notes: str | None = Field(default=None, exclude=True)
+    """Developer notes. The docs site shows them; the client does not.
+    Excluded from dumps, so they never reach a hash."""
     required: bool = True
     default: Any = None
     many: bool = False
@@ -83,15 +86,27 @@ class ParamDeclaration(BaseModel):
     type: str | None = None
     units: str | None = None
     description: str | None = None
+    notes: str | None = Field(default=None, exclude=True)
+    """Developer notes. The docs site shows them; the client does not.
+    Excluded from dumps, so they never reach a hash."""
     default: Any | None = None
     required: bool = True
     constraints: dict[str, Any] | None = None
+    """Checks on the value. ``must_exist`` and ``create_if_missing`` apply to
+    path params. ``exclusive_with`` lists other params of the same op that may
+    not be given together with this one; dry-run reports a step that sets both.
+    """
     fingerprint_mode: FingerprintMode = "off"
     """How a ``type=='path'`` param folds its target into the step cache key.
     ``off`` (default) hashes only the path string. Non-``off`` modes fold a
     location-independent folder listing and drop the path — see
     :data:`FingerprintMode`. Use on stable read-only inputs (e.g. a raw folder).
     """
+
+    @property
+    def needs_value(self) -> bool:
+        """Whether a step must set the param: it is required and has no default."""
+        return self.required and self.default is None
 
 
 class Dependency(BaseModel):
@@ -117,6 +132,8 @@ class CustomSpec(BaseModel):
 
     extends: str | None = None
     description: str
+    notes: str | None = Field(default=None, exclude=True)
+    """Developer notes, as on a registry spec. Not part of the cache hash."""
     inputs: dict[str, PortDeclaration] | None = None
     outputs: dict[str, PortDeclaration] | None = None
     params: dict[str, ParamDeclaration] | None = None
@@ -390,6 +407,11 @@ class Spec(BaseModel):
 
     op: str
     description: str
+    notes: str | None = Field(default=None, exclude=True)
+    """Developer notes: rationale, edge cases and implementation detail that
+    the user facing ``description`` leaves out. The docs site shows them under
+    a collapsed block; the client does not. Excluded from dumps, so they never
+    reach a hash."""
     category: str | None = None
     sink: bool = False
     inputs: dict[str, PortDeclaration] = {}
@@ -404,6 +426,28 @@ class Spec(BaseModel):
     """Explicit behavior version folded into step cache hashes. Bump this
     (e.g. ``"2"``) when the op's computation changes so cached results from
     the old behavior are invalidated."""
+
+    @model_validator(mode="after")
+    def _check_exclusive_with(self) -> Spec:
+        """Each ``exclusive_with`` name must be another param of this op."""
+        for name, decl in self.params.items():
+            others = (decl.constraints or {}).get("exclusive_with")
+            if others is None:
+                continue
+            if not isinstance(others, list) or not all(
+                isinstance(other, str) for other in others
+            ):
+                raise ValueError(
+                    f"op {self.op!r} param {name!r}: constraints.exclusive_with "
+                    "must be a list of param names"
+                )
+            for other in others:
+                if other == name or other not in self.params:
+                    raise ValueError(
+                        f"op {self.op!r} param {name!r}: constraints.exclusive_with "
+                        f"names {other!r}, which is not another param of this op"
+                    )
+        return self
 
 
 class Implementation(BaseModel):

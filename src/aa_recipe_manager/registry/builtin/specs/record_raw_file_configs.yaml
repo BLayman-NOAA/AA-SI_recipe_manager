@@ -1,12 +1,12 @@
 op: record_raw_file_configs
 cache_key: record_raw_file_configs  # pinned cache identity - keep stable across op renames
 description: >
-  Collect per-file channel configurations into the survey's raw config file.
-
-  The fan-in half of the raw scan. Drops the files that could not be read,
-  sorts the rest by metadata_start_time, and writes
+  Collect per-file channel configurations into
   raw_file_configs/raw_file_configs.yaml under the calibration output
-  directory. Declare it with collect on the scan step's file_config output.
+  directory. Use collect on the scan step's file_config output.
+notes: >
+  The fan-in half of the raw scan. Drops the files that could not be read and
+  sorts the rest by metadata_start_time.
 category: calibration
 inputs:
   file_configs:

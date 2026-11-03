@@ -2,8 +2,9 @@ op: plan_pyramid_segments
 cache_key: plan_pyramid_segments  # pinned cache identity - keep stable across op renames
 description: >
   Choose ping ranges that a pyramid can be built over independently and then
-  concatenated exactly.
-
+  concatenated exactly. Every range but the last is a multiple of
+  2**(levels-1) pings.
+notes: >
   A pyramid is a reduction along the ping axis, so it splits along that axis,
   but only if the cuts fall on the reduction's own cell boundaries. Level k
   merges 2**k pings, so every range but the last is a multiple of
@@ -38,11 +39,13 @@ params:
     required: false
     default: 32768
     description: >
-      Rough segment size, rounded down onto the grid. Sized for the memory one
-      mapped instance needs: a segment is held whole while its levels are
-      reduced, so at five channels and an uncropped water column 32,768 pings is
-      roughly a gigabyte at level zero and twice that through the cascade. Raise
-      it for a wide machine, lower it for a deep water column.
+      Rough segment size in pings, rounded down onto the grid. Raise it for a
+      machine with more memory, lower it for a deep water column.
+    notes: >
+      Sized for the memory one mapped instance needs: a segment is held whole
+      while its levels are reduced, so at five channels and an uncropped water
+      column 32,768 pings is roughly a gigabyte at level zero and twice that
+      through the cascade.
 implementations:
   - key: default
     callable_path: aa_si_echogram_gl.ops.plan_pyramid_segments

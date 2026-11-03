@@ -1,22 +1,23 @@
 op: detect_seafloor
 cache_key: detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
-  Detect seafloor depth across pings, returning a 1-D (ping_time,) DataArray.
+  Detect the seafloor depth per ping, in metres, from the echosounder's own
+  bottom pick or from Sv. Use log_seafloor_detection_stats first to compare
+  channels.
+notes: >
   Multiple implementations are supported (.bot-based, algorithmic Sv-based,
-  external or manual sources). When channel is null, the implementation
-  selects the highest-quality channel automatically. When channel is specified,
-  only that channel's detection is returned. Output is always 1-D (ping_time,).
-  Use log_seafloor_detection_stats before this step to compare per-channel
-  quality and inform the channel choice.
+  external or manual sources). The output is always 1-D (ping_time,), whether
+  the channel is chosen automatically or given.
 category: detection
 inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Calibrated Sv used by Sv-based detection methods, and the source of the
-      vertical reference: when it carries depth, the returned line is
-      surface-referenced rather than transducer-referenced. Optional, since
-      detection from the echosounder's own bottom pick reads echodata alone.
+      Optional calibrated Sv. When it carries depth, the line is measured from
+      the surface rather than the transducer.
+    notes: >
+      Sv-based methods read it. Detection from the echosounder's own bottom
+      pick reads echodata alone.
     required: false
   echodata:
     type: EchoData
@@ -28,9 +29,7 @@ outputs:
   seafloor_depth:
     type: DataArray
     description: >
-      Detected seafloor depth in metres, shape (ping_time,). Always 1-D
-      regardless of whether automatic best-channel selection or an explicit
-      channel is used.
+      Detected seafloor depth in metres per ping, with no channel dimension.
 params:
   channel:
     type: str

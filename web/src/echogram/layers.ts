@@ -4,7 +4,8 @@
  * A layer is one output variable of one step, drawn as one EchogramGL source.
  */
 import { describeMiss, type Layer, type Resolution, type ViewSettings } from 'aa-si-echogram-gl';
-import type { Preview } from '../api/models';
+import type { Preview, StepPreview } from '../api/models';
+import { partlyHeld } from '../runs/badges';
 import type { RunState, StepRunState } from '../runs/reducer';
 
 /** Where the client server mounts EchogramGL's routes, relative to the page. */
@@ -24,11 +25,32 @@ export interface EchogramLayer {
   resolution: Resolution | null;
   state: 'loading' | 'shown' | 'error' | 'refreshing';
   error: string | null;
-  /** The step's hash moved, or a run computed it again, since the layer was drawn. */
-  outOfDate: boolean;
+  /** How current the drawn data is, from the run all preview and the last run (layerFreshness). */
+  freshness: Freshness;
   /** When the layer was added or refreshed, ms since 1970. */
   addedAt: number;
+  /** The id of the last finished run when the layer was fetched; null when there was none. */
+  drawnAfter: string | null;
+  /**
+   * A hash other than the drawn one that the preview said was saved and a
+   * refresh found nothing at, with the last finished run then.
+   */
+  missed?: { stepHash: string; after: string | null };
 }
+
+/**
+ * How current a layer's data is.
+ *
+ * `current`: drawn at the step's current hash, and no later run saved it.
+ * `available`: a saved result for the current hash is not the one drawn.
+ * `not_computed`: nothing holds the current hash. `not_saved`: the preview
+ * says the current hash is held, but a refresh since the last finished run
+ * found nothing saved at it. `partial`: some instances of a fanned out step
+ * hold it, `held` of `of`. `unknown`: no preview yet, or none for the step.
+ */
+export type Freshness =
+  | { state: 'current' | 'available' | 'not_computed' | 'not_saved' | 'unknown' }
+  | { state: 'partial'; held: number; of: number | null };
 
 /** What is kept of a layer across a page reload. */
 export type SavedLayer = Pick<EchogramLayer, 'step' | 'output' | 'variable' | 'label' | 'stepHash' | 'addedAt'>;
@@ -50,57 +72,133 @@ export function asResolution(value: unknown): Resolution {
   return value as Resolution;
 }
 
-/** Each step's hash in a preview. */
-export function previewHashes(preview: Preview | null | undefined): Record<string, string> {
-  return Object.fromEntries((preview?.steps ?? []).map((step) => [step.step_id, step.step_hash]));
-}
-
 function computedStep(step: StepRunState): boolean {
   return step.status === 'computed' || step.instances.computed > 0;
 }
 
-/** The steps a finished run computed, and when it finished. */
+/** The steps a finished run computed and saved, and which run it was. */
 export interface ComputedSteps {
   steps: Set<string>;
-  at: number;
+  runId: string;
 }
 
 /**
- * What a finished run computed, and when it finished by the server's clock:
- * its run_finished event, else the last event it logged. Null when the run
- * holds no time, since a guess would mark a layer drawn after it.
+ * What a finished run computed and saved.
+ *
+ * Args:
+ *   run: The last run.
+ *   start: The preview the run was started with. A step it says the run kept
+ *     in memory only is left out; without it every computed step counts.
  */
-export function computedSteps(run: RunState | null): ComputedSteps | null {
+export function computedSteps(run: RunState | null, start: Preview | null = null): ComputedSteps | null {
   if (!run?.finished) return null;
-  const seconds = run.finishedAt ?? run.logs.reduce((latest, entry) => Math.max(latest, entry.time), -Infinity);
-  if (!Number.isFinite(seconds)) return null;
+  const atStart = new Map((start?.steps ?? []).map((step) => [step.step_id, step]));
+  const written = (id: string) => {
+    const step = atStart.get(id);
+    return !step || step.pinned || step.checkpoint !== 'memory-only';
+  };
   const steps = new Set(
     Object.entries(run.steps)
-      .filter(([, step]) => computedStep(step))
+      .filter(([id, step]) => computedStep(step) && written(id))
       .map(([id]) => id),
   );
-  return { steps, at: seconds * 1000 };
+  return { steps, runId: run.runId };
 }
 
 /**
- * Layers drawn from a result that is no longer the current one.
+ * How current a layer's data is (see Freshness).
  *
- * Out of date when the preview's hash for the step differs from the layer's,
- * or the last finished run computed the step after the layer was drawn.
+ * Args:
+ *   layer: The layer.
+ *   step: The layer's step in the run all preview.
+ *   computed: What the last finished run computed and saved.
  */
-export function outOfDateLayers(
-  layers: EchogramLayer[],
-  hashes: Record<string, string>,
+export function layerFreshness(
+  layer: EchogramLayer,
+  step: StepPreview | undefined,
   computed: ComputedSteps | null,
-): Set<string> {
-  const ids = new Set<string>();
-  for (const layer of layers) {
-    const hash = hashes[layer.step];
-    const moved = Boolean(hash) && hash !== layer.stepHash;
-    const rerun = Boolean(computed?.steps.has(layer.step)) && computed!.at > layer.addedAt;
-    if (moved || rerun) ids.add(layer.id);
+): Freshness {
+  if (!step?.step_hash) return { state: 'unknown' };
+  const partly = step.fanned_out ? partlyHeld(step) : null;
+  if (partly) return { state: 'partial', held: partly.count, of: partly.of };
+  if (step.step_hash === layer.stepHash) {
+    const rerun = Boolean(computed?.steps.has(layer.step)) && computed!.runId !== layer.drawnAfter;
+    return { state: rerun ? 'available' : 'current' };
   }
-  return ids;
+  if (step.held_by.length > 0) {
+    const missed = layer.missed?.stepHash === step.step_hash && layer.missed.after === (computed?.runId ?? null);
+    return { state: missed ? 'not_saved' : 'available' };
+  }
+  return { state: 'not_computed' };
+}
+
+function sameFreshness(a: Freshness, b: Freshness): boolean {
+  if (a.state !== 'partial' || b.state !== 'partial') return a.state === b.state;
+  return a.held === b.held && a.of === b.of;
+}
+
+/**
+ * The layers with their freshness set from a preview and the last run; a
+ * layer whose freshness is unchanged is the same object.
+ */
+export function withFreshness(
+  layers: EchogramLayer[],
+  preview: Preview | null,
+  computed: ComputedSteps | null,
+): EchogramLayer[] {
+  const steps = new Map((preview?.steps ?? []).map((step) => [step.step_id, step]));
+  return layers.map((layer) => {
+    const freshness = layerFreshness(layer, steps.get(layer.step), computed);
+    return sameFreshness(freshness, layer.freshness) ? layer : { ...layer, freshness };
+  });
+}
+
+/** What becomes of a step's result: kept by every run, only by a run to it, or never. */
+export type SaveKind = 'checkpoint' | 'memory' | 'never' | 'unknown';
+
+/**
+ * Whether a step's result is kept: from the recipe's checkpoint setting when
+ * it says always or never, else from the step's preview entry.
+ *
+ * The preview says memory-only for a checkpoint this run leaves out (pruned,
+ * skipped, untargeted), so the recipe decides first. A step the preview pins
+ * is a run target saved only because it is one, so it is not a checkpoint.
+ *
+ * Args:
+ *   step: The step in the current preview.
+ *   recipeCheckpoint: The recipe's checkpoint setting, for a step the preview lacks.
+ */
+export function saveKind(step: StepPreview | undefined, recipeCheckpoint: string | null = null): SaveKind {
+  const recipe = step ? step.recipe_checkpoint : recipeCheckpoint;
+  if (recipe === 'never') return 'never';
+  if (recipe === 'always') return 'checkpoint';
+  if (!step) return 'unknown';
+  return step.pinned || step.checkpoint !== 'will-save' ? 'memory' : 'checkpoint';
+}
+
+/**
+ * Why a step that holds no result for its current hash draws nothing.
+ *
+ * Args:
+ *   step: The step id.
+ *   kind: What becomes of its result (saveKind).
+ *   note: The server's note on the lookup, put after the first sentence.
+ */
+export function unsavedText(step: string, kind: SaveKind, note: string | null = null): string {
+  const why = note ? ` (${note})` : '';
+  if (kind === 'never') return `${step} is never saved (checkpoint: never in the recipe), so it can't be drawn.`;
+  if (kind === 'memory') {
+    return (
+      `${step} isn't a checkpoint, so only a run to it saves it${why}. ` +
+      `Run to ${step} to draw it, or make it a checkpoint so every run saves it.`
+    );
+  }
+  return `${step} has no saved result yet${why}. Run to ${step} to draw it.`;
+}
+
+/** Said when the result a layer drew, at the same hash, is gone. */
+export function goneText(step: string): string {
+  return `${step} is not saved any more.`;
 }
 
 /** Sources the panel holds that no layer of its stack reads any more. */
@@ -146,7 +244,8 @@ export function restoredLayer(saved: SavedLayer): EchogramLayer {
     resolution: null,
     state: 'loading',
     error: null,
-    outOfDate: false,
+    freshness: { state: 'unknown' },
+    drawnAfter: null,
   };
 }
 

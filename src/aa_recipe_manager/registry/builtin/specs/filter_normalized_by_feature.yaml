@@ -2,14 +2,12 @@ op: filter_normalized_by_feature
 cache_key: filter_normalized_by_feature  # pinned cache identity - keep stable across op renames
 description: >
   Subset the normalised ML Dataset to samples whose raw value for one feature
-  falls inside a range. Returns a filtered Dataset that can be passed directly
-  to run_hdbscan for a second-pass clustering.
-
-  Thresholds apply to the pre-normalization values, so they are given in the
-  feature's own units (dB for mean_Sv) rather than in transformed units. The
-  normalised feature variable is carried through untouched, so the second pass
-  reuses the first pass's normalization rather than re-fitting a scaler on the
-  subset.
+  falls inside a range, in the feature's own units (dB for mean_Sv). The
+  result can go straight to run_hdbscan for a second pass.
+notes: >
+  The normalised feature variable is carried through untouched, so the second
+  pass reuses the first pass's normalization rather than refitting a scaler on
+  the subset.
 
   Chains after filter_normalized_by_cluster to isolate, for example, the
   high-Sv part of the first pass's noise points. That subset clusters far more
@@ -28,8 +26,9 @@ outputs:
     type: Dataset
     description: >
       Copy of ds_normalized subsetted to the samples inside the requested
-      range. The sample_index_to_grid_index mapping is subsetted with it, so
-      the filtered dataset can be passed directly to run_hdbscan.
+      range, ready for run_hdbscan.
+    notes: >
+      The sample_index_to_grid_index mapping is subsetted with it.
 params:
   feature_name:
     type: str

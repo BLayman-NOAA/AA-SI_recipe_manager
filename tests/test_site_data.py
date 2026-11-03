@@ -4,18 +4,23 @@
 
 from __future__ import annotations
 
+import ast
+import io
 import json
 import posixpath
+import runpy
+import sys
+import textwrap
+import types
 from pathlib import Path
 
 import pytest
 
 from aa_recipe_manager import api
-from aa_recipe_manager.docs.notebook_slice import (
+from aa_recipe_manager.docs.recipe_code import (
+    _first_sentence,
     _placeholder_paths,
-    cells_to_markdown,
     restore_placeholders,
-    slice_steps,
 )
 from aa_recipe_manager.docs.site_data import (
     build_site_data,
@@ -121,22 +126,11 @@ def test_diagram_groups_match_the_executor(entry, registry):
     assert sorted(g["members"] for g in graph["groups"]) == chains
 
 
-def test_each_sub_recipe_has_notebook_cells(registry):
-    from aa_recipe_manager.docs.notebook_slice import generate_parent_notebook
-
-    recipes = {e.slug: load_recipe(DOCS / e.path) for e in PARENTS}
-    notebooks = {}
-    for entry in ENTRIES:
-        if entry.parent is None:
-            continue
-        name = Path(entry.path).name
-        [block] = [b for b in recipes[entry.parent].include_blocks if b.source == name]
-        if entry.parent not in notebooks:
-            notebooks[entry.parent] = generate_parent_notebook(
-                recipes[entry.parent], registry
-            )
-        sliced = slice_steps(notebooks[entry.parent], block.step_ids)
-        assert any(c.cell_type == "code" for c in sliced.cells), entry.slug
+def python_tab(partial: str) -> str:
+    """The code of a partial's Python tab."""
+    tab = partial.split('=== "Python"', 1)[1]
+    code = tab.split("```python\n", 1)[1].split("\n    ```", 1)[0]
+    return textwrap.dedent(code)
 
 
 # The HB1603 survey tier: levels 0 to 2a and the dive plan. The docs copy
@@ -227,40 +221,24 @@ def test_reference_include_trees_match_the_files(docs_path):
 
 
 # ---------------------------------------------------------------------------
-# Notebook slicing
+# Generated code
 # ---------------------------------------------------------------------------
 
 
-def test_slice_keeps_a_shared_loop_whole():
-    import nbformat
-
-    nb = nbformat.v4.new_notebook()
-    nb.cells = [
-        nbformat.v4.new_markdown_cell("### Step: `a`\n**Op:** `x`"),
-        nbformat.v4.new_markdown_cell("### Step: `b`\n**Op:** `y`"),
-        nbformat.v4.new_code_cell("for _item in files:\n    a()\n    b()"),
-        nbformat.v4.new_markdown_cell("### Step: `c`\n**Op:** `z`"),
-        nbformat.v4.new_code_cell("c()"),
-    ]
-    sliced = slice_steps(nb, ["b"])
-    assert [cell.source.splitlines()[0] for cell in sliced.cells] == [
-        "### Step: `b`",
-        "for _item in files:",
-    ]
-    assert sliced.shared_with == ["a"]
-    assert cells_to_markdown(sliced.cells, heading_shift=1).startswith("#### Step: `b`")
-
-
-def test_slice_accepts_any_step_id():
-    import nbformat
-
-    nb = nbformat.v4.new_notebook()
-    nb.cells = [
-        nbformat.v4.new_markdown_cell("### Step: `mask-seabed.v2`\n**Op:** `x`"),
-        nbformat.v4.new_code_cell("mask()"),
-    ]
-    sliced = slice_steps(nb, ["mask-seabed.v2"])
-    assert [cell.cell_type for cell in sliced.cells] == ["markdown", "code"]
+@pytest.mark.parametrize(
+    "description,sentence",
+    [
+        ("Open files.  Then more.", "Open files."),
+        (
+            "Append features (e.g. depth) to\n  ``ds``. More.",
+            "Append features (e.g. depth) to ds.",
+        ),
+        ("No full stop", "No full stop"),
+        ("", ""),
+    ],
+)
+def test_first_sentence(description, sentence):
+    assert _first_sentence(description) == sentence
 
 
 def test_restore_handles_placeholders_that_prefix_each_other():
@@ -286,7 +264,7 @@ def test_restore_handles_placeholders_that_prefix_each_other():
 
 
 def test_placeholders_never_reach_the_notebook(registry):
-    from aa_recipe_manager.docs.notebook_slice import generate_parent_notebook
+    from aa_recipe_manager.docs.recipe_code import generate_parent_notebook
 
     recipe = load_recipe(DOCS / "recipes/HB1603/dive_analysis.yaml")
     nb = generate_parent_notebook(recipe, registry)
@@ -347,6 +325,70 @@ def test_committed_ops_json_carries_no_machine_paths():
                     assert not value.startswith(("C:\\Users", "/home/", "/Users/")), op[
                         "op"
                     ]
+
+
+def test_ops_json_carries_spec_notes(built):
+    ops = {
+        op["op"]: op
+        for op in json.loads((built / "ops.json").read_text(encoding="utf-8"))["ops"]
+    }
+    params = {param["name"]: param for param in ops["merge_datasets"]["params"]}
+    assert "InvalidIndexError" in params["on_duplicate"]["notes"]
+    assert "InvalidIndexError" not in params["on_duplicate"]["description"]
+    assert all("notes" in op for op in ops.values())
+
+
+def gen_pages(monkeypatch):
+    """Run docs/gen_pages.py against a stand in for mkdocs_gen_files."""
+    stub = types.ModuleType("mkdocs_gen_files")
+    stub.config = {"docs_dir": str(DOCS)}
+    stub.open = lambda path, mode="r": io.StringIO()
+    stub.set_edit_path = lambda *args: None
+    monkeypatch.setitem(sys.modules, "mkdocs_gen_files", stub)
+    return runpy.run_path(str(DOCS / "gen_pages.py"))
+
+
+def test_op_page_shows_notes_in_collapsed_blocks(monkeypatch):
+    op = {
+        "op": "noted",
+        "category": None,
+        "sink": False,
+        "experimental": False,
+        "description": "Does a thing.",
+        "notes": "Why it works.\nSecond paragraph.",
+        "inputs": [],
+        "outputs": [],
+        "params": [
+            {
+                "name": "gap",
+                "type": "float",
+                "units": "s",
+                "default": 1.0,
+                "required": False,
+                "description": "Gap between pings.",
+                "notes": "Edge cases.",
+            },
+            {
+                "name": "plain",
+                "type": "int",
+                "units": None,
+                "default": None,
+                "required": False,
+                "description": "Plain.",
+                "notes": None,
+            },
+        ],
+        "implementations": [],
+        "spec_file": None,
+    }
+    page = gen_pages(monkeypatch)["op_page"](op)
+    # A folded YAML block keeps one newline per paragraph break.
+    assert '??? note "Notes for developers"\n\n    Why it works.\n\n    Second' in page
+    assert '??? note "Notes for developers: `gap`"\n\n    Edge cases.' in page
+    assert "`plain`\"" not in page
+    # Notes never land in the parameter table.
+    table = page.split("## Parameters")[1].split("???")[0]
+    assert "Edge cases." not in table
 
 
 def test_ops_record_where_they_are_used(built):
@@ -561,6 +603,46 @@ def test_full_recipes_get_a_runnable_notebook(built):
         nbformat.validate(nb)
         assert [cell.id for cell in nb.cells][:2] == ["cell-0", "cell-1"]
     assert not (built / "notebooks" / "hb1603-level-2.ipynb").exists()
+
+
+def test_python_tabs_parse_and_show_every_step(built):
+    for entry in ENTRIES:
+        partial = (built / "partials" / f"{entry.slug}.md").read_text(encoding="utf-8")
+        code = python_tab(partial)
+        ast.parse(code)
+        for step in load_recipe(DOCS / entry.path).steps:
+            assert f"# {step.id}" in code, (entry.slug, step.id)
+        assert "memory://" not in code
+
+
+def test_python_tab_of_a_level_elides_other_levels_in_its_loop(built):
+    level1 = python_tab(
+        (built / "partials" / "hb1603-level-1.md").read_text(encoding="utf-8")
+    )
+    assert "for _item in raw_urls:\n" in level1
+    level2 = "HB1603 level 2, calibrated Sv, masks and noise removal"
+    assert f"    ...  # {level2}\n" in level1
+    assert "compute_Sv" not in level1
+    assert "# Inputs" not in level1
+    # Call arguments are indented with the loop body.
+    call = "    _iter_raw_stores = read_raw_files_to_stores(\n        raw_file_paths="
+    assert call in level1
+
+
+def test_python_tab_of_a_full_recipe_names_its_sections(built):
+    dive = python_tab(
+        (built / "partials" / "hb1603-dive-analysis.md").read_text(encoding="utf-8")
+    )
+    assert "\n# HB1603 level 1, raw ingest\n" in dive
+    # Level 2 starts inside level 1's per-file loop.
+    assert "\n    # HB1603 level 2, calibrated Sv, masks and noise removal\n" in dive
+    assert "..." not in dive
+    # Params take input values as literals, so unused inputs are left out.
+    quickstart = python_tab(
+        (built / "partials" / "quickstart.md").read_text(encoding="utf-8")
+    )
+    assert "# Inputs" not in quickstart
+    assert "file_time_start='2016-07-25T20:58:00'" in quickstart
 
 
 def test_partials_link_to_notebooks(built):

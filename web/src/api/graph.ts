@@ -38,6 +38,15 @@ export interface GraphParam {
   default: unknown;
   set: boolean;
   value: unknown;
+  /**
+   * Whether the step must set a value: the op requires the param and gives
+   * it no default. False for a param the op does not declare.
+   */
+  required?: boolean;
+  /** The spec's constraints, such as `must_exist` on a path. */
+  constraints?: Record<string, unknown>;
+  /** How a path param folds into the hash; null when undeclared. */
+  fingerprint_mode?: string | null;
 }
 
 /** A step output port. */
@@ -100,6 +109,11 @@ export interface InputNode {
   label: string;
   type: string | null;
   declared: boolean;
+  /**
+   * Whether a run must give the input a value, as dry-run reports it: one
+   * declared `required: true`, or one with no default feeding a required
+   * input port or param. Null for an input no file declares.
+   */
   required: boolean | null;
   default: unknown;
   description: string | null;
@@ -201,6 +215,7 @@ export interface GraphInclude {
 export interface GraphIncludeInput {
   name: string;
   type: string | null;
+  /** Whether the file declares it `required: true`. */
   required: boolean;
   default: unknown;
   description: string | null;

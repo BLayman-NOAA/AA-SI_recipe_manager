@@ -1,14 +1,29 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { DockviewApi } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildMenus, type Commands, type MenuState } from '../src/shell/menus';
+import { buildMenus, itemTooltip, tabMenuItems, type Commands, type MenuState } from '../src/shell/menus';
 
 import { PANES, placementFor } from '../src/shell/panes';
-import { LAYOUT_KEY, useDock } from '../src/shell/dock';
-import { matchShortcut, type KeyInput } from '../src/shell/shortcuts';
+import {
+  LAYOUT_KEY,
+  POPOUT_URL,
+  addPopoutWindow,
+  dockedLayout,
+  onPopoutWindows,
+  persistLayout,
+  popoutPane,
+  removePopoutWindow,
+  returnPane,
+  useDock,
+} from '../src/shell/dock';
+import { Dialog } from '../src/shell/Dialog';
+import { useDialogs } from '../src/shell/dialogs';
+import { installShortcuts, matchShortcut, type KeyInput } from '../src/shell/shortcuts';
+import { useSessionStore } from '../src/state/session';
 import { useView } from '../src/state/view';
-import { mockApi, testQueryClient } from './helpers';
+import { editableSession, mockApi, testQueryClient } from './helpers';
 
 const MENUS = ['File', 'Edit', 'Recipe', 'Run', 'View', 'Cache', 'Help'];
 
@@ -34,9 +49,16 @@ function noCommands(): Commands {
     openRecipe: noop,
     openSession: noop,
     closeSession: noop,
+    save: noop,
+    saveAs: noop,
+    revert: noop,
+    undo: noop,
+    redo: noop,
     findStep: noop,
     showPane: noop,
     togglePane: noop,
+    popoutPane: noop,
+    returnPane: noop,
     toggleConnected: noop,
     expandAll: noop,
     collapseAll: noop,
@@ -72,6 +94,7 @@ const STATE: MenuState = {
   theme: 'dark',
   docsUrl: 'https://docs.example.org/',
   run: { canRun: false, canRunSelected: false, canRunStep: false, isActive: false, isCancelling: false },
+  edit: { dirty: false, typing: false, canUndo: false, canRedo: false, undoKind: null, redoKind: null, note: null },
   surveyRegion: true,
   textSize: 1.15,
   echogramSelected: false,
@@ -119,7 +142,7 @@ describe('menu bar', () => {
         .find((item) => item.querySelector('.rc-menu-label')?.textContent === label)!;
     const save = byLabel('Save');
     expect(save).toHaveAttribute('aria-disabled', 'true');
-    expect(save).toHaveAttribute('title', 'Arrives in milestone 5');
+    expect(save).not.toHaveAttribute('title');
     expect(byLabel('New Recipe')).toHaveAttribute('title', 'Arrives in milestone 9');
     expect(byLabel('Open Recipe')).not.toHaveAttribute('aria-disabled', 'true');
   });
@@ -160,6 +183,24 @@ describe('menu bar', () => {
     await user.click(screen.getByRole('button', { name: 'View' }));
     await user.click(screen.getByRole('menuitemcheckbox', { name: /^Problems/ }));
     await waitFor(() => expect(useDock.getState().open).toContain('problems'));
+  });
+
+  it('puts the Run Config pane beside Run Settings and toggles it from the View menu', async () => {
+    const user = userEvent.setup();
+    expect(placementFor('runConfig', new Set(['inspector']))).toEqual({ reference: 'inspector', direction: 'within' });
+    renderApp();
+    await waitFor(() => expect(useDock.getState().open).toContain('runConfig'));
+    const api = useDock.getState().api!;
+    expect(api.getPanel('runConfig')!.group.id).toBe(api.getPanel('runSettings')!.group.id);
+
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    const toggle = screen.getByRole('menuitemcheckbox', { name: /^Run Config/ });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(toggle);
+    await waitFor(() => expect(useDock.getState().open).not.toContain('runConfig'));
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /^Run Config/ }));
+    await waitFor(() => expect(useDock.getState().open).toContain('runConfig'));
   });
 
   it('restores the saved layout after a reload', async () => {
@@ -213,6 +254,11 @@ describe('buildMenus', () => {
   it('gives every item disabled for a later milestone that milestone', () => {
     const waitingForSession = new Set([
       'close-session',
+      'save',
+      'save-as',
+      'revert',
+      'undo',
+      'redo',
       'find-step',
       'expand-all',
       'collapse-all',
@@ -231,7 +277,7 @@ describe('buildMenus', () => {
     const disabled = menus
       .flatMap((menu) => menu.items)
       .filter((item) => !item.enabled && !waitingForSession.has(item.id));
-    expect(disabled.length).toBeGreaterThan(10);
+    expect(disabled.length).toBeGreaterThan(5);
     for (const item of disabled) {
       expect(item.milestone, item.id).toBeGreaterThan(1);
     }
@@ -334,6 +380,7 @@ describe('buildMenus', () => {
       'theme',
       'reset-layout',
       ...PANES.map((pane) => `pane-${pane.id}`),
+      'echogram-window',
     ]);
     expect(view.items.slice(0, 4).map((item) => item.label)).toEqual([
       'Highlight Connected',
@@ -365,6 +412,72 @@ describe('buildMenus', () => {
     expect(commands.collapseAll).toHaveBeenCalledTimes(1);
   });
 
+  it('enables the File and Edit items by the editing state and wires them', () => {
+    const commands = noCommands();
+    commands.save = vi.fn();
+    commands.saveAs = vi.fn();
+    commands.revert = vi.fn();
+    commands.undo = vi.fn();
+    commands.redo = vi.fn();
+    const item = (state: MenuState, menu: string, id: string) =>
+      buildMenus(state, commands)
+        .find((entry) => entry.label === menu)!
+        .items.find((entry) => entry.id === id)!;
+
+    const clean = { ...STATE, sid: 's1' };
+    expect(item(clean, 'File', 'save').enabled).toBe(false);
+    expect(item(clean, 'File', 'save-as').enabled).toBe(true);
+    expect(item(clean, 'File', 'revert').enabled).toBe(false);
+    expect(item(clean, 'Edit', 'undo')).toMatchObject({ label: 'Undo', enabled: false });
+    expect(item(clean, 'Edit', 'redo')).toMatchObject({ label: 'Redo', enabled: false });
+    expect(item(STATE, 'File', 'save-as').enabled).toBe(false);
+
+    // Typing waiting out the debounce enables Save, as Ctrl+S sends it first; Revert waits for the edit.
+    const typing = { ...clean, edit: { ...clean.edit, typing: true } };
+    expect(item(typing, 'File', 'save').enabled).toBe(true);
+    expect(item(typing, 'File', 'revert').enabled).toBe(false);
+
+    const edited = {
+      ...clean,
+      edit: {
+        dirty: true,
+        typing: false,
+        canUndo: true,
+        canRedo: true,
+        undoKind: 'set_param',
+        redoKind: 'replace_text',
+        note: null,
+      },
+    };
+    expect(item(edited, 'File', 'save')).toMatchObject({ enabled: true, shortcut: 'Ctrl+S' });
+    expect(item(edited, 'File', 'revert').enabled).toBe(true);
+    expect(item(edited, 'Edit', 'undo')).toMatchObject({ label: 'Undo parameter change', enabled: true });
+    expect(item(edited, 'Edit', 'redo')).toMatchObject({ label: 'Redo text edit', enabled: true });
+    for (const [menu, id] of [
+      ['File', 'save'],
+      ['File', 'save-as'],
+      ['File', 'revert'],
+      ['Edit', 'undo'],
+      ['Edit', 'redo'],
+    ]) {
+      item(edited, menu, id).action!();
+    }
+    expect(commands.save).toHaveBeenCalledTimes(1);
+    expect(commands.saveAs).toHaveBeenCalledTimes(1);
+    expect(commands.revert).toHaveBeenCalledTimes(1);
+    expect(commands.undo).toHaveBeenCalledTimes(1);
+    expect(commands.redo).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts the restart note on Undo as its tooltip', () => {
+    const note = '2 older edits could not be restored after the restart';
+    const state = { ...STATE, sid: 's1', edit: { ...STATE.edit, canUndo: true, undoKind: 'set_param', note } };
+    const undo = buildMenus(state, noCommands())
+      .find((menu) => menu.label === 'Edit')!
+      .items.find((entry) => entry.id === 'undo')!;
+    expect(itemTooltip(undo)).toBe(note);
+  });
+
   it('lists recent sessions as a submenu', () => {
     const commands = noCommands();
     commands.openSession = vi.fn();
@@ -385,6 +498,226 @@ describe('panes', () => {
     expect(placementFor('ops', new Set(['diagram']))).toEqual({ reference: 'diagram', direction: 'left' });
     expect(placementFor('yaml', new Set())).toBeNull();
     expect(placementFor('logs', new Set())).toEqual({ direction: 'below' });
+  });
+});
+
+describe('pane windows', () => {
+  type Leaf = { type: string; data: unknown; visible?: boolean };
+
+  function leafOf(node: Leaf, group: string): Leaf | undefined {
+    if (node.type === 'leaf') return (node.data as { id: string }).id === group ? node : undefined;
+    return (node.data as Leaf[]).map((child) => leafOf(child, group)).find(Boolean);
+  }
+
+  function tab(title: string): HTMLElement {
+    const tabs = [...document.querySelectorAll<HTMLElement>('.dv-default-tab')];
+    return tabs.find((element) => element.textContent === title)!;
+  }
+
+  async function renderLayout() {
+    renderApp();
+    await waitFor(() => expect(useDock.getState().open).toHaveLength(PANES.length));
+    return useDock.getState().api!;
+  }
+
+  beforeEach(() => {
+    useView.getState().resetScope();
+    useDialogs.getState().close();
+  });
+
+  it('offers the echogram in a new window from the View menu', () => {
+    const commands = noCommands();
+    commands.popoutPane = vi.fn();
+    const view = buildMenus(STATE, commands).find((menu) => menu.label === 'View')!;
+    const item = view.items.find((entry) => entry.id === 'echogram-window')!;
+    expect(item).toMatchObject({ label: 'Echogram in New Window', enabled: true });
+    item.action!();
+    expect(commands.popoutPane).toHaveBeenCalledWith('echogram');
+  });
+
+  it('builds the tab menu for a pane in the main window and in a popout', () => {
+    const commands = { popoutPane: vi.fn(), returnPane: vi.fn() };
+    const docked = tabMenuItems('logs', false, commands);
+    expect(docked.map((item) => item.label)).toEqual(['Open in New Window']);
+    docked[0].action!();
+    expect(commands.popoutPane).toHaveBeenCalledWith('logs');
+    const popped = tabMenuItems('logs', true, commands);
+    expect(popped.map((item) => item.label)).toEqual(['Return to Main Window']);
+    popped[0].action!();
+    expect(commands.returnPane).toHaveBeenCalledWith('logs');
+  });
+
+  it('opens a pane in a new window from its tab menu', async () => {
+    const user = userEvent.setup();
+    const api = await renderLayout();
+    const addPopoutGroup = vi.spyOn(api, 'addPopoutGroup').mockResolvedValue(true);
+
+    fireEvent.contextMenu(tab('Problems'));
+    const menu = screen.getByRole('menu', { name: 'Pane' });
+    expect(within(menu).queryByRole('menuitem', { name: /Return to Main Window/ })).toBeNull();
+    await user.click(within(menu).getByRole('menuitem', { name: /Open in New Window/ }));
+    expect(addPopoutGroup).toHaveBeenCalledWith(api.getPanel('problems'), { popoutUrl: POPOUT_URL });
+    expect(POPOUT_URL).toBe('/popout.html');
+    expect(screen.queryByRole('menu', { name: 'Pane' })).toBeNull();
+
+    fireEvent.contextMenu(tab('Logs'));
+    expect(screen.getByRole('menu', { name: 'Pane' })).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Pane' })).toBeNull();
+  });
+
+  it('shows a closed pane before opening it in a new window', async () => {
+    const user = userEvent.setup();
+    const api = await renderLayout();
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /^Echogram/ }));
+    await waitFor(() => expect(useDock.getState().open).not.toContain('echogram'));
+    const addPopoutGroup = vi.spyOn(api, 'addPopoutGroup').mockResolvedValue(true);
+
+    popoutPane('echogram');
+    expect(api.getPanel('echogram')).toBeDefined();
+    expect(addPopoutGroup).toHaveBeenCalledWith(api.getPanel('echogram'), { popoutUrl: POPOUT_URL });
+  });
+
+  it('moves a pane into a popout window, saves it docked, and closes the window to return it', async () => {
+    // An iframe stands in for the window dockview opens.
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const popout = frame.contentWindow!;
+    const open = vi.fn(() => popout);
+    vi.stubGlobal('open', open);
+    try {
+      const api = await renderLayout();
+      const home = api.getPanel('problems')!.group.id;
+      popoutPane('problems');
+      await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      expect(open.mock.calls[0]).toContain(POPOUT_URL);
+      popout.dispatchEvent(new Event('load'));
+      await waitFor(() => expect(api.getPopouts()).toHaveLength(1));
+      expect(api.getPanel('problems')!.group.api.location.type).toBe('popout');
+      expect(popout.document.documentElement.dataset.theme).toBe(useView.getState().theme);
+
+      // The tab now lives in the popout's document, and its menu opens there.
+      const popped = [...popout.document.querySelectorAll<HTMLElement>('.dv-default-tab')];
+      expect(popped.map((element) => element.textContent)).toEqual(['Problems']);
+      fireEvent.contextMenu(popped[0]);
+      const menu = within(popout.document.body).getByRole('menu', { name: 'Pane' });
+      expect(within(menu).getByRole('menuitem', { name: /Return to Main Window/ })).toBeInTheDocument();
+
+      persistLayout();
+      const saved = JSON.parse(window.localStorage.getItem(LAYOUT_KEY)!);
+      expect(saved.popoutGroups).toBeUndefined();
+      expect(leafOf(saved.grid.root, home)!.data).toMatchObject({ views: expect.arrayContaining(['problems']) });
+
+      const close = vi.spyOn(popout, 'close').mockImplementation(() => {});
+      returnPane('problems');
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      frame.remove();
+    }
+  });
+
+  it('pops out a pane alone in its group without leaving an empty group, and returns it there', async () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const popout = frame.contentWindow!;
+    const open = vi.fn(() => popout);
+    vi.stubGlobal('open', open);
+    const emptyGroups = (api: DockviewApi) =>
+      api.groups.filter(
+        (group) => group.api.location.type === 'grid' && group.api.isVisible && group.panels.length === 0,
+      );
+    try {
+      const api = await renderLayout();
+      const home = api.getPanel('echogram')!.group;
+      expect(home.panels).toHaveLength(1);
+      popoutPane('echogram');
+      await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      popout.dispatchEvent(new Event('load'));
+      await waitFor(() => expect(api.getPopouts()).toHaveLength(1));
+      expect(api.getPanel('echogram')!.group.api.location.type).toBe('popout');
+      expect(emptyGroups(api)).toEqual([]);
+      // The layout reports the window to whatever listens in popouts.
+      const closed = vi.fn();
+      const watched: Window[] = [];
+      const stop = onPopoutWindows((target) => {
+        watched.push(target);
+        return closed;
+      });
+      expect(watched).toEqual([popout]);
+
+      // The user closing the window docks it back where it was.
+      popout.dispatchEvent(new Event('beforeunload'));
+      await waitFor(() => expect(api.getPopouts()).toHaveLength(0));
+      const back = api.getPanel('echogram')!.group;
+      expect(back.api.location.type).toBe('grid');
+      expect(back.api.isVisible).toBe(true);
+      expect(back.id).toBe(home.id);
+      expect(emptyGroups(api)).toEqual([]);
+      expect(closed).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      frame.remove();
+    }
+  });
+
+  it('docks popped out panes when the layout is saved and restored', async () => {
+    const first = await renderLayout();
+    const layout = first.toJSON();
+    const home = first.getPanel('echogram')!.group.id;
+
+    // The layout as dockview writes it with the echogram popped out: its home
+    // group left empty and hidden, the pane in a popout group.
+    const leaf = leafOf(layout.grid.root as Leaf, home)!;
+    const group = leaf.data as { views: string[]; activeView?: string };
+    layout.popoutGroups = [
+      { data: { ...structuredClone(group), id: '99' } as never, gridReferenceGroup: home, position: null, url: POPOUT_URL },
+    ];
+    group.views = [];
+    delete group.activeView;
+    leaf.visible = false;
+
+    const docked = dockedLayout(layout);
+    expect(docked.popoutGroups).toBeUndefined();
+    expect(leafOf(docked.grid.root as Leaf, home)).toMatchObject({ data: { views: ['echogram'], activeView: 'echogram' } });
+    expect(leafOf(docked.grid.root as Leaf, home)!.visible).toBeUndefined();
+    // The popout's pane closes when its home group is gone.
+    const orphan = dockedLayout({ ...layout, popoutGroups: [{ ...layout.popoutGroups[0], gridReferenceGroup: 'gone' }] });
+    expect(Object.keys(orphan.panels)).not.toContain('echogram');
+
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    cleanup();
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    const api = await renderLayout();
+    expect(api.getPanel('echogram')!.group.id).toBe(home);
+    expect(api.getPopouts()).toHaveLength(0);
+    expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('Dialog', () => {
+  it('shows in the document it is given and closes on Escape pressed there', () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const doc = frame.contentDocument!;
+    const onClose = vi.fn();
+    try {
+      render(
+        <Dialog doc={doc} title="Pick" onClose={onClose}>
+          <p>Body</p>
+        </Dialog>,
+      );
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(within(doc.body).getByRole('dialog', { name: 'Pick' })).toHaveTextContent('Body');
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.keyDown(doc.body, { key: 'Escape' });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      cleanup();
+      frame.remove();
+    }
   });
 });
 
@@ -411,4 +744,174 @@ describe('shortcuts', () => {
     expect(matchShortcut(key({ key: 'S', ctrlKey: true, shiftKey: true }))).toBe('saveAs');
     expect(matchShortcut(key({ key: 'x' }))).toBeNull();
   });
+
+  it('leaves undo and redo in a text field to the field', () => {
+    expect(matchShortcut(key({ key: 'z', ctrlKey: true }))).toBe('undo');
+    expect(matchShortcut(key({ key: 'y', ctrlKey: true }))).toBe('redo');
+    expect(matchShortcut(key({ key: 'z', ctrlKey: true, typing: true }))).toBeNull();
+    expect(matchShortcut(key({ key: 'y', ctrlKey: true, typing: true }))).toBeNull();
+    expect(matchShortcut(key({ key: 's', ctrlKey: true, typing: true }))).toBe('save');
+  });
+
+  it('listens in each popout window while it is open', () => {
+    // An iframe stands in for the popout window dockview opens.
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const popout = frame.contentWindow!;
+    const save = vi.fn();
+    const undo = vi.fn();
+    const stop = installShortcuts({ save, undo });
+    const press = (target: EventTarget, key = 's') => {
+      const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event;
+    };
+    try {
+      addPopoutWindow(popout);
+      expect(press(popout.document.body).defaultPrevented).toBe(true);
+      expect(save).toHaveBeenCalledTimes(1);
+      // A text field in the popout keeps its own undo.
+      const field = popout.document.createElement('textarea');
+      popout.document.body.append(field);
+      expect(press(field, 'z').defaultPrevented).toBe(false);
+      expect(undo).not.toHaveBeenCalled();
+      press(popout.document.body, 'z');
+      expect(undo).toHaveBeenCalledTimes(1);
+      press(field);
+      expect(save).toHaveBeenCalledTimes(2);
+      removePopoutWindow(popout);
+      press(popout.document.body);
+      expect(save).toHaveBeenCalledTimes(2);
+      // A window opened after the shortcuts are installed is listened to as well.
+      addPopoutWindow(popout);
+      press(popout.document.body);
+      expect(save).toHaveBeenCalledTimes(3);
+    } finally {
+      stop();
+      press(popout.document.body);
+      expect(save).toHaveBeenCalledTimes(3);
+      removePopoutWindow(popout);
+      frame.remove();
+    }
+  });
+
+  it('runs the handler outside a text field and the browser default inside one', () => {
+    const undo = vi.fn();
+    const save = vi.fn();
+    const stop = installShortcuts({ undo, save });
+    const textarea = document.createElement('textarea');
+    document.body.append(textarea);
+    try {
+      const inField = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(inField);
+      expect(undo).not.toHaveBeenCalled();
+      expect(inField.defaultPrevented).toBe(false);
+
+      const outside = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(outside);
+      expect(undo).toHaveBeenCalledTimes(1);
+      expect(outside.defaultPrevented).toBe(true);
+
+      const saveInField = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(saveInField);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(saveInField.defaultPrevented).toBe(true);
+    } finally {
+      stop();
+      textarea.remove();
+    }
+  });
 });
+
+describe('editing in the shell', () => {
+  const SID = editableSession().id;
+  const note = '1 older edit could not be restored after the restart';
+  const session = editableSession({
+    dirty: ['sub/leaf.yaml'],
+    files: editableSession().files.map((file) => ({ ...file, dirty: file.path === 'sub/leaf.yaml' })),
+    history: { can_undo: true, can_redo: false, undo_kind: 'set_param', redo_kind: null, seq: 3, note },
+  });
+
+  beforeEach(() => {
+    useView.getState().resetScope();
+    useDialogs.getState().close();
+    useSessionStore.getState().setSid(SID);
+    document.title = 'AA-SI Recipe Manager';
+  });
+
+  afterEach(() => {
+    useSessionStore.getState().setSid(null);
+  });
+
+  function renderEditedApp() {
+    const fetchMock = mockApi({
+      'GET /api/health': { status: 'ok', version: '9.8.7', dev: true, state_dir: '/state', docs_url: 'https://docs.example.org/' },
+      'GET /api/sessions': [],
+      'GET /api/recipes': { roots: [], recipes: [] },
+      'GET /api/ops': { schema: 1, counts: { ops: 0, implementations: 0, sources_resolved: 0 }, categories: [], ops: [] },
+      [`GET /api/sessions/${SID}`]: session,
+      [`GET /api/sessions/${SID}/runs`]: [],
+      [`POST /api/sessions/${SID}/sync`]: { session, reloaded: [], conflicts: [], entries: [] },
+      [`POST /api/sessions/${SID}/undo`]: { session, changed: false, changed_hashes: [], entries: [] },
+    });
+    render(<App client={testQueryClient()} />);
+    return fetchMock;
+  }
+
+  it('marks unsaved edits in the status bar and the page title', async () => {
+    renderEditedApp();
+    expect(await screen.findByText('session: with_sub (unsaved: 1 file)')).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe('*AA-SI Recipe Manager'));
+  });
+
+  it('enables Undo from the history, with the restart note, and undoes', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderEditedApp();
+    await screen.findByText('session: with_sub (unsaved: 1 file)');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const undo = screen.getByRole('menuitem', { name: /Undo parameter change/ });
+    expect(undo).not.toHaveAttribute('aria-disabled', 'true');
+    expect(undo).toHaveAttribute('title', note);
+    expect(screen.getByRole('menuitem', { name: /^Redo/ })).toHaveAttribute('aria-disabled', 'true');
+    await user.click(undo);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === `/api/sessions/${SID}/undo`)).toBe(true),
+    );
+  });
+
+  it('reverts after the user confirms', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderEditedApp();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await screen.findByText('session: with_sub (unsaved: 1 file)');
+    const posted = () => fetchMock.mock.calls.filter(([url]) => url === `/api/sessions/${SID}/revert`).length;
+
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.click(screen.getByRole('menuitem', { name: /^Revert/ }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(posted()).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.click(screen.getByRole('menuitem', { name: /^Revert/ }));
+    await waitFor(() => expect(posted()).toBe(1));
+    confirm.mockRestore();
+  });
+
+  it('opens Save with Ctrl+S', async () => {
+    const user = userEvent.setup();
+    renderEditedApp();
+    await screen.findByText('session: with_sub (unsaved: 1 file)');
+    await user.keyboard('{Control>}s{/Control}');
+    const dialog = await screen.findByRole('dialog', { name: 'Save' });
+    expect(within(dialog).getByText('sub/leaf.yaml')).toBeInTheDocument();
+  });
+
+  it('opens Save As with Ctrl+Shift+S', async () => {
+    const user = userEvent.setup();
+    renderEditedApp();
+    await screen.findByText('session: with_sub (unsaved: 1 file)');
+    await user.keyboard('{Control>}{Shift>}S{/Shift}{/Control}');
+    expect(await screen.findByRole('dialog', { name: 'Save As' })).toBeInTheDocument();
+  });
+});
+

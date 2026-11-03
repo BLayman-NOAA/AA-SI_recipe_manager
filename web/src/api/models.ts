@@ -23,6 +23,22 @@ export type SessionDocument = Omit<Schemas['SessionResponse'], 'graph'> & {
   graph: Graph;
 };
 
+/** A response type with its `session` read as a SessionDocument. */
+type WithSession<T> = Omit<T, 'session'> & { session: SessionDocument };
+
+export type HistoryEntry = Schemas['HistoryEntryModel'];
+export type HistoryBlock = Schemas['HistoryBlock'];
+export type DiskConflict = Schemas['DiskConflict'];
+export type EditResponse = WithSession<Schemas['EditResponse']>;
+export type SyncResponse = WithSession<Schemas['SyncResponse']>;
+export type SaveResponse = WithSession<Schemas['SaveResponse']>;
+export type SaveAsRequest = Schemas['SaveAsRequest'];
+export type SaveAsResult = Schemas['SaveAsResultModel'];
+export type Rewrite = Schemas['RewriteModel'];
+export type SaveAsResponse = WithSession<Schemas['SaveAsResponse']>;
+export type SaveConfigRequest = Schemas['SaveConfigRequest'];
+export type SaveConfigResponse = WithSession<Schemas['SaveConfigResponse']>;
+
 /** One op in the catalog served by GET /api/ops (docs/data/ops.json shape). */
 export interface OpEntry {
   op: string;
@@ -49,6 +65,8 @@ export function isRunConfigProblem(problem: Problem): boolean {
 }
 
 export type RunRecord = Schemas['RunResponse'];
+/** The run a start answers, with the files the server reloaded from disk before it. */
+export type StartRunResponse = Schemas['StartRunResponse'];
 export type RunStatus = RunRecord['status'];
 export type RunSummary = Schemas['RunSummary'];
 export type StartRunRequest = Schemas['StartRunRequest'];
@@ -62,6 +80,11 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['queued', 's
 
 export function isActiveRun(run: RunRecord): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
+}
+
+/** Whether the session may edit a file: an editable session and one of its editable files. */
+export function fileEditable(session: Pick<SessionDocument, 'read_only' | 'files'>, path: string): boolean {
+  return !session.read_only && session.files.some((file) => file.path === path && file.editable);
 }
 
 export type StepArtifacts = Schemas['StepArtifactsResponse'];

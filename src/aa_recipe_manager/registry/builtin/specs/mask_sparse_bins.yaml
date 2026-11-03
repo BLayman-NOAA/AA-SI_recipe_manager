@@ -8,9 +8,11 @@ inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Sv Dataset to screen, normally the noise-removed Sv from
-      remove_background_noise. Masking has already emptied parts of the grid,
-      which is what leaves some bins with too few samples to average.
+      Sv Dataset to screen, normally the masked, noise-removed Sv from
+      remove_background_noise.
+    notes: >
+      Masking has already emptied parts of the grid, which is what leaves some
+      bins with too few samples to average.
     expected_variables:
       - Sv
 outputs:
@@ -38,14 +40,14 @@ params:
   range_var:
     type: str
     description: >
-      Meter-valued variable to bin along, which must match the value given to
-      compute_mvbs and compute_per_cell_statistics or the sparse mask lands on
-      a different grid than the one it is meant to clean. 'echo_range'
-      measures from the transducer face, 'depth' from the surface and needs
-      the dataset to carry a depth variable. The bin edges are read from the
-      first ping of the first channel, so a range variable that varies from
-      ping to ping, as depth does under platform vertical offsets, is
-      approximated by its first ping.
+      Meter-valued variable to bin along: 'echo_range' (from the transducer
+      face) or 'depth' (from the surface; the dataset must carry depth). Must
+      match compute_mvbs and compute_per_cell_statistics.
+    notes: >
+      A mismatch puts the sparse mask on a different grid than the one it is
+      meant to clean. The bin edges are read from the first ping of the first
+      channel, so a range variable that varies from ping to ping, as depth does
+      under platform vertical offsets, is approximated by its first ping.
     required: false
     default: "echo_range"
 implementations:

@@ -1,5 +1,6 @@
 /** The menu bar's menus as data, built from the client state and its commands. */
 import type { SessionSummary } from '../api/models';
+import { historyLabel } from '../editing/operations';
 import { TEXT_SIZES, type Direction, type Theme } from '../state/view';
 import { opsUrl } from './links';
 import { PANES, type PaneId } from './panes';
@@ -11,6 +12,8 @@ export interface MenuItem {
   enabled: boolean;
   /** Milestone that brings a disabled item, shown as its tooltip. */
   milestone?: number;
+  /** The item's tooltip, when it has one of its own. */
+  title?: string;
   /** Set for toggles: whether the option is on. */
   checked?: boolean;
   action?: () => void;
@@ -38,6 +41,8 @@ export interface MenuState {
   docsUrl: string;
   /** What the run items may do now. */
   run: RunMenuState;
+  /** What the editing items may do now. */
+  edit: EditMenuState;
   surveyRegion: boolean;
   /** Diagram text size, one of TEXT_SIZES. */
   textSize: number;
@@ -58,14 +63,37 @@ export interface RunMenuState {
   isCancelling: boolean;
 }
 
+export interface EditMenuState {
+  /** The session has unsaved edits. */
+  dirty: boolean;
+  /** YAML typing waits to be sent; Save sends it first. */
+  typing: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** The session's `history.undo_kind` and `redo_kind`. */
+  undoKind: string | null;
+  redoKind: string | null;
+  /** Edits a restart could not restore (`history.note`), shown on Undo. */
+  note: string | null;
+}
+
 /** What the menus do. */
 export interface Commands {
   openRecipe: () => void;
   openSession: (sid: string) => void;
   closeSession: () => void;
+  save: () => void;
+  saveAs: () => void;
+  revert: () => void;
+  undo: () => void;
+  redo: () => void;
   findStep: () => void;
   showPane: (id: PaneId) => void;
   togglePane: (id: PaneId) => void;
+  /** Open a pane in a browser window of its own. */
+  popoutPane: (id: PaneId) => void;
+  /** Dock a popped out pane in the main window again. */
+  returnPane: (id: PaneId) => void;
   toggleConnected: () => void;
   expandAll: () => void;
   collapseAll: () => void;
@@ -95,10 +123,18 @@ export function milestoneTooltip(milestone: number): string {
   return `Arrives in milestone ${milestone}`;
 }
 
-/** The tooltip of an item: the milestone note for disabled items. */
+/** The tooltip of an item: its own, else the milestone note for disabled items. */
 export function itemTooltip(item: MenuItem): string | undefined {
+  if (item.title) return item.title;
   if (!item.enabled && item.milestone !== undefined) return milestoneTooltip(item.milestone);
   return undefined;
+}
+
+/** The right click menu of a pane's tab: move it to a window of its own or back. */
+export function tabMenuItems(id: PaneId, poppedOut: boolean, commands: Pick<Commands, 'popoutPane' | 'returnPane'>): MenuItem[] {
+  return poppedOut
+    ? [{ id: 'return-pane', label: 'Return to Main Window', enabled: true, action: () => commands.returnPane(id) }]
+    : [{ id: 'popout-pane', label: 'Open in New Window', enabled: true, action: () => commands.popoutPane(id) }];
 }
 
 function later(id: string, label: string, milestone: number, shortcut?: string): MenuItem {
@@ -121,6 +157,7 @@ function sessionItems(state: MenuState, commands: Commands): MenuItem[] {
 export function buildMenus(state: MenuState, commands: Commands): Menu[] {
   const hasSession = state.sid !== null;
   const { canRun, canRunSelected, canRunStep, isActive, isCancelling } = state.run;
+  const edit = state.edit;
   const directionLabel = state.direction === 'RIGHT' ? 'left to right' : 'top to bottom';
   return [
     {
@@ -135,9 +172,15 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
           enabled: true,
           items: sessionItems(state, commands),
         },
-        later('save', 'Save', 5, 'Ctrl+S'),
-        later('save-as', 'Save As', 5, 'Ctrl+Shift+S'),
-        later('revert', 'Revert', 5),
+        {
+          id: 'save',
+          label: 'Save',
+          shortcut: 'Ctrl+S',
+          enabled: hasSession && (edit.dirty || edit.typing),
+          action: commands.save,
+        },
+        { id: 'save-as', label: 'Save As', shortcut: 'Ctrl+Shift+S', enabled: hasSession, action: commands.saveAs },
+        { id: 'revert', label: 'Revert', enabled: hasSession && edit.dirty, action: commands.revert },
         {
           id: 'close-session',
           label: 'Delete Session',
@@ -151,8 +194,21 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
       id: 'edit',
       label: 'Edit',
       items: [
-        later('undo', 'Undo', 5, 'Ctrl+Z'),
-        later('redo', 'Redo', 5, 'Ctrl+Y'),
+        {
+          id: 'undo',
+          label: historyLabel('Undo', edit.canUndo ? edit.undoKind : null),
+          shortcut: 'Ctrl+Z',
+          enabled: hasSession && edit.canUndo,
+          title: (hasSession && edit.note) || undefined,
+          action: commands.undo,
+        },
+        {
+          id: 'redo',
+          label: historyLabel('Redo', edit.canRedo ? edit.redoKind : null),
+          shortcut: 'Ctrl+Y',
+          enabled: hasSession && edit.canRedo,
+          action: commands.redo,
+        },
         later('delete', 'Delete', 9, 'Delete'),
         later('rename-step', 'Rename Step', 9),
         {
@@ -274,6 +330,13 @@ export function buildMenus(state: MenuState, commands: Commands): Menu[] {
           separator: index === 0,
           action: () => commands.togglePane(pane.id),
         })),
+        {
+          id: 'echogram-window',
+          label: 'Echogram in New Window',
+          enabled: true,
+          separator: true,
+          action: () => commands.popoutPane('echogram'),
+        },
       ],
     },
     {

@@ -6,13 +6,12 @@ import { layoutKey } from '../src/diagram/useLayout';
 import {
   includeProgress,
   includeSummary,
-  NOT_IN_RUN,
-  NOT_NEEDED,
   notNeeded,
   partlyHeld,
   predictedOf,
   runMarks,
   savedOnDisk,
+  skippedCached,
   statusText,
   stepBadges,
   surveyBackedSteps,
@@ -20,6 +19,7 @@ import {
 } from '../src/runs/badges';
 import { parseRunEvents, type RunEvent, type RunStartedData } from '../src/runs/events';
 import { initialRunState, reduceEvents, type StepRunState, type StepStatus } from '../src/runs/reducer';
+import { NOT_NEEDED, SKIPPED_CACHED } from '../src/runs/wording';
 import cachedText from './fixtures/cached.events.jsonl?raw';
 import uc1Json from './fixtures/uc1.graph.json';
 import { withSubGraph } from './helpers';
@@ -156,12 +156,12 @@ describe('stepBadges', () => {
 describe('include marks', () => {
   it('counts an include box members by prediction', () => {
     const badges = stepBadges(withSubGraph, PREVIEW, null);
-    expect(includeSummary(findInclude(withSubGraph, CHAIN)!, badges)).toBe('2 survey');
+    expect(includeSummary(findInclude(withSubGraph, CHAIN)!, badges)).toBe('2 loaded (survey)');
     const all = { ...findInclude(withSubGraph, CHAIN)!, steps: ['seed', 'chain_inc', 'leaf_add', 'total'] };
-    expect(includeSummary(all, badges)).toBe('2 survey, 1 user, 1 to compute');
+    expect(includeSummary(all, badges)).toBe('2 loaded (survey), 1 loaded (user), 1 to compute');
   });
 
-  it('says a sub-recipe is not in the run rather than nothing, and is empty before a prediction', () => {
+  it('counts skipped, pruned and untargeted members, and is empty before a prediction', () => {
     const outside: Preview = {
       ...PREVIEW,
       steps: [
@@ -170,10 +170,14 @@ describe('include marks', () => {
       ],
     };
     const chain = findInclude(withSubGraph, CHAIN)!;
-    expect(includeSummary(chain, stepBadges(withSubGraph, outside, null))).toBe(NOT_IN_RUN);
+    expect(includeSummary(chain, stepBadges(withSubGraph, outside, null))).toBe('1 skipped: cached, 1 not needed');
     expect(includeSummary(chain, stepBadges(withSubGraph, null, null))).toBe('');
     const unknown: Preview = { ...PREVIEW, steps: [step('chain_inc', { planned: 'unknown' }), step('leaf_add', { planned: 'pruned' })] };
-    expect(includeSummary(chain, stepBadges(withSubGraph, unknown, null))).toBe('1 not yet known');
+    expect(includeSummary(chain, stepBadges(withSubGraph, unknown, null))).toBe('1 skipped: cached, 1 not yet known');
+    const cached: Preview = { ...PREVIEW, steps: [step('chain_inc', { planned: 'skipped' }), step('leaf_add', { planned: 'pruned' })] };
+    expect(includeSummary(chain, stepBadges(withSubGraph, cached, null))).toBe('2 skipped: cached');
+    const mixed: Preview = { ...PREVIEW, steps: [step('chain_inc', { planned: 'compute' }), step('leaf_add', { planned: 'pruned' })] };
+    expect(includeSummary(chain, stepBadges(withSubGraph, mixed, null))).toBe('1 to compute, 1 skipped: cached');
 
     const options = { drill: [], connected: false, selected: null, expandedSteps: new Set<string>(), expandedBoxes: new Set<string>() };
     const box = (preview: Preview | null) =>
@@ -181,7 +185,7 @@ describe('include marks', () => {
         (node) => node.id === CHAIN,
       );
     const outsideBox = box(outside);
-    expect(outsideBox?.kind === 'include' && outsideBox.data.summary).toBe(NOT_IN_RUN);
+    expect(outsideBox?.kind === 'include' && outsideBox.data.summary).toBe('1 skipped: cached, 1 not needed');
     const bareBox = box(null);
     expect(bareBox?.kind === 'include' && bareBox.data.summary).toBeNull();
   });
@@ -205,7 +209,7 @@ describe('include marks', () => {
     const seed = marked.nodes.find((node) => node.id === 'seed');
     expect(seed?.kind === 'step' && seed.data.badge?.actual).toBe('computed');
     const box = marked.nodes.find((node) => node.id === CHAIN);
-    expect(box?.kind === 'include' && box.data).toMatchObject({ summary: '2 survey', surveyBacked: true, status: null });
+    expect(box?.kind === 'include' && box.data).toMatchObject({ summary: '2 loaded (survey)', surveyBacked: true, status: null });
     const bare = plain.nodes.find((node) => node.id === CHAIN);
     expect(bare?.kind === 'include' && bare.data).toMatchObject({ summary: null, surveyBacked: false });
   });
@@ -213,7 +217,7 @@ describe('include marks', () => {
 
 describe('outlines while a run goes', () => {
   const uc1Graph = uc1Json as unknown as Graph;
-  // The user's run to dive_file_mvbs: every file's MVBS was cached, so the chain up to it was not needed.
+  // The user's run to dive_file_mvbs: every file's MVBS was cached, so the chain up to it was skipped.
   const cached = parseRunEvents(cachedText);
   const CHAIN_STEPS = ['read_raw', 'dive_sv', 'dive_file_mvbs'];
   const started: Preview = {
@@ -244,8 +248,10 @@ describe('outlines while a run goes', () => {
     expect(badges.read_raw).toMatchObject({ predicted: 'skipped', actual: 'skipped' });
     expect(badges.dive_file_mvbs).toMatchObject({ predicted: 'user', actual: 'hit-user-cache' });
     expect(badges.scan_raw_config.predicted).toBe('pruned');
-    expect(notNeeded(badges.dive_sv)).toBe(true);
-    expect(notNeeded(badges.dive_file_mvbs)).toBe(false);
+    expect(skippedCached(badges.dive_sv)).toBe(true);
+    expect(skippedCached(badges.dive_file_mvbs)).toBe(false);
+    expect(notNeeded(badges.dive_sv)).toBe(false);
+    expect(notNeeded({ ...badges.dive_sv, predicted: 'untargeted', actual: null })).toBe(true);
   });
 
   it('uses the plan for a run without a start preview, as one replayed after a reload', () => {
@@ -260,10 +266,14 @@ describe('outlines while a run goes', () => {
     expect(CHAIN_STEPS.map((id) => badges[id].predicted)).toEqual(['user', 'user', 'user']);
   });
 
-  it('words pruned and skipped as not needed', () => {
-    expect(statusText('skipped')).toBe(NOT_NEEDED);
-    expect(statusText('pruned')).toBe(NOT_NEEDED);
-    expect(statusText('load-user')).toBe('load-user');
+  it('words pruned and skipped as skipped: cached, untargeted as not needed, and loads by tier', () => {
+    expect(statusText('skipped')).toBe(SKIPPED_CACHED);
+    expect(statusText('pruned')).toBe(SKIPPED_CACHED);
+    expect(statusText('untargeted')).toBe(NOT_NEEDED);
+    expect(statusText('load-user')).toBe('loaded from user cache');
+    expect(statusText('hit-survey-cache')).toBe('loaded from survey cache');
+    expect(statusText('load', 'survey')).toBe('loaded from survey cache');
+    expect(statusText('computed')).toBe('computed');
   });
 });
 

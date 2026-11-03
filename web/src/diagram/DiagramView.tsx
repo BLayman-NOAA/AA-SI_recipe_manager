@@ -27,7 +27,8 @@ import {
   type ReactNode,
 } from 'react';
 import type { Graph, StepNode as GraphStep } from '../api/graph';
-import { notNeeded, type StepBadge } from '../runs/badges';
+import { notNeeded, skippedCached, type StepBadge } from '../runs/badges';
+import { NOT_NEEDED_TITLE, SKIPPED_CACHED_TITLE } from '../runs/wording';
 import type { StepRunState } from '../runs/reducer';
 import { useViewStore } from '../state/view';
 import { selectStep } from './locate';
@@ -35,10 +36,11 @@ import { RouteEdge } from './edges/RouteEdge';
 import { DiagramContext, IconButton, type DiagramActions } from './nodes/common';
 import { MapGroupNode } from './nodes/GroupNodes';
 import { IncludeNode } from './nodes/IncludeNode';
-import { ExternalNode, GhostNode, InputsBoxNode, OutputsBoxNode } from './nodes/SmallNodes';
+import { ExternalNode, GhostNode, InputsBoxNode, OutputsBoxNode, RunConfigNode } from './nodes/SmallNodes';
 import { StepNode } from './nodes/StepNode';
 import { keepInPlace, useLayout, type FlowNode } from './useLayout';
 import { buildView, findSteps, type InputSource, type View, type ViewNodeKind } from './buildView';
+import type { RunConfigView } from './runConfig';
 
 const NODE_TYPES = {
   step: StepNode,
@@ -48,6 +50,7 @@ const NODE_TYPES = {
   external: ExternalNode,
   inputsBox: InputsBoxNode,
   outputsBox: OutputsBoxNode,
+  runConfig: RunConfigNode,
 } as NodeTypes;
 
 const EDGE_TYPES = { route: RouteEdge } as EdgeTypes;
@@ -59,6 +62,7 @@ const LEGEND: { kinds: ViewNodeKind[]; swatch: string; label: string }[] = [
   { kinds: ['step'], swatch: 'rc-key-step', label: 'Step' },
   { kinds: ['include'], swatch: 'rc-key-include', label: 'Sub-recipe (double click to expand, again to drill in)' },
   { kinds: ['mapGroup'], swatch: 'rc-key-map', label: 'Runs once per item' },
+  { kinds: ['runConfig'], swatch: 'rc-key-config', label: 'Run config file' },
   { kinds: ['inputsBox'], swatch: 'rc-key-input', label: 'Inputs' },
   { kinds: ['external'], swatch: 'rc-key-external', label: 'From another recipe' },
   { kinds: ['outputsBox'], swatch: 'rc-key-output', label: 'Outputs' },
@@ -74,6 +78,7 @@ function minimapColor(flowNode: FlowNode): string {
   if (node.kind === 'step') return 'var(--rc-muted)';
   if (node.kind === 'include') return 'var(--rc-accent)';
   if (node.kind === 'mapGroup') return 'var(--rc-group)';
+  if (node.kind === 'runConfig') return 'var(--rc-config)';
   return 'var(--rc-faint)';
 }
 
@@ -92,8 +97,8 @@ const STATUS_LEGEND: { swatch: string; label: string; has: (badge: StepBadge) =>
     has: (b) => b.predicted === 'compute' || b.actual === 'computed',
   },
   { swatch: 'rc-key-running', label: 'Running', has: (b) => b.actual === 'running' },
-  { swatch: 'rc-key-pruned', label: 'Not needed (a later step is cached)', has: notNeeded },
-  { swatch: 'rc-key-untargeted', label: 'Outside the run target', has: (b) => b.predicted === 'untargeted' },
+  { swatch: 'rc-key-pruned', label: SKIPPED_CACHED_TITLE, has: skippedCached },
+  { swatch: 'rc-key-untargeted', label: NOT_NEEDED_TITLE, has: notNeeded },
   { swatch: 'rc-key-unknown', label: 'Instances not yet known', has: (b) => b.predicted === 'unknown' },
   { swatch: 'rc-key-failed', label: 'Failed (click for its log)', has: (b) => b.actual === 'failed' },
   { swatch: 'rc-key-stopped', label: 'Stopped or not run', has: (b) => b.actual === 'stopped' || b.actual === 'not-run' },
@@ -229,10 +234,17 @@ export interface DiagramViewProps {
   badges?: Record<string, StepBadge>;
   /** The step states of the run going, for the sub-recipe boxes' progress; absent draws none. */
   runSteps?: Record<string, StepRunState> | null;
+  /** The session's run config file, drawn as a box before the recipe inputs; absent draws none. */
+  runConfig?: RunConfigView | null;
   /** Run to a step from the play icon; absent hides the icon. */
   runToHere?: { run: (stepId: string) => void; enabled: boolean };
   /** Draw a step's output in the echogram pane from the eye icon; absent hides the icon. */
   echogram?: { show: (stepId: string) => void };
+  /**
+   * Set or remove a step's `checkpoint: always` from the save icon, enabled
+   * for steps of the files the session may edit; absent hides the icon.
+   */
+  checkpoint?: { toggle: (stepId: string, on: boolean) => void; enabled: (document: string) => boolean };
   /** Called on a step click after selection (the app opens a failed step's log). */
   onStepClick?: (step: GraphStep, badge: StepBadge | null) => void;
   /** Rendered between the diagram bar and the canvas (the app's sub-recipe banner and run hint). */
@@ -248,8 +260,10 @@ function DiagramCanvas({
   inputSources,
   badges,
   runSteps,
+  runConfig,
   runToHere,
   echogram,
+  checkpoint,
   onStepClick,
   notices,
   wheel = 'zoom',
@@ -263,6 +277,7 @@ function DiagramCanvas({
   const direction = store((state) => state.direction);
   const theme = store((state) => state.theme);
   const findQuery = store((state) => state.findQuery);
+  const highlight = store((state) => state.highlight);
   const fitRequest = store((state) => state.fitRequest);
   const expandRequest = store((state) => state.expandRequest);
   const surveyRegion = store((state) => state.surveyRegion);
@@ -270,6 +285,8 @@ function DiagramCanvas({
   const run = runToHere?.run;
   const canRun = runToHere?.enabled ?? false;
   const showEchogram = echogram?.show;
+  const toggleCheckpoint = checkpoint?.toggle;
+  const canEdit = checkpoint?.enabled;
   const flow = useReactFlow<FlowNode>();
   const [center, setCenter] = useState<{ id: string; count: number } | null>(null);
   const fittedScope = useRef('');
@@ -288,12 +305,14 @@ function DiagramCanvas({
         connected,
         selected,
         findQuery,
+        highlight,
         inputValues,
         inputSources,
         expandedSteps,
         expandedBoxes,
         badges,
         runSteps,
+        runConfig,
       }),
     [
       graph,
@@ -301,12 +320,14 @@ function DiagramCanvas({
       connected,
       selected,
       findQuery,
+      highlight,
       inputValues,
       inputSources,
       expandedSteps,
       expandedBoxes,
       badges,
       runSteps,
+      runConfig,
     ],
   );
   const layout = useLayout(view, direction, textSize);
@@ -323,6 +344,8 @@ function DiagramCanvas({
       runToHere: run,
       canRun,
       showEchogram,
+      toggleCheckpoint,
+      canEdit,
       drillInto: state.drillInto,
       select: state.select,
       toggleStepExpanded: (id) => {
@@ -334,7 +357,7 @@ function DiagramCanvas({
         state.toggleBoxExpanded(id);
       },
     };
-  }, [store, direction, flow, run, canRun, showEchogram]);
+  }, [store, direction, flow, run, canRun, showEchogram, toggleCheckpoint, canEdit]);
 
   // Expand or collapse everything in view when asked (the view is read then,
   // not on every change), then fit each layout that follows for a moment.
@@ -350,7 +373,7 @@ function DiagramCanvas({
     }
     const ids = (kinds: ViewNodeKind[]) =>
       view.nodes.filter((node) => kinds.includes(node.kind)).map((node) => node.id);
-    state.expandMany(ids(['step']), ids(['include', 'inputsBox', 'outputsBox']));
+    state.expandMany(ids(['step']), ids(['include', 'inputsBox', 'outputsBox', 'runConfig']));
   }, [expandRequest]);
 
   useEffect(() => {
@@ -429,7 +452,7 @@ function DiagramCanvas({
       onFind(node.data.stepId);
     } else if (node.kind === 'step') {
       actions.toggleStepExpanded(node.id);
-    } else if (node.kind === 'inputsBox' || node.kind === 'outputsBox') {
+    } else if (node.kind === 'inputsBox' || node.kind === 'outputsBox' || node.kind === 'runConfig') {
       actions.toggleBoxExpanded(node.id);
     }
   };

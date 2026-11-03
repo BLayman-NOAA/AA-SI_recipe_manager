@@ -15,5 +15,7 @@ export function fieldFile(graph: Graph, field: InputField): string | null {
 
 /** A value source as a badge reads it: "run config" for the run config. */
 export function sourceLabel(source: string): string {
-  return source === 'config' ? 'run config' : source;
+  if (source === 'config') return 'run config';
+  if (source === 'unset') return 'unset: the steps use their own defaults';
+  return source;
 }

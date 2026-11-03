@@ -1,121 +1,131 @@
-# HB2407 Masked Sv -> Echogram Viewer Pyramid (segment-parallel)
+# HB2407 masked Sv into an echogram viewer pyramid, segment-parallel
 #
-# echogram_masked.yaml, continued into the viewer store. Everything up to and
-# including apply_mask is that recipe unchanged, so it hashes identically and
-# comes back as cache hits; this adds the three steps that turn the masked Sv
-# into a level-of-detail pyramid, in parallel.
+# echogram_masked.yaml continued into the viewer store. Everything through
+# apply_mask is that recipe unchanged, so it hashes identically and comes back
+# as cache hits; this adds three steps that build a level-of-detail pyramid in
+# parallel.
 #
 #   plan_segments   -> ping ranges cut on the reduction's own cell boundaries
 #   build_pyramid   -> mapped over those ranges, one pyramid per segment
 #   echogram_store  -> collected, concatenated per level, checkpointed
 #
-# WHY THE RANGES ARE NOT ARBITRARY. Level k of a pyramid merges 2**k pings, so
-# a segment reduces to a whole number of cells at every level only when its
-# ping count is a multiple of 2**(levels-1). Cut anywhere else and one cell in
-# the middle of the survey averages fewer pings than its neighbours, every
-# coarse level after it is shifted, and the viewer draws the wrong water while
-# looking entirely plausible. plan_pyramid_segments puts the cuts on that grid
-# and leaves the remainder in the LAST segment, where a short final cell is
-# what a serial build produces anyway. The result is not an approximation of
-# the serial build; it is the same array, asserted in AA-SI_EchogramGL's
-# tests/test_ops.py.
+# Level k merges 2**k pings, so a segment reduces to whole cells at every level
+# only when its ping count is a multiple of 2**(levels-1). A cut anywhere else
+# shifts every coarse level after it while still looking plausible.
+# plan_pyramid_segments cuts on that grid and leaves the remainder in the last
+# segment, so the result equals a serial build (asserted in AA-SI_EchogramGL's
+# tests/test_ops.py).
 #
-# WHERE THE STORE ENDS UP. echogram_store is checkpointed, so the pyramid lands
-# in the recipe or survey cache under that step's content address, as one zarr
-# group with a subgroup per level. Point the viewer straight at it:
+# echogram_store is checkpointed, so the pyramid lands in the recipe or survey
+# cache as one zarr group with a subgroup per level. Point the viewer at it:
 #
 #   aa-recipe run echogram_pyramid.yaml
-#   aa-echogram serve --store <cache>/build_echogram_pyramid/<hash>/<run>/zarr/pyramid.zarr #                     --app src/aa_si_echogram_gl/static --port 8129
+#   aa-echogram serve --store <cache>/echogram_store/<hash>/<run>/zarr/pyramid.zarr \
+#                     --app src/aa_si_echogram_gl/static --port 8129
 #
-# On this four-file test segment there are only 13,320 pings, so the planner
-# emits one segment and the parallel form costs nothing and saves nothing. It
-# is here to be correct at RL2307 scale, where it is the difference between a
-# pyramid build that fits in a coffee break and one that does not.
+# This four-file test segment (13,320 pings) plans as one segment; the parallel
+# form pays off at survey scale.
 #
 # Usage: aa-recipe dry-run echogram_pyramid.yaml --visualize
 recipe:
   name: "hb2407_echogram_pyramid"
-  description: "HB2407 masked Sv built into a viewer pyramid, segment-parallel."
+  description: "HB2407 masked Sv built into an echogram viewer pyramid, segment-parallel."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
 
 inputs:
-  # --- Survey-level. Matches survey_preprocess.yaml apart from the window. --
+  # Survey level: matches survey_preprocess.yaml apart from the window.
   raw_input_folder:
     type: path
     default: "./raw"
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
 
   # The test segment: four contiguous files from the evening of 2024-09-24,
-  # 3330 pings each. Bounds are filename stamps and the end is inclusive, so
-  # this selects T194054 through T222726 and stops short of T232256.
+  # 3330 pings each. The end bound is inclusive on filename stamps, so this
+  # selects T194054 through T222726 and stops short of T232256.
   survey_time_start:
     type: str
     default: "2024-09-24T19:40:54"
+    description: "Optional inclusive ISO datetime bounding the start of the survey, matched to the time in each raw file name. Unset ingests every file."
   survey_time_end:
     type: str
     default: "2024-09-24T22:27:26"
+    description: "Optional inclusive ISO datetime upper bound of the survey, matched to the time in each raw file name. Unset ingests through the last file."
 
-  # Not the survey-wide 250 m. The .evl line puts this segment's seabed
-  # between 17.9 and 53.3 m, so a 250 m ceiling would leave four fifths of
-  # every ping below the mask and the store four fifths nodata. 70 m keeps a
-  # margin of blank water under the deepest seabed and nothing more.
+  # Not the survey-wide 250 m: the .evl line puts this segment's seabed between
+  # 17.9 and 53.3 m, so 250 m would leave the store four fifths nodata. 70 m
+  # keeps a margin of blank water under the deepest seabed.
   crop_max_range_m:
     type: float
     default: 70.0
+    description: >
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. Changing it recomputes the whole survey Sv.
   survey_chunk_ping_time:
     type: int
     default: 2000
+    description: >
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
-  # --- Viewer pyramid. -----------------------------------------------------
-  # Eight levels reduce the ping axis by 128 at the coarsest, which is what
-  # lets an overview of a whole survey read a small array.
+  # Viewer pyramid
   pyramid_levels:
     type: int
     default: 8
-  # Rounded down onto the 128 ping grid by the planner. Sized for what one
-  # mapped instance has to hold: a segment is kept whole while its levels are
-  # reduced, so this is about a gigabyte at level zero on an uncropped water
+    description: "Pyramid levels to build, halving the column axis each time; eight reduce it by 128 at the coarsest."
+  # Sized for what one mapped instance holds: a segment is kept whole while its
+  # levels are reduced, about a gigabyte at level zero on an uncropped water
   # column and twice that through the cascade.
-  #
-  # It makes no difference on this four file segment, which is 13,320 pings and
-  # so one segment at any sensible size. It matters when the same recipe is
-  # pointed at a survey.
   pyramid_segment_pings:
     type: int
     default: 32768
+    description: "Target pings per pyramid segment, rounded down to a multiple of 2**(levels-1) (128 at eight levels). Each segment is built by its own mapped instance."
 
-  # --- User-level. ---------------------------------------------------------
+  # User level
   seabed_line_folder:
     type: path
     default: "./seabed_lines"
+    description: >
+      Folder of Echoview .evl seabed line exports, a local path or a gs:// URL.
+      The files covering the time window are combined into the seafloor; a
+      single .evl file is read whole.
 
-  # The pings, not the filename stamps: the last file runs about 55 minutes
-  # past its own stamp, and the window has to cover its pings for both
-  # select_ping_time_range and the .evl selection.
+  # Bound the pings, not the filename stamps: the last file runs about 55
+  # minutes past its own stamp.
   file_time_start:
     type: str
     default: "2024-09-24T19:40:54"
+    description: >
+      Inclusive ISO UTC datetime start of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the start open.
   file_time_end:
     type: str
     default: "2024-09-24T23:25:00"
+    description: >
+      Inclusive ISO UTC datetime end of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the end open.
 
   surface_depth_m:
     type: float
     default: 5.0
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
   seafloor_buffer_m:
     type: float
     default: 1.0
+    description: "Height above the seabed line, in metres, that is also masked, to drop the bottom echo and detection error."
 
 steps:
 
-  # ======================================================================
-  # SURVEY LEVEL
-  # ======================================================================
+  # Survey level
 
   - include: sub_recipes/processing_lvl_1_survey.yaml
     input_overrides:
@@ -138,9 +148,7 @@ steps:
       crop_max_range_m: ${inputs.crop_max_range_m}
       survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
 
-  # ======================================================================
-  # USER LEVEL - the window enters here and nowhere above.
-  # ======================================================================
+  # User level: the window enters here and nowhere above.
 
   - include: sub_recipes/processing_lvl_2_user_masked.yaml
     input_overrides:
@@ -151,13 +159,10 @@ steps:
       surface_depth_m: ${inputs.surface_depth_m}
       seafloor_buffer_m: ${inputs.seafloor_buffer_m}
 
-  # ======================================================================
-  # VIEWER PYRAMID - the only part that is not echogram_masked.yaml.
-  # ======================================================================
+  # Viewer pyramid: the only part that is not echogram_masked.yaml
 
-  # Where to cut. Every range but the last is a multiple of 2**(levels-1),
-  # which is 128 at eight levels, so each one reduces to a whole number of
-  # cells at every level.
+  # Every range but the last is a multiple of 2**(levels-1), so each reduces to
+  # a whole number of cells at every level.
   - id: plan_segments
     op: plan_pyramid_segments
     inputs:
@@ -166,8 +171,8 @@ steps:
       levels: ${inputs.pyramid_levels}
       target_pings: ${inputs.pyramid_segment_pings}
 
-  # One pyramid per segment. The slice happens inside the op, so a mapped
-  # instance reads its own pings rather than the whole survey.
+  # One pyramid per segment. The op slices, so a mapped instance reads only its
+  # own pings.
   - id: build_pyramid
     op: build_echogram_pyramid
     map_over: ${plan_segments.ranges}
@@ -179,8 +184,8 @@ steps:
       range_var: echo_range
       aggregation: linear_mean
 
-  # Concatenate level k of every segment. No level is added and nothing is
-  # reduced again: each part already carries all of them.
+  # Concatenate level k of every segment; each part already carries every
+  # level, so nothing is reduced again.
   - id: echogram_store
     op: merge_echogram_pyramids
     collect: ${build_pyramid.pyramid}

@@ -97,7 +97,8 @@ Each example on a level page has three tabs:
 **YAML**
 :   The sub-recipe file itself, with the comments that explain its choices.
 
-**Notebook**
-:   The Python the recipe manager generates for these steps with
-    `aa-recipe generate`, cut from the full recipe's notebook, which can be
-    downloaded from the tab.
+**Python**
+:   The function calls these steps make, as `aa-recipe generate` writes
+    them, each under a short summary of its op. A recipe is just these
+    calls run in order. Where a per-file loop also runs another level's
+    steps, `...` marks them. The tab links the full recipe's notebook.

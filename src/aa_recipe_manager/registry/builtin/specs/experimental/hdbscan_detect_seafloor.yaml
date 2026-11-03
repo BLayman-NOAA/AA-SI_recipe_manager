@@ -1,46 +1,49 @@
 op: hdbscan_detect_seafloor
 cache_key: hdbscan_detect_seafloor  # pinned cache identity - keep stable across op renames
 description: >
-  Detect seafloor depth by clustering Sv features with HDBSCAN, returning a 1-D
-  (ping_time,) DataArray. Every non-NaN (ping_time, depth) cell is clustered on
-  its per-channel Sv values, the dB differences against the first channel, and
-  its ping and depth position. The cluster with the greatest median depth is
-  taken as the seabed and its shallowest point per ping becomes the line.
+  Experimental. Detect the seafloor by clustering Sv with HDBSCAN and taking
+  the deepest cluster as the seabed, in metres per ping. It can pick bottom
+  multiples, so tune it per survey and check the line by eye.
+notes: >
+  Every non-NaN (ping_time, depth) cell is clustered on its per-channel Sv
+  values, the dB differences against the first channel, and its ping and
+  depth position. The cluster with the greatest median depth is taken as the
+  seabed and its shallowest point per ping becomes the line.
 
-  Drop-in swap with the ``detect_seafloor``, ``ep_detect_seafloor``, and
-  ``read_seafloor_line`` ops: the output port name (``seafloor_depth``) and
-  shape (1-D, ping_time) match, so downstream steps such as
-  ``create_seafloor_mask`` work unchanged. The ``params`` block takes the
-  clustering settings below instead of ``channel`` / ``min_valid_depth_m`` or
-  ``method`` / ``method_params``.
+  Drop-in swap with ``detect_seafloor``, ``ep_detect_seafloor`` and
+  ``read_seafloor_line``: the output port name (``seafloor_depth``) and shape
+  (1-D, ping_time) match, so downstream steps such as ``create_seafloor_mask``
+  work unchanged. The ``params`` block takes the clustering settings instead
+  of ``channel`` and ``min_valid_depth_m`` or ``method`` and
+  ``method_params``.
 
-  Two things make this op's output worth checking before it is trusted, both
-  consequences of "deepest cluster wins". A bottom multiple - the seabed's
-  second echo, at roughly twice its depth - is deeper than the seabed itself,
-  so whenever clustering resolves it as its own cluster it is taken as the
-  seafloor. And unlike ``read_seafloor_line`` there is no coverage guard: the
-  line is interpolated and then back- and forward-filled across the whole ping
-  range, so a run that only found the seabed under part of the survey still
-  returns a full, plausible-looking line. Expect to tune min_cluster_size and
-  min_samples per survey and to eyeball the result, rather than to take the
-  defaults and move on.
+  Two consequences of "deepest cluster wins" make the output worth checking.
+  A bottom multiple, the seabed's second echo at roughly twice its depth, is
+  deeper than the seabed itself, so whenever clustering resolves it as its
+  own cluster it is taken as the seafloor. And unlike ``read_seafloor_line``
+  there is no coverage guard: the line is interpolated and then back and
+  forward filled across the whole ping range, so a run that only found the
+  seabed under part of the survey still returns a full, plausible-looking
+  line. Expect to tune min_cluster_size and min_samples per survey.
 
-  Treat this op as experimental. It clusters every ping against every range
-  sample at full resolution, so cost grows with the product of the two and a
-  survey-scale grid will exhaust memory rather than run slowly: HB1603 is 1548
-  pings by 15207 range samples, and all 23.5 million points went to HDBSCAN
-  before the worker was killed after 26 minutes. Roughly half a million points
-  runs in under a minute on a 16 GB machine. Use range_sample_start /
-  range_sample_end to get there, and expect to check the line by eye.
+  It clusters every ping against every range sample at full resolution, so
+  cost grows with the product of the two and a survey-scale grid exhausts
+  memory rather than running slowly: HB1603 is 1548 pings by 15207 range
+  samples, and all 23.5 million points went to HDBSCAN before the worker was
+  killed after 26 minutes. Roughly half a million points runs in under a
+  minute on a 16 GB machine; use range_sample_start and range_sample_end to
+  get there.
 category: detection
 inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Calibrated Sv dataset supplying the clustering features and the ping grid
-      the line is returned on. Pass a dataset that has been through
-      ``ep_add_depth`` so the line is surface-referenced; the vertical axis is
-      taken from the first channel and first ping of ``depth``.
+      Calibrated Sv dataset supplying the features and ping grid. Pass one
+      that has been through ``ep_add_depth`` so the line is measured from the
+      surface.
+    notes: >
+      The vertical axis is taken from the first channel and first ping of
+      ``depth``.
   echodata:
     type: EchoData
     description: >
@@ -51,40 +54,40 @@ outputs:
   seafloor_depth:
     type: DataArray
     description: >
-      Detected seafloor depth in metres, shape (ping_time,), on ds_Sv's exact
-      ping_time coordinate. Always 1-D (no channel dimension), matching the
-      output of the other seafloor detection ops so downstream masking steps
-      are interchangeable.
+      Detected seafloor depth in metres on ds_Sv's ping_time, with no channel
+      dimension, like the other seafloor detection ops.
 params:
   min_cluster_size:
     type: int
     description: >
-      Smallest number of points HDBSCAN accepts as a cluster. Too small and the
-      seabed fragments, or a bottom multiple becomes its own cluster and gets
-      picked as the seafloor for being deeper; too large and the seabed is
-      absorbed into the water column. The default is a starting point, not a
-      tuned value: on a 100 ping EK60 test file with a seabed at about 200 m,
-      values in the hundreds selected the multiple near 400 m and only a few
-      thousand recovered the true bottom. Tune it against a survey you can
-      check.
+      Smallest number of points HDBSCAN accepts as a cluster. Too small picks
+      bottom multiples; too large merges the seabed into the water column. The
+      default is a starting point; tune it per survey.
+    notes: >
+      Too small and the seabed fragments, or a bottom multiple becomes its own
+      cluster and gets picked as the seafloor for being deeper. On a 100 ping
+      EK60 test file with a seabed at about 200 m, values in the hundreds
+      selected the multiple near 400 m and only a few thousand recovered the
+      true bottom.
     required: false
     default: 300
   min_samples:
     type: int
     description: >
       HDBSCAN neighbourhood size. Larger values label more points as noise,
-      which tightens the seabed cluster's boundary and makes a weak bottom
-      multiple less likely to survive as its own cluster. Tune it alongside
+      making a weak bottom multiple less likely to survive. Tune it alongside
       min_cluster_size.
+    notes: >
+      Labelling more points as noise tightens the seabed cluster's boundary.
     required: false
     default: 300
   num_feature_channels:
     type: int
     description: >
-      Number of frequency channels used as clustering features, taken in
-      ascending frequency. The dB differences against the first of them are
-      added as features too. Ignored when feature_channels is set.
-
+      Number of channels used as features, lowest frequencies first, plus
+      their dB differences against the first. Ignored when feature_channels
+      is set.
+    notes: >
       Channels are sorted by frequency before selection rather than taken in
       the order the raw file stored them, which is not always ascending: an
       EK80 survey may present them as 18, 70, 200, 120, 38 kHz, where taking
@@ -94,15 +97,14 @@ params:
   feature_channels:
     type: list
     description: >
-      Explicit channels to use as features, given as frequencies in kHz
-      (e.g. [38, 70]) or as channel labels, in the order they should be fed.
-      Overrides num_feature_channels. The first entry is the baseline that the
-      dB difference features are measured against.
-
-      A single channel is allowed and simply contributes no difference
-      features, which is worth considering on a deep survey: at a seabed near
-      1645 m on HB1603 only 38 kHz detected the bottom on every ping, while
-      70, 120 and 200 kHz detected none of it.
+      Channels to use as features, as frequencies in kHz (e.g. [38, 70]) or
+      labels. The first is the baseline for the dB differences. A single
+      channel is allowed. Overrides num_feature_channels.
+    notes: >
+      A single channel contributes no difference features, which is worth
+      considering on a deep survey: at a seabed near 1645 m on HB1603 only
+      38 kHz detected the bottom on every ping, while 70, 120 and 200 kHz
+      detected none of it.
 
       Channels not listed are still present in the dataset and still take part
       in the NaN screening that decides which cells are clustered at all.
@@ -119,27 +121,31 @@ params:
   range_sample_start:
     type: int
     description: >
-      First range sample to cluster. Indexes range_sample, not metres, matching
-      the range limit the detector's own feature builder documents as its
-      remedy for the memory cost of a full grid.
+      First range sample to cluster, as a range_sample index, not metres.
+    notes: >
+      Matches the range limit the detector's own feature builder documents as
+      its remedy for the memory cost of a full grid.
     required: false
     default: 0
   range_sample_end:
     type: int
     description: >
       One past the last range sample to cluster; null keeps everything below
-      range_sample_start. Cost grows with pings times range samples, and a
-      survey recorded well past the seabed spends most of that on water the
-      detector cannot use, so set this on anything large. See the note on
-      survey-scale runs in the description.
+      range_sample_start. Set it on any large survey to limit memory.
+    notes: >
+      Cost grows with pings times range samples, and a survey recorded well
+      past the seabed spends most of that on water the detector cannot use.
+      See the op notes on survey-scale runs.
     required: false
     default: null
   plot:
     type: bool
     description: >
-      Show the detector's diagnostic echogram and per-cluster plots. Off by
-      default because the plots block on an interactive window, which would
-      hang a headless or distributed run rather than fail it.
+      Show the detector's diagnostic echogram and per-cluster plots in an
+      interactive window. Leave off for headless or distributed runs.
+    notes: >
+      The plots block on an interactive window, which would hang a headless or
+      distributed run rather than fail it.
     required: false
     default: false
 implementations:

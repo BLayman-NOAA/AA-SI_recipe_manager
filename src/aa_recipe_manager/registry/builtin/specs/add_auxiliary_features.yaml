@@ -29,20 +29,22 @@ inputs:
     type: DataArray
     required: false
     description: >
-      Pre-detected seafloor line, 1-D over ping_time, typically wired from a
-      detect_seafloor step. Takes precedence over echodata for the
-      'seafloor_depth' and 'altitude' features, so the ML features use the
-      same line the masking stack used instead of a channel mean recomputed
-      internally. Either this or echodata is required for those features.
+      Seafloor line over ping_time, typically from a detect_seafloor step.
+      Used for the 'seafloor_depth' and 'altitude' features in place of
+      echodata. In a per-file pipeline, wire one survey-wide line collected
+      with merge_datasets.
+    notes: >
+      Taking the line as an input lets the ML features use the same line the
+      masking stack used, instead of a channel mean recomputed internally.
+      Either this or echodata is required for those features.
 
-      In a per-file map_over pipeline, collect the per-file lines into one
-      survey-wide line and wire that, e.g. a merge_datasets step with
-      collect: ${detect_seafloor.seafloor_depth}. This input does accept the
-      raw list of per-file lines and concatenates it along ping_time in segment
-      order, but a recipe cannot reference a mapped step from outside its chain
-      and still resume: the runner prunes a mapped chain as a whole once the
-      downstream fan-in is a cache hit, so the direct reference resolves on a
-      cold run and fails on a resumed one.
+      This input also accepts the raw list of per-file lines and concatenates
+      it along ping_time in segment order, but a recipe cannot reference a
+      mapped step from outside its chain and still resume: the runner prunes a
+      mapped chain as a whole once the downstream fan-in is a cache hit, so the
+      direct reference resolves on a cold run and fails on a resumed one. Use a
+      merge_datasets step with collect: ${detect_seafloor.seafloor_depth}
+      instead.
 
       Vertical reference: 'altitude' is a difference (seafloor minus sample),
       so a constant offset shared by both terms cancels and the frame does not
@@ -66,8 +68,9 @@ params:
     description: >
       List of built-in feature name strings to append. Supported built-ins:
       'depth', 'ping_time_seconds', 'seafloor_depth', 'altitude', 'cell_cv'.
-      'seafloor_depth' and 'altitude' require the echodata input.
-      'cell_cv' requires the ds_sv input (from compute_per_cell_statistics).
+      'seafloor_depth' and 'altitude' require the seafloor_depth or echodata
+      input. 'cell_cv' requires the ds_sv input (from
+      compute_per_cell_statistics).
     required: true
 implementations:
   - key: default

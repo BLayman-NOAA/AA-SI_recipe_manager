@@ -7,6 +7,7 @@
 import { stepNodes, type Graph, type GraphInclude } from '../api/graph';
 import type { Preview, StepPreview } from '../api/models';
 import { type RunState, type StepRunState, type StepStatus } from './reducer';
+import { LOADED_SURVEY, LOADED_USER, NOT_NEEDED, SKIPPED_CACHED } from './wording';
 
 export type Predicted = 'survey' | 'user' | 'marker' | 'compute' | 'skipped' | 'pruned' | 'untargeted' | 'unknown';
 
@@ -57,20 +58,36 @@ export function predictedOf(planned: string, tier: string | null): Predicted {
   }
 }
 
-/** How the client names the pruned and skipped statuses. */
-export const NOT_NEEDED = 'not needed';
+const STATUS_TEXT: Record<string, string> = {
+  pruned: SKIPPED_CACHED,
+  skipped: SKIPPED_CACHED,
+  untargeted: NOT_NEEDED,
+  'load-survey': LOADED_SURVEY,
+  'hit-survey-cache': LOADED_SURVEY,
+  'load-user': LOADED_USER,
+  'hit-user-cache': LOADED_USER,
+};
 
-/** The tooltip of a step the run does not need. */
-export const NOT_NEEDED_TITLE = "Not needed: a later step's result is cached";
-
-/** A planned disposition or step status as the client words it. */
-export function statusText(status: string): string {
-  return status === 'pruned' || status === 'skipped' ? NOT_NEEDED : status;
+/**
+ * A planned disposition or step status as the client words it.
+ *
+ * Args:
+ *   status: The preview's planned disposition, the plan event's, or a step status.
+ *   tier: The tier a plan event's `load` reads from.
+ */
+export function statusText(status: string, tier: string | null = null): string {
+  if (status === 'load') return tier === 'survey' ? LOADED_SURVEY : LOADED_USER;
+  return STATUS_TEXT[status] ?? status;
 }
 
-/** The step is not needed by the run, predicted or actual. */
-export function notNeeded(badge: StepBadge): boolean {
+/** A later step's saved result stands in for the step, predicted or actual. */
+export function skippedCached(badge: StepBadge): boolean {
   return [badge.predicted, badge.actual].some((status) => status === 'pruned' || status === 'skipped');
+}
+
+/** The run target does not need the step, predicted or actual. */
+export function notNeeded(badge: StepBadge): boolean {
+  return badge.predicted === 'untargeted' || badge.actual === 'untargeted';
 }
 
 /** Steps the survey tier holds. */
@@ -196,30 +213,30 @@ export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks 
 }
 
 const SUMMARY: [Predicted, (count: number) => string][] = [
-  ['survey', (count) => `${count} survey`],
-  ['user', (count) => `${count} user`],
+  ['survey', (count) => `${count} loaded (survey)`],
+  ['user', (count) => `${count} loaded (user)`],
   ['marker', (count) => `${count} done`],
   ['compute', (count) => `${count} to compute`],
+  ['skipped', (count) => `${count} ${SKIPPED_CACHED}`],
+  ['untargeted', (count) => `${count} ${NOT_NEEDED}`],
   ['unknown', (count) => `${count} not yet known`],
 ];
 
-/** The summary of a sub-recipe none of whose steps the run uses (all skipped, pruned or untargeted). */
-export const NOT_IN_RUN = 'not in this run';
-
 /**
- * A sub-recipe's predicted marks counted, such as "9 survey, 3 user, 2 to
- * compute"; NOT_IN_RUN when the run uses none of its steps; '' before any
- * prediction.
+ * A sub-recipe's predicted marks counted, such as "9 loaded (survey), 2 to
+ * compute, 3 skipped: cached", with pruned steps counted as skipped; '' before
+ * any prediction.
  */
 export function includeSummary(include: GraphInclude, badges: Record<string, StepBadge>): string {
   const counts = new Map<Predicted, number>();
   for (const id of include.steps) {
     const predicted = badges[id]?.predicted;
-    if (predicted) counts.set(predicted, (counts.get(predicted) ?? 0) + 1);
+    const kind = predicted === 'pruned' ? 'skipped' : predicted;
+    if (kind) counts.set(kind, (counts.get(kind) ?? 0) + 1);
   }
-  if (counts.size === 0) return '';
-  const parts = SUMMARY.filter(([kind]) => counts.get(kind)).map(([kind, text]) => text(counts.get(kind)!));
-  return parts.length > 0 ? parts.join(', ') : NOT_IN_RUN;
+  return SUMMARY.filter(([kind]) => counts.get(kind))
+    .map(([kind, text]) => text(counts.get(kind)!))
+    .join(', ');
 }
 
 /** Statuses of a step the run does not use. */

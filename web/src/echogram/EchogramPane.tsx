@@ -4,11 +4,16 @@
  * a layer through the store; this pane owns the panel while it is open.
  */
 import { EchogramPanel, GpuUnavailableError } from 'aa-si-echogram-gl';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { findStep } from '../api/graph';
+import { fileEditable } from '../api/models';
 import { useCurrentSession } from '../api/queries';
 import { selectStep } from '../diagram/locate';
+import { useSetCheckpoint } from '../editing/useSetCheckpoint';
 import { useRunControlsContext } from '../runs/useRunControls';
+import { useDock } from '../shell/dock';
 import { useSessionStore } from '../state/session';
+import { readStored, writeStored } from '../state/storage';
 import { useView } from '../state/view';
 import { Chooser } from './Chooser';
 import './echogram.css';
@@ -19,6 +24,9 @@ import { spawnDecodeWorker } from './worker';
 
 /** Where the panel remembers which of its sections are open. */
 export const SECTIONS_KEY = 'rc.echogram.sections';
+
+/** Whether the pane's own list of sources is open. */
+export const SOURCES_KEY = 'rc.echogram.sources';
 
 type GpuState =
   | { kind: 'starting' }
@@ -37,9 +45,45 @@ function unavailable(error: unknown): GpuState {
   return { kind: 'unavailable', message: error instanceof Error ? error.message : String(error), advice: '' };
 }
 
-/** Create the panel in the host element once WebGPU answers, and hand it to the store. */
+/**
+ * Count the moves of an element into another document, as when dockview puts
+ * its pane in a popout window or back. Dockview reports every move, popout
+ * and tab change as a layout change once the page has settled, so the
+ * element's document is compared there with the last one seen.
+ */
+function useDocumentMoves(element: RefObject<HTMLElement | null>): number {
+  const api = useDock((state) => state.api);
+  const [moves, setMoves] = useState(0);
+  useEffect(() => {
+    const node = element.current;
+    if (!node || !api) return;
+    let seen = node.ownerDocument;
+    const listener = api.onDidLayoutChange(() => {
+      if (!node.isConnected || node.ownerDocument === seen) return;
+      seen = node.ownerDocument;
+      setMoves((count) => count + 1);
+    });
+    return () => listener.dispose();
+  }, [element, api]);
+  return moves;
+}
+
+/** Copy the styles EchogramGL adds to the main page into another document lacking them. */
+function shareStyles(target: Document): void {
+  if (target === document) return;
+  for (const style of document.head.querySelectorAll('style[id]')) {
+    if (!target.getElementById(style.id)) target.head.append(target.importNode(style, true));
+  }
+}
+
+/**
+ * Create the panel in the host element once WebGPU answers, and hand it to the
+ * store. A WebGPU canvas may not survive a move to another window, so when the
+ * host moves to another document the panel is made again there.
+ */
 function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
   const [gpu, setGpu] = useState<GpuState>({ kind: 'starting' });
+  const moves = useDocumentMoves(host);
   useEffect(() => {
     const container = host.current;
     if (!container) return;
@@ -61,6 +105,7 @@ function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
           onLayersChange: store.onPanelLayersChange,
           onViewChange: store.settingsChanged,
         });
+        shareStyles(container.ownerDocument);
         setGpu({ kind: 'ready' });
         void store.attach(panel);
       })
@@ -79,12 +124,56 @@ function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
         panel.destroy();
       }
     };
-  }, [host]);
+  }, [host, moves]);
   return gpu;
 }
 
+interface SourcesProps {
+  count: number;
+  /** The step whose chooser is waiting; the block opens when it changes, so the chooser is seen. */
+  choosing: string | null;
+  children: ReactNode;
+}
+
+/** The steps drawn and the chooser, in a details block that remembers whether it is open. */
+function Sources({ count, choosing, children }: SourcesProps) {
+  const [open, setOpen] = useState(() => readStored(SOURCES_KEY) !== 'false');
+  // The toggle event follows an open set here too; only one the state does
+  // not know of yet is the user's, and only that one is remembered.
+  const toggle = (next: boolean) => {
+    if (next === open) return;
+    setOpen(next);
+    writeStored(SOURCES_KEY, String(next));
+  };
+  useEffect(() => {
+    if (choosing) setOpen(true);
+  }, [choosing]);
+  return (
+    <details className="rc-echogram-sources" open={open} onToggle={(event) => toggle(event.currentTarget.open)}>
+      <summary>Sources ({count})</summary>
+      {children}
+    </details>
+  );
+}
+
+/** Set `checkpoint: always` on a step that is not a checkpoint, when its file can be edited. */
+function MakeCheckpoint({ step }: { step: string }) {
+  const session = useCurrentSession().data;
+  const set = useSetCheckpoint(step);
+  const node = session ? findStep(session.graph, step) : undefined;
+  if (!session || !node || !fileEditable(session, node.document)) return null;
+  const make = async () => {
+    if (await set(true)) useEchogramStore.getState().checkpointMade(step);
+  };
+  return (
+    <button type="button" className="rc-button rc-small" onClick={() => void make()}>
+      Make it a checkpoint
+    </button>
+  );
+}
+
 /** The offer to run to a step that is not saved, and draw it when the run finishes. */
-function RunOffer({ step }: { step: string }) {
+function RunOffer({ step, memoryOnly }: { step: string; memoryOnly: boolean }) {
   const { canRun, runToHere } = useRunControlsContext();
   const store = useEchogramStore.getState();
   return (
@@ -98,6 +187,7 @@ function RunOffer({ step }: { step: string }) {
       >
         Run to {step} and show
       </button>
+      {memoryOnly && <MakeCheckpoint step={step} />}
       <button type="button" className="rc-button rc-small" onClick={store.cancelRun}>
         Cancel
       </button>
@@ -116,30 +206,39 @@ export function EchogramPane() {
   const message = useEchogramStore((state) => state.message);
   const busy = useEchogramStore((state) => state.busy);
   const store = useEchogramStore.getState();
+  const { canRun, runToHere } = useRunControlsContext();
   const idle = layers.length === 0 && !choice && !message && !busy;
 
   return (
     <div className="rc-echogram">
       <div className="rc-echogram-bar">
-        <LayerList
-          layers={layers}
-          onSelect={(layer) => selectStep(useView, graph, layer.step)}
-          onRefresh={(layer) => void store.refresh(layer.id)}
-          onRemove={(layer) => store.remove(layer.id)}
-        />
-        {choice && (
-          <Chooser
-            key={choice.step}
-            step={choice.step}
-            choices={choice.choices}
-            selected={choice.selected}
-            onAdd={(picked) => void store.addChoice(picked)}
-            onDone={store.cancelChoice}
-          />
+        {(layers.length > 0 || choice) && (
+          <Sources count={layers.length} choosing={choice?.step ?? null}>
+            <LayerList
+              layers={layers}
+              onSelect={(layer) => selectStep(useView, graph, layer.step)}
+              onRefresh={(layer) => void store.refresh(layer.id)}
+              onRemove={(layer) => store.remove(layer.id)}
+              onRun={(layer) => runToHere(layer.step, (runId) => store.runStarted(layer.step, runId, layer.id))}
+              canRun={canRun}
+            />
+            {choice && (
+              <Chooser
+                key={choice.step}
+                step={choice.step}
+                choices={choice.choices}
+                selected={choice.selected}
+                onAdd={(picked) => void store.addChoice(picked)}
+                onDone={store.cancelChoice}
+              />
+            )}
+          </Sources>
         )}
         {busy && <div className="rc-muted">Looking up {busy}...</div>}
         {message && <div className="rc-echogram-message">{message}</div>}
-        {pendingRun && pendingRun.runId === null && <RunOffer step={pendingRun.step} />}
+        {pendingRun && pendingRun.runId === null && (
+          <RunOffer step={pendingRun.step} memoryOnly={pendingRun.memoryOnly ?? false} />
+        )}
         {idle && gpu.kind !== 'unavailable' && (
           <div className="rc-empty">
             {sid

@@ -125,6 +125,42 @@ def test_spec_file_is_none_for_a_spec_without_a_file():
     assert op["experimental"] is False
 
 
+def noted_registry() -> Registry:
+    """A registry with one op whose spec, port and param carry notes."""
+    from aa_recipe_manager.model.types import ParamDeclaration, PortDeclaration
+
+    registry = Registry()
+    registry.register_spec(
+        make_spec(
+            op="noted",
+            notes="Op notes.",
+            inputs={"ds": PortDeclaration(type="Dataset", notes="Port notes.")},
+            params={
+                "gap": ParamDeclaration(type="float", notes="Param notes.\n"),
+                "plain": ParamDeclaration(type="int"),
+            },
+        )
+    )
+    return registry
+
+
+def test_payload_carries_notes():
+    [op] = build_payload(noted_registry(), resolve_sources=False)["ops"]
+    assert op["notes"] == "Op notes."
+    assert op["inputs"][0]["notes"] == "Port notes."
+    params = {param["name"]: param for param in op["params"]}
+    assert params["gap"]["notes"] == "Param notes."
+    assert params["plain"]["notes"] is None
+    assert "notes" not in op["search"]
+
+
+def test_op_catalog_leaves_notes_out():
+    for op in api.op_catalog()["ops"]:
+        assert "notes" not in op
+        for group in ("inputs", "outputs", "params"):
+            assert all("notes" not in row for row in op[group])
+
+
 def test_strip_environment_drops_machine_dependent_fields(payload):
     stripped = strip_environment(payload)
     assert "generator" not in stripped

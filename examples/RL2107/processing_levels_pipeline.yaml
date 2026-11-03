@@ -1,15 +1,12 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline Recipe
-#
-# Refactored variant of the HB1603 modular recipe that organizes the acoustic
-# processing flow into explicit processing levels 0 through 4. The dataset-
-# specific line overlay and visualization steps are defined directly here in
-# the parent recipe.
+# RL2107 (EK80) copy of the HB1603 processing levels pipeline. Its levels 1
+# and 2 skip the calibration mapping and the .bot seafloor, and no line overlay
+# is added, so line_file_path is unused.
 #
 # Usage: aa-recipe generate processing_levels_pipeline.yaml
 
 recipe:
   name: "processing_levels_pipeline"
-  description: "HB1603 pipeline organized into explicit processing levels."
+  description: "RL2107 EK80 pipeline organized into processing levels 0 to 4."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -18,26 +15,29 @@ inputs:
   raw_input_folder:
     type: path
     default: "./raw_file_inputs"
+    description: "Local folder the NCEI download writes raw files into."
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 
   - include: processing_lvl_0.yaml
     input_overrides:
       raw_input_folder: ${inputs.raw_input_folder}
-      # file_time_start: "2016-07-25T20:58"
-      # file_time_end: "2016-07-25T21:45"
       file_time_start: "2021-10-12T14:20"
       file_time_end: "2021-10-12T14:21"
       cruise_name: "RL2107"
@@ -48,7 +48,7 @@ steps:
       cal_input_folder: ${inputs.cal_input_folder}
       cruise_id: "HB1603"
       record_author: "<Your Name>"
-      sonar_model: "EK80" # changed
+      sonar_model: "EK80"
 
   - include: processing_lvl_2.yaml
     input_overrides:

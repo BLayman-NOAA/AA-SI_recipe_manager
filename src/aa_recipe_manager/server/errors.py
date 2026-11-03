@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import traceback
 from http import HTTPStatus
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi.encoders import jsonable_encoder
@@ -21,6 +22,14 @@ from aa_recipe_manager.api import (
     RecipeValidationError,
     SpecNotFoundError,
     UpstreamNotCachedError,
+)
+from aa_recipe_manager.editing import (
+    ChangedOnDisk,
+    EditError,
+    EditRejected,
+    TargetExists,
+    UnknownTarget,
+    WorkspaceError,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +84,18 @@ class InvalidRecipe(Exception):
         self.problems = problems
 
 
+class StaleVersion(Exception):
+    """A request named a session version that is no longer the current one.
+
+    Attributes:
+        version: The session's current version.
+    """
+
+    def __init__(self, message: str, version: int) -> None:
+        super().__init__(message)
+        self.version = version
+
+
 _STEP = re.compile(r"^Step '([^']+)'")
 NOT_FOUND = (
     SessionNotFound,
@@ -92,6 +113,16 @@ UNPROCESSABLE = (
     ImplementationNotFoundError,
     AmbiguousImplementationError,
 )
+#: Editing errors, each answered by its own branch.
+EDITING = (
+    TargetExists,
+    ChangedOnDisk,
+    StaleVersion,
+    EditRejected,
+    UnknownTarget,
+    WorkspaceError,
+    EditError,
+)
 
 
 def translate_error(exc: Exception) -> tuple[int, dict[str, Any]]:
@@ -108,7 +139,20 @@ def translate_error(exc: Exception) -> tuple[int, dict[str, Any]]:
         details = jsonable_encoder(exc.errors())
         return 422, error_body("invalid_request", message, details)
     details: Any = None
-    if isinstance(exc, UNPROCESSABLE):
+    if isinstance(exc, (TargetExists, ChangedOnDisk)):
+        status = 409
+        details = {"paths": [Path(path).as_posix() for path in exc.paths]}
+    elif isinstance(exc, StaleVersion):
+        status = 409
+        details = {"version": exc.version}
+    elif isinstance(exc, EditRejected):
+        status = 422
+        details = {"problems": list(exc.problems)}
+    elif isinstance(exc, UnknownTarget):
+        status = 404
+    elif isinstance(exc, EditError):
+        status = 400
+    elif isinstance(exc, UNPROCESSABLE):
         status = 422
     elif isinstance(exc, RecipeValidationError):
         status = 422
@@ -156,6 +200,7 @@ def install_handlers(app: FastAPI) -> None:
     for kind in (
         HTTPException,
         RequestValidationError,
+        *EDITING,
         *UNPROCESSABLE,
         RecipeValidationError,
         InvalidRecipe,

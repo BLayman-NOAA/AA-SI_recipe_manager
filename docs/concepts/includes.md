@@ -47,8 +47,8 @@ A sub-recipe that reads another sub-recipe's steps cannot be run or checked by
 itself: `${combine_raw.echodata}` points at a step it does not declare. That is
 expected. Run and check the parent. On this site each sub-recipe is still
 drawn on its own, with whatever flows in from other files shown as entry
-points at the top, and its notebook tab is cut from the parent's generated
-notebook.
+points at the top, and its Python tab shows its own steps' calls from the
+parent's generated code.
 
 ## Caching is unaffected by files
 

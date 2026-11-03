@@ -14,10 +14,8 @@ inputs:
   seafloor_depth:
     type: DataArray
     description: >
-      Seafloor depth per ping, shape (ping_time,), from detect_seafloor,
-      ep_detect_seafloor, or read_seafloor_line. Pings where this is NaN
-      produce no valid samples, so an undetected stretch is masked out
-      entirely rather than guessed at.
+      Seafloor depth per ping from any seafloor detection op. Pings where it
+      is NaN are masked entirely rather than guessed at.
 outputs:
   mask:
     type: DataArray
@@ -27,19 +25,16 @@ params:
     type: float
     units: m
     description: >
-      Height above the detected seafloor line to also mask out. Widens the
-      exclusion zone to cover detection error and the near-bottom dead zone,
-      at the cost of discarding real backscatter just above the bottom.
+      Height above the seafloor line to also mask, covering detection error
+      and the near-bottom dead zone at the cost of some real backscatter.
     required: false
     default: 0.0
   range_var:
     type: str
     description: >
-      Name of the meter-valued variable on ds_Sv to compare against the
-      seafloor line. Must use the same vertical reference as the seafloor
-      line. When null (the default), auto-selects "depth" if present on
-      ds_Sv (i.e., add_depth was run upstream), otherwise falls back to
-      "echo_range".
+      Meter-valued variable on ds_Sv compared against the seafloor line, on
+      the same vertical reference. Null (default) uses "depth" if present,
+      otherwise "echo_range".
     required: false
     default: null
 implementations:

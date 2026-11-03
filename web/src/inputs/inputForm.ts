@@ -9,6 +9,25 @@ export type FieldEdit = { draft: string | boolean } | { reset: true };
 
 export type Edits = Record<string, FieldEdit>;
 
+const NON_FINITE = /^[-+]?\.(nan|inf)$/i;
+
+/** NaN or infinity as the server sends them (`.nan`, `.inf`, `-.inf`). */
+export function isNonFinite(value: unknown): boolean {
+  return typeof value === 'string' && NON_FINITE.test(value);
+}
+
+/** A value that is or holds `.nan` or `.inf`, which a form would write back as text. */
+export function holdsNonFinite(value: unknown): boolean {
+  if (isNonFinite(value)) return true;
+  if (value === null || typeof value !== 'object') return false;
+  return Object.values(value).some(holdsNonFinite);
+}
+
+/** The control for an input: text when its value is NaN or infinity, which a number field cannot show. */
+export function inputControl(field: InputField): ControlKind {
+  return isNonFinite(field.value) ? 'text' : controlFor(field.type);
+}
+
 export function controlFor(type: string | null): ControlKind {
   switch (type) {
     case 'int':
@@ -74,6 +93,26 @@ export function fieldDraft(field: InputField, edit: FieldEdit | undefined): stri
 
 function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Whether a field's edit is a draft holding something other than the value it
+ * edits, a change not applied yet. A draft that does not parse is one.
+ *
+ * Args:
+ *   edit: The field's edit.
+ *   value: The value the field edits; undefined when there is none yet.
+ *   parse: Turns the draft into a value.
+ */
+export function isUnapplied(
+  edit: FieldEdit | { remove: true } | undefined,
+  value: unknown,
+  parse: (draft: string | boolean) => Parsed,
+): boolean {
+  if (!edit || !('draft' in edit)) return false;
+  if (isNonFinite(value) && edit.draft === value) return false;
+  const parsed = parse(edit.draft);
+  return !parsed.ok || value === undefined || !sameValue(parsed.value, value);
 }
 
 export interface FormResult {

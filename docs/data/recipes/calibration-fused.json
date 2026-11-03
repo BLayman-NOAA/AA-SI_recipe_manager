@@ -20,7 +20,7 @@
       "declared": true,
       "required": false,
       "default": "./raw",
-      "description": "Folder of .raw files, read for channel configuration only.",
+      "description": "Folder of raw .raw files, a local path or a gs:// URL, read for channel configuration only.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -31,7 +31,7 @@
       "declared": true,
       "required": false,
       "default": "./HB2407_calibration_files",
-      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).",
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -42,7 +42,7 @@
       "declared": true,
       "required": false,
       "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder for the calibration artifacts.",
+      "description": "Name of the subfolder of the run's outputs folder that calibration artifacts are written to.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -53,7 +53,7 @@
       "declared": true,
       "required": false,
       "default": "HB2407",
-      "description": "Recorded in every generated single-channel file so it stays traceable to the survey.",
+      "description": "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -64,7 +64,7 @@
       "declared": true,
       "required": false,
       "default": "Brett Layman",
-      "description": null,
+      "description": "Name recorded as the author of every generated single-channel calibration file.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -75,7 +75,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Inclusive ISO datetime lower bound on the raw file names' times, for debugging. Unset scans from the start of the folder.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -86,7 +86,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Inclusive ISO datetime upper bound, for debugging. Unset scans to the end.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -97,7 +97,7 @@
       "declared": true,
       "required": false,
       "default": "error",
-      "description": "When a raw channel matches several calibration files: \"error\" lists them and stops, and \"interactive\" prompts, which needs a terminal.",
+      "description": "What to do when one raw channel matches several calibration files: \"error\" lists the conflicts and stops; \"interactive\" prompts on the terminal, so it cannot run unattended.",
       "declared_in": "calibration_pipeline_fused.yaml"
     },
     {
@@ -118,7 +118,7 @@
       "document": "calibration_pipeline_fused.yaml",
       "hash": null,
       "editable": false,
-      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "description": "Validate the raw files in the input folder, create the calibration output directory if needed, and return the raw file paths and that directory.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -132,19 +132,27 @@
           "name": "raw_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "description": "Folder of .raw files, local or a remote URL such as gs://bucket/survey/raw. Remote folders are listed without downloading any data.",
           "default": null,
           "set": true,
-          "value": "${inputs.raw_input_folder}"
+          "value": "${inputs.raw_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "auto"
         },
         {
           "name": "calibration_outputs",
           "type": "str",
           "units": null,
-          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "description": "Subdirectory under the run's outputs folder where calibration artifacts are written, with JSON logs in its logs/ subfolder.",
           "default": "calibration",
           "set": true,
-          "value": "${inputs.calibration_outputs}"
+          "value": "${inputs.calibration_outputs}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "raw_file_names",
@@ -153,7 +161,10 @@
           "description": "Explicit file name list; empty means include all files in folder",
           "default": [],
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "clear_previous_json_logs",
@@ -162,16 +173,22 @@
           "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_start",
           "type": "str",
           "units": null,
-          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "description": "Inclusive ISO datetime, for example \"2016-07-25T20:58\"; keeps only raw files whose filename time (D{YYYYMMDD}-T{HHMMSS}) is at or after it. Unset keeps all files.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_start}"
+          "value": "${inputs.file_time_start}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_end",
@@ -180,7 +197,10 @@
           "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_end}"
+          "value": "${inputs.file_time_end}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -234,28 +254,43 @@
           "name": "raw_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder containing raw acoustic files; used to determine channel configuration. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw). Remote raw files are scanned one at a time: each is downloaded to local scratch, read for its channel config, and the local copy deleted before the next file is fetched.",
+          "description": "Folder of raw files whose channel configuration is scanned, local or a remote URL such as gs://bucket/survey/raw.",
           "default": null,
           "set": true,
-          "value": "${inputs.raw_input_folder}"
+          "value": "${inputs.raw_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "cal_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder containing manufacturer calibration files (.cal / .xml). May be a local path or a remote fsspec URL; a remote folder is downloaded to a local scratch directory for the duration of the parse (these files are small) and removed afterwards.",
+          "description": "Folder of manufacturer calibration files (.cal or .xml), local or a remote URL.",
           "default": null,
           "set": true,
-          "value": "${inputs.cal_input_folder}"
+          "value": "${inputs.cal_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "output_base",
           "type": "path",
           "units": null,
-          "description": "Root directory the standardized calibration files, mapping files, and logs are written under. Normally wired to ${initial_setup.calibration_output_dir} so calibration artifacts land beside the run's other outputs. Subdirectories are created as needed.",
+          "description": "Root directory the standardized calibration files, mapping files, and logs are written under. Normally wired to ${initial_setup.calibration_output_dir}.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "cruise_id",
@@ -264,16 +299,22 @@
           "description": "Cruise identifier recorded in every generated single-channel calibration file (e.g. \"HB1603\"), so a standardized file stays traceable to the survey it came from.",
           "default": null,
           "set": true,
-          "value": "${inputs.cruise_id}"
+          "value": "${inputs.cruise_id}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "record_author",
           "type": "str",
           "units": null,
-          "description": "Name recorded as the author of every generated single-channel calibration file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "description": "Name recorded as the author of every generated single-channel calibration file. Not used in any calculation.",
           "default": null,
           "set": true,
-          "value": "${inputs.record_author}"
+          "value": "${inputs.record_author}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "short_filenames",
@@ -282,7 +323,10 @@
           "description": "Use compact names for the generated single-channel files and the keys in mapping_dict. Set false for fully descriptive names, which are easier to read and longer.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "keep_unused",
@@ -291,7 +335,10 @@
           "description": "Retain standardized files not matched to any channel",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "conflict_resolution",
@@ -300,7 +347,10 @@
           "description": "'error' or 'interactive' when multiple cal files match a channel",
           "default": "error",
           "set": true,
-          "value": "${inputs.conflict_resolution}"
+          "value": "${inputs.conflict_resolution}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -309,16 +359,22 @@
           "description": "Print progress information during mapping; implementation-specific",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_start",
           "type": "str",
           "units": null,
-          "description": "Optional inclusive ISO datetime restricting the scanned raw files to those whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Should match the initial_setup window so the channel-configuration scan covers exactly the files being processed. For remote folders the filter is applied before any file is downloaded.",
+          "description": "Inclusive ISO datetime; only raw files whose filename time (D{YYYYMMDD}-T{HHMMSS}) is at or after it are scanned. Match the initial_setup window. Unset scans from the first file.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_start}"
+          "value": "${inputs.file_time_start}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_end",
@@ -327,7 +383,10 @@
           "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_end}"
+          "value": "${inputs.file_time_end}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [

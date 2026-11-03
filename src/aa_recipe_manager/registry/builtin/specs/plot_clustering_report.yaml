@@ -1,11 +1,9 @@
 op: plot_clustering_report
 cache_key: plot_clustering_report  # pinned cache identity - keep stable across op renames
 description: >
-  Render a full clustering report for one or more clustering results. Produces
-  the clustering echogram, per-cluster statistics report, and the HDBSCAN
-  hierarchy plot when the clustering result includes a model and hierarchy
-  plotting is applicable. This is a sink step: it produces figures with no
-  data output.
+  Render a clustering report: the clustering echogram, per-cluster statistics,
+  and the HDBSCAN hierarchy plot when a fitted model is available. Produces
+  figures only.
 category: visualization
 sink: true
 inputs:
@@ -16,13 +14,14 @@ inputs:
     type: Dataset
     many: true
     description: >
-      Clustering result Dataset from run_hdbscan or
-      assign_clusters_to_all_points. Legacy dict results and collected lists
-      are also accepted (many: true). Optional: every panel but the HDBSCAN
-      hierarchy reads the labels embed_clustering_results stored in
-      ds_normalized, so a report can be drawn from that checkpointed dataset
-      alone and the fit never has to be rerun for it. Leave it out to do that;
-      the hierarchy panel is then skipped.
+      Clustering result from run_hdbscan or assign_clusters_to_all_points, or
+      a collected list. Optional: leave it out to draw the report from
+      ds_normalized alone, without the hierarchy panel.
+    notes: >
+      Every panel but the HDBSCAN hierarchy reads the labels
+      embed_clustering_results stored in ds_normalized, so a report can be
+      drawn from that checkpointed dataset and the fit never has to be rerun
+      for it. Legacy dict results are also accepted.
     required: false
     default: null
   clustering_model:
@@ -94,9 +93,11 @@ params:
     type: list
     description: >
       Window dicts (as plan_dive_datasets emits) whose line files are drawn
-      onto the echogram. Each window's lines are read onto its own pings, so
-      every window is a separate segment and windows that overlap in time each
-      keep their own line. Empty draws nothing.
+      onto the echogram. Empty draws nothing.
+    notes: >
+      Each window's lines are read onto its own pings, so every window is a
+      separate segment and windows that overlap in time each keep their own
+      line.
     required: false
     default: []
   overlay_window_keys:
@@ -110,19 +111,20 @@ params:
   overlay_fit_style:
     type: dict
     description: >
-      Matplotlib line keywords for the fitted dive profile drawn by
-      overlay_windows, for example {color: "#23FFFF", linewidth: 3.0}. Merged
-      over the built-in style, so naming only one key leaves the rest alone.
-      Empty uses the built-in style: solid cyan.
+      Matplotlib line keywords for the fitted dive profile, for example
+      {color: "#23FFFF", linewidth: 3.0}, merged over the built-in solid cyan.
+      Empty uses the built-in style.
     required: false
     default: {}
   overlay_bound_style:
     type: dict
     description: >
       The same for both 99% confidence bound lines, for example
-      {color: "#D08BFF", linestyle: ":"}. Empty uses the built-in style:
-      dotted violet, thinner than the fitted profile. Both bounds always share
-      one style, since they are two edges of one interval.
+      {color: "#D08BFF", linestyle: ":"}. Empty uses the built-in dotted
+      violet, thinner than the fitted profile.
+    notes: >
+      Both bounds always share one style, since they are two edges of one
+      interval.
     required: false
     default: {}
   normalization_name:
@@ -130,8 +132,7 @@ params:
     description: >
       Normalized feature set to plot statistics for when
       cluster_stats_sv_data_var is "ml_features" and no clustering_results
-      input is wired. Ignored otherwise; with a result wired, its own
-      normalization_name is used.
+      input is wired. Ignored otherwise.
     required: false
     default: null
   cluster_colors:

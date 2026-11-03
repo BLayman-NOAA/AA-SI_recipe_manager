@@ -5,16 +5,24 @@
 #   extract_cal_params -> compute_sv -> compute_transducer_depth
 #                      -> ep_add_depth -> crop_range
 #
-# The shared survey artifact: the checkpointed per-file Sv, computed once per
-# cruise. Every recipe that includes this file loads it from the cache.
+# The survey half of level 2 and the boundary of the shared artifact: the
+# checkpointed per-file Sv at crop_survey_range, computed once per cruise.
+# Every user recipe includes this file verbatim and picks up from there.
 #
-# There is no survey fan-in here. HB1603's files have different sample
-# intervals, so sample k is a different depth in different files. Each
-# consumer bins onto a shared depth grid before it merges the files.
+# WHY THERE IS NO SURVEY FAN-IN
 #
-# The steps below are frozen: editing any of them, or changing
-# crop_max_range_m, recomputes the whole survey Sv. They map over
-# per_file_source, as level 1 does.
+#   range_sample is not a shared axis across HB1603: sample intervals differ by
+#   about 11x, giving 17 range_sample lengths from 1017 to 11289, and sample k
+#   is a different depth in different files. Concatenating on ping_time would
+#   NaN-pad echo_range. Each consumer bins onto a shared depth grid before it
+#   fans in (processing_lvl_3_user.yaml for the dives).
+#
+# THE STEPS BELOW ARE FROZEN
+#
+#   As in level 1, with the same per_file_source. crop_max_range_m is shared by
+#   every consumer, so changing it recomputes the survey. Keep it generous: the
+#   quiet water below the deepest dive cell is where level 2b's noise estimate
+#   finds its floor.
 
 recipe:
   name: "hb1603_processing_lvl_2_survey"
@@ -27,27 +35,33 @@ inputs:
   per_file_source:
     type: str
     description: >
-      The list the per-file steps map over, normally ${query_ncei.raw_urls}.
-      Every level in the per-file chain must be given the same value.
+      The step output list the per-file steps map over, one instance per
+      entry, normally ${query_ncei.raw_urls}. Required; give every level in
+      the chain the same value.
+  # Wire both to build_cal_mapping.
   calibration_dict:
     type: dict
-    description: "Standardized calibration data, from build_cal_mapping."
+    description: "Standardized calibration values keyed by calibration key, from the calibration mapping step."
   mapping_dict:
     type: dict
-    description: "Raw channel to calibration key mapping, from build_cal_mapping."
+    description: "Mapping from each raw file's channels to their calibration key, from the calibration mapping step."
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: "Range ceiling applied per file. Changing it recomputes the whole survey Sv."
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
 
 steps:
 
-  # Matches each file to its calibration by bare filename, so a URL works like
-  # a local path. A channel no calibration file matched falls back to the raw
-  # file's own recorded values, with a warning; set unmapped_channels to
-  # "error" to stop instead. On HB1603 this affects the first 151 files, 27
-  # and 28 June, whose pulse lengths differ from the calibration. No dive is
-  # affected. mapping_files/calibration_provenance.yaml records it per channel.
+  # Path(url).name is the key the calibration mapping is built under, so a URL
+  # resolves like a local path.
+  #
+  # unmapped_channels stays at "warn": a channel no calibration matched uses
+  # the raw file's own values, with a warning. HB1603 needs this for pulse
+  # length, not power: on the first 151 files (27 and 28 June) 18 kHz ran at
+  # 2.048 ms and 120 and 200 kHz at 0.256 ms, against calibrations at 1.024 ms,
+  # a different measurement rather than a tolerance question. No dive is
+  # affected (the first is 7 July). mapping_files/calibration_provenance.yaml
+  # records it per channel.
   - id: extract_cal_params
     op: extract_standardized_cal_params
     map_over: ${inputs.per_file_source}
@@ -67,10 +81,14 @@ steps:
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
 
-  # The transducer depth below the surface, computed explicitly. echopype's
-  # use_platform_vertical_offsets puts an EK60 transducer above the surface.
-  # The heave sign was verified on HB2407, not yet on HB1603; it is worth at
-  # most half a metre.
+  # Computed explicitly rather than with echopype's
+  # use_platform_vertical_offsets, which puts an EK60 transducer 8.92 m above
+  # the surface instead of below it. The dive profiles, their 99% bounds and
+  # the seabed lines are all surface referenced, so this has to be right.
+  #
+  # The heave sign is HB2407's, verified there against an EVL seabed line but
+  # not on HB1603 (it could be, on 25 July and 14 August, where the seabed is
+  # inside the crop). It is worth at most +/- 0.45 m against a 2 m bin.
   - id: compute_transducer_depth
     op: compute_transducer_depth
     map_over: ${inputs.per_file_source}
@@ -82,8 +100,7 @@ steps:
       use_heave: true
       heave_sign: 1.0
 
-  # Surface-referenced depth. It needs this file's EchoData, so it is added
-  # here.
+  # Surface-referenced depth, added here while this file's EchoData is at hand.
   - id: ep_add_depth
     op: ep_add_depth
     map_over: ${inputs.per_file_source}
@@ -93,8 +110,8 @@ steps:
     params:
       depth_offset: ${compute_transducer_depth.transducer_depth}
 
-  # Checkpointed because it is the chain's surviving output: later steps read
-  # it from the cache after read_raw's scratch stores are deleted.
+  # Checkpointed: the chain's surviving output. A fan-in reloads it from the
+  # cache, so read_raw's scratch stores can be deleted as instances finish.
   - id: crop_survey_range
     op: crop_range
     map_over: ${inputs.per_file_source}

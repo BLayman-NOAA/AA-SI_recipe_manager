@@ -7,8 +7,9 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { describe, expect, it } from 'vitest';
 import type { Graph } from '../src/api/graph';
-import { buildView } from '../src/diagram/buildView';
+import { buildView, MORE_HANDLE, RUN_CONFIG_ID } from '../src/diagram/buildView';
 import { placeBuses, routeBuses, segmentHitsRect } from '../src/diagram/buses';
+import type { RunConfigView } from '../src/diagram/runConfig';
 import type { View } from '../src/diagram/buildView';
 import { elkGraph, groupLabelWidth, layoutRequest, readLayout, type LayoutRequest } from '../src/diagram/layout';
 import hb1603Json from './fixtures/hb1603.graph.json';
@@ -337,6 +338,121 @@ describe('box placement and routing', () => {
     expect(result.positions.inputs.x + result.positions.inputs.width).toBeLessThanOrEqual(0);
     expect(result.positions['cout:a'].x).toBeGreaterThanOrEqual(100);
     expect(result.positions['cout:a'].y).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe('the run config box', () => {
+  const uc1Config = (error: string | null = null): RunConfigView => ({
+    path: 'C:/uc1/dive_analysis.config.yaml',
+    name: 'dive_analysis.config.yaml',
+    inputs: [
+      { name: 'ping_time_bin', value: '20s', state: 'set' },
+      { name: 'cal_input_folder', value: '../cal', state: 'overridden', sessionValue: '../other' },
+      { name: 'cruise_name', value: 'HB1603', state: 'set' },
+      { name: 'sonar_model', value: 'EK60', state: 'set' },
+      { name: 'stray', value: 1, state: 'unused' },
+    ],
+    settings: [
+      { name: 'user_cache_dir', value: './demo/user' },
+      { name: 'executor', value: 'sequential' },
+    ],
+    error,
+  });
+  const withSubConfig: RunConfigView = {
+    path: 'C:/recipes/with_sub.config.yaml',
+    name: 'with_sub.config.yaml',
+    inputs: [{ name: 'n', value: 5, state: 'set' }],
+    settings: [],
+    error: null,
+  };
+
+  async function configLayout(graph: Graph, direction: 'RIGHT' | 'DOWN', expanded: string[], runConfig: RunConfigView) {
+    const view = buildView(graph, {
+      drill: [],
+      connected: false,
+      selected: null,
+      expandedSteps: new Set<string>(),
+      expandedBoxes: new Set(expanded),
+      runConfig,
+    });
+    const request = layoutRequest(view, direction);
+    const core = readLayout(await new ELK().layout(elkGraph(request)));
+    return { view, request, layout: placeBuses(request, core) };
+  }
+
+  const STATES: [string, string[]][] = [
+    ['collapsed', []],
+    ['with its rows listed', [RUN_CONFIG_ID]],
+    ['with both boxes listing their rows', [RUN_CONFIG_ID, 'inputs']],
+  ];
+  const GRAPHS: [string, Graph, RunConfigView][] = [
+    ['uc1', uc1Graph, uc1Config()],
+    ['uc1 with a note in the box', uc1Graph, uc1Config('Run config: an error')],
+    ['with_sub', withSubGraph, withSubConfig],
+  ];
+  for (const [graphName, graph, config] of GRAPHS) {
+    for (const [stateName, expanded] of STATES) {
+      for (const direction of ['RIGHT', 'DOWN'] as const) {
+        it(`keeps the box before the inputs box and its lines clear in ${graphName}, ${stateName}, ${direction}`, async () => {
+          const { view, request, layout } = await configLayout(graph, direction, expanded, config);
+          const problems = layoutProblems(view, request, layout);
+          expect(problemCounts(problems), JSON.stringify(problems)).toEqual(NONE);
+          const lines = view.edges.filter((edge) => edge.bus === 'config');
+          expect(lines.length).toBeGreaterThan(0);
+          const box = layout.positions[RUN_CONFIG_ID];
+          const inputs = layout.positions.inputs;
+          for (const edge of lines) {
+            const points = layout.routes[edge.id].points;
+            expect(points[0].x, edge.id).toBeCloseTo(box.x + box.width);
+            expect(points.at(-1)!.x, edge.id).toBeCloseTo(inputs.x);
+          }
+        });
+      }
+    }
+  }
+
+  it('ends each row line on its row, nesting the lines that run down', async () => {
+    const { request, layout } = await configLayout(uc1Graph, 'RIGHT', [RUN_CONFIG_ID, 'inputs'], uc1Config());
+    const rows = request.nodes.find((node) => node.id === 'inputs')!.rows!;
+    const inputs = layout.positions.inputs;
+    const route = (name: string) => layout.routes[`e:runConfig.${name}->inputs`].points;
+    expect(route('ping_time_bin').at(-1)!.y).toBeCloseTo(inputs.y + rows['row:ping_time_bin']);
+    expect(route('cruise_name').at(-1)!.y).toBeCloseTo(inputs.y + rows[MORE_HANDLE]);
+    // Two lines into the more row end apart, the later one lower.
+    expect(route('sonar_model').at(-1)!.y).toBeGreaterThan(route('cruise_name').at(-1)!.y);
+    // The first line running down turns furthest right.
+    const turns = ['ping_time_bin', 'cruise_name', 'sonar_model'].map((name) => route(name)[1].x);
+    expect(turns[0]).toBeGreaterThan(turns[1]);
+    expect(turns[1]).toBeGreaterThan(turns[2]);
+    expect(layout.routes['e:runConfig.stray->inputs']).toBeUndefined();
+  });
+
+  it('turns a line running up near the run config box', async () => {
+    const { layout } = await configLayout(uc1Graph, 'RIGHT', [RUN_CONFIG_ID, 'inputs'], uc1Config('A note'));
+    const points = layout.routes['e:runConfig.cal_input_folder->inputs'].points;
+    const box = layout.positions[RUN_CONFIG_ID];
+    expect(points.at(-1)!.y).toBeLessThan(points[0].y);
+    expect(points[1].x - (box.x + box.width)).toBeLessThan(points.at(-1)!.x - points[1].x);
+  });
+
+  it('labels the one line of a collapsed box with the inputs it sets, between the boxes', async () => {
+    for (const direction of ['RIGHT', 'DOWN'] as const) {
+      const { layout } = await configLayout(uc1Graph, direction, [], uc1Config());
+      const route = layout.routes['e:runConfig->inputs'];
+      const box = layout.positions[RUN_CONFIG_ID];
+      expect(route.points).toHaveLength(2);
+      expect(route.label!.x).toBeGreaterThan(box.x + box.width);
+      expect(route.label!.x + route.label!.width).toBeLessThan(layout.positions.inputs.x);
+    }
+  });
+
+  it('takes the place of the inputs box when the recipe has none', async () => {
+    const config = { ...withSubConfig, inputs: [{ name: 'stray', value: 1, state: 'unused' as const }] };
+    for (const direction of ['RIGHT', 'DOWN'] as const) {
+      const { view, request, layout } = await configLayout(mappedGraph, direction, [RUN_CONFIG_ID], config);
+      expect(problemCounts(layoutProblems(view, request, layout))).toEqual(NONE);
+      expect(layout.positions[RUN_CONFIG_ID]).toBeDefined();
+    }
   });
 });
 

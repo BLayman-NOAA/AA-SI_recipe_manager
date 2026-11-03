@@ -19,9 +19,8 @@ params:
     type: list
     units: kHz
     description: >
-      Nominal channel frequencies to exclude, as numbers in kHz
-      (e.g. [70, 120, 200]). Every sample on a listed channel is marked
-      invalid and every other channel is left untouched. The default empty
+      Nominal channel frequencies to exclude, in kHz (e.g. [70, 120, 200]).
+      Every sample on a listed channel is marked invalid. The default empty
       list masks nothing.
     required: false
     default: []

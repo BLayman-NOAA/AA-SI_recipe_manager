@@ -763,6 +763,30 @@ def test_sweep_notebook_emits_loop(helpers, tmp_path):
     assert "_sweep['factor']" in code
 
 
+def test_loop_indents_every_line_of_a_multi_line_call(helpers, tmp_path):
+    producer, mapped, collector = _map_pipeline(
+        _step(
+            "merge", "collect_sum", inputs={"values": "${proc.out}"},
+            in_ports={"values": _MANY}, out_ports={"total": _INT},
+            output_map={"total": "__return__"}, collect="${proc.out}",
+        )
+    )
+    mapped.params = {"a": 1, "b": 2}
+    mapped.custom_spec.params = {
+        "a": ParamDeclaration(type="int"),
+        "b": ParamDeclaration(type="int"),
+    }
+    code = "\n\n".join(_generate_code_cells([producer, mapped, collector], tmp_path))
+    assert (
+        "for _item in items:\n"
+        "    _iter_out = inc(\n"
+        "        x=_item,\n"
+        "        a=1,\n"
+        "        b=2,\n"
+        "    )\n"
+    ) in code
+
+
 # ---------------------------------------------------------------------------
 # map_over + include composition (8g, FR-14.4)
 # ---------------------------------------------------------------------------

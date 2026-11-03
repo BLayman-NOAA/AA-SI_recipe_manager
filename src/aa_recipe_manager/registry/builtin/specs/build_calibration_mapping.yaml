@@ -1,8 +1,9 @@
 op: build_calibration_mapping
 cache_key: build_calibration_mapping  # pinned cache identity - keep stable across op renames
 description: >
-  Match each raw channel to its calibration data and save the mapping files.
-
+  Match each raw channel to its calibration data and save the mapping files
+  under mapping_files/. Mark the step regenerate: always in a recipe.
+notes: >
   Loads the raw file configurations and the standardized single-channel files,
   runs the matching algorithm, moves aside any calibration file no raw channel
   matched, resolves conflicts, writes mapping_files/channel_mapping.yaml,
@@ -13,8 +14,8 @@ description: >
   The mapping keys are those files' names, which only the on-disk loader
   attaches, and this step rewrites that folder.
 
-  Mark it regenerate: always in a recipe. Its real product is the files on
-  disk, and a hand-deleted single-channel file cannot change a cache key
+  regenerate: always is needed because the step's real product is the files
+  on disk, and a hand-deleted single-channel file cannot change a cache key
   computed before the run, so a cache hit would return the dictionaries
   without re-reading the folder. The step is cheap: a few small local YAML
   reads and the matcher.
@@ -49,25 +50,28 @@ outputs:
     required: false
     description: >
       Names of single-channel calibration files the mapping does not
-      reference, including the ones this run moved aside. An empty list means
-      every calibration file matched a raw channel, so a non-empty one is the
-      signal that a channel went unmapped. Under "report" no mapping exists to
-      check against, so this carries only the files the run moved aside.
+      reference, including ones this run moved aside. Non-empty means a
+      channel may have gone unmapped.
+    notes: >
+      Under "report" no mapping exists to check against, so this carries only
+      the files the run moved aside.
   provenance:
     type: dict
     required: false
     description: >
       Per-channel account of what calibration was applied over which stretch
-      of the cruise, and why. Each channel carries segments, one per run of
-      raw files that behaved the same way, with a time range, the raw and
-      calibration settings behind it, and an outcome: the calibration was
-      applied, it was applied only because a tolerance was widened, or nothing
-      matched and the channel fell back or stopped the run. A cruise of
-      thousands of files reports as a handful of segments per channel.
+      of the cruise, and why, as time segments with their settings and
+      outcome. Also written to mapping_files/calibration_provenance.yaml.
+    notes: >
+      Each channel carries segments, one per run of raw files that behaved the
+      same way, with a time range, the raw and calibration settings behind it,
+      and an outcome: the calibration was applied, it was applied only because
+      a tolerance was widened, or nothing matched and the channel fell back or
+      stopped the run. A cruise of thousands of files reports as a handful of
+      segments per channel.
 
       JSON-safe, so a server can hand it to a client without reading the file
-      off disk. The same content is written to
-      mapping_files/calibration_provenance.yaml.
+      off disk.
 
       Complete whatever happens downstream: the mapping stage sees every file
       in the catalogue, so this covers the whole cruise even when the per-file
@@ -82,28 +86,29 @@ outputs:
     type: dict
     required: false
     description: >
-      Unresolved multiple-match conflicts, keyed by a stable conflict id.
-      Each carries the candidate calibration keys, a summary of every
+      Unresolved multiple-match conflicts, keyed by conflict id; only filled
+      under conflict_resolution "report". Non-empty means no mapping was
+      written: pass choices as calibration_choices and run again.
+    notes: >
+      Each conflict carries the candidate calibration keys, a summary of every
       candidate, the raw files and channel ids it affects, and
       distinguishing_fields naming what actually differs between the
       candidates. That list excludes the fields two calibration records differ
       in by construction, such as the source filename and the created
       timestamp, so it names only what a reviewer has to weigh. It is empty
-      when the candidates match everywhere it matters. Only populated under
-      conflict_resolution
-      "report"; empty when the mapping completed. A non-empty value means no
-      mapping file was written, so feed the choices back as
-      calibration_choices and run the step again.
+      when the candidates match everywhere it matters. The output is empty
+      when the mapping completed.
   single_channel_data:
     type: dict
     required: false
     description: >
       {"channels": [...]}, the standardized channels the mapping was built
-      from plus any record averaged or merged from several of them, each
-      carrying its _calibration_file_key. Every key in mapping_dict names one
-      of them, so this, not the standardization step's payload, is what to
-      hand to save_calibration_archive once an average or merge has been
-      chosen. JSON-safe.
+      from plus any averaged or merged records. Pass this to
+      save_calibration_archive once an average or merge has been chosen.
+    notes: >
+      Each channel carries its _calibration_file_key, and every key in
+      mapping_dict names one of them, which is why this rather than the
+      standardization step's payload goes to the archive. JSON-safe.
 params:
   output_base:
     type: path
@@ -119,10 +124,11 @@ params:
     description: >
       Folder of standardized single-channel files. Defaults to
       single_channel_calibration_files/ under output_base. Wire it to the
-      standardization step's single_channel_dir output for the ordering
-      dependency. Not fingerprinted, because a step-output reference is still
-      an unresolved placeholder when cache keys are computed; use
-      regenerate: always instead.
+      standardization step's single_channel_dir output.
+    notes: >
+      The wiring gives the ordering dependency. Not fingerprinted, because a
+      step-output reference is still an unresolved placeholder when cache keys
+      are computed; use regenerate: always instead.
     constraints:
       must_exist: false
   raw_configs_path:
@@ -140,47 +146,55 @@ params:
     default: "error"
     description: >
       What to do when one raw channel matches several calibration files.
-      "error" (the default) lists the conflicts and stops, so you delete the
-      unwanted single-channel file and re-run. "interactive" prompts on the
-      terminal, and raises before any file is moved when the run has no
-      interactive input. "report" neither raises nor prompts: it returns the
-      conflicts on the conflicts output and writes no mapping file, which is
-      the mode for a caller with no terminal that will present the choices
-      and run the step again with calibration_choices.
+      "error" (default) lists the conflicts and stops. "interactive" prompts on
+      the terminal. "report" returns them on the conflicts output and writes no
+      mapping.
+    notes: >
+      After "error", delete the unwanted single-channel file and run again.
+      "interactive" raises before any file is moved when the run has no
+      interactive input. "report" is the mode for a caller with no terminal
+      that will present the choices and run the step again with
+      calibration_choices.
   calibration_choices:
     type: dict
     required: false
     description: >
-      Conflict decisions supplied up front, mapping a conflict id from a
-      previous run's conflicts output to a choice. A choice is the
-      calibration key to keep; a list of candidate keys, or
-      {"average": [keys]}, to average them; or {"merge": [items]} to merge
-      them as the EK80 software does, where an item is a key or an
-      {"average": [keys]}. A merge takes the calibrations in the order given:
-      the first is used wherever its sphere is valid and each later one fills
-      only what the earlier ones leave, so the sphere may differ. Frequencies
-      none of them covers stay uncovered, which is reported as a warning and
-      in the provenance, never refused. An average or merge is written as a
-      new single-channel file with is_averaged or is_merged set, the
-      conflict's channels are mapped to it, and the candidates it was made
-      from are set aside; an average made only to be merged is not written.
-      Only calibrations of the same transducer, at the same settings and with
-      the same sphere, can be averaged; only FM calibrations can be merged.
-      Applied in every conflict_resolution mode before that mode's handler
-      runs, so a partial map resolves what it covers and leaves the rest to
-      be reported, prompted for, or raised on. An unknown conflict id, a
-      malformed choice, a key that is not one of that conflict's candidates,
+      Maps a conflict id from a previous run's conflicts output to a choice:
+      the key to keep; a list of keys, or {"average": [keys]}, to average;
+      or {"merge": [items]} to merge FM calibrations EK80 style, an item being
+      a key or an average.
+    notes: >
+      A merge takes the calibrations in the order given: the first is used
+      wherever its sphere is valid and each later one fills only what the
+      earlier ones leave, so the sphere may differ. Frequencies none of them
+      covers stay uncovered, which is reported as a warning and in the
+      provenance, never refused.
+
+      An average or merge is written as a new single-channel file with
+      is_averaged or is_merged set, the conflict's channels are mapped to it,
+      and the candidates it was made from are set aside; an average made only
+      to be merged is not written. Only calibrations of the same transducer,
+      at the same settings and with the same sphere, can be averaged; only FM
+      calibrations can be merged.
+
+      Choices are applied in every conflict_resolution mode before that mode's
+      handler runs, so a partial map resolves what it covers and leaves the
+      rest to be reported, prompted for, or raised on. An unknown conflict id,
+      a malformed choice, a key that is not one of that conflict's candidates,
       or candidates that cannot be combined, is an error, and nothing is
       changed.
   tolerances:
     type: dict
     required: false
     description: >
-      Per-field match tolerances, merged over the matcher's defaults so a dict
-      naming only one field widens only that field. The defaults are exact for
-      frequency, frequency_start, frequency_end and transmit_power (1 Hz / 1 W)
-      and 1e-6 s for transmit_duration_nominal, because a calibration is
-      formally valid only for the configuration it was measured at.
+      Per-field match tolerances, merged over the defaults (1 Hz for the
+      frequencies, 1 W for transmit_power, 1e-6 s for
+      transmit_duration_nominal). Widening one applies a calibration measured
+      at a different setting.
+    notes: >
+      A dict naming only one field widens only that field. The defaults are
+      effectively exact because a calibration is formally valid only for the
+      configuration it was measured at.
 
       Widening one is a scientific decision, not a convenience: a channel that
       matches only under a widened tolerance was calibrated at a different
@@ -193,12 +207,14 @@ params:
     type: str
     required: false
     description: >
-      The policy the extract_standardized_cal_params step that consumes this
-      mapping runs with, "warn" or "error". Informational only: it changes
-      nothing about the matching, and only lets the provenance report state
+      The unmapped_channels policy, "warn" or "error", of the step that
+      extracts calibration parameters from this mapping. Only labels the
+      provenance report; unset says the outcome is decided downstream.
+    notes: >
+      Changes nothing about the matching. It lets the provenance report state
       what actually happened to an unmatched channel instead of listing both
-      possibilities. Set it to the same value that step uses, or leave it out
-      and the report says the outcome is decided downstream.
+      possibilities, so set it to the value extract_standardized_cal_params
+      uses.
   cruise_id:
     type: str
     required: false
@@ -223,9 +239,8 @@ params:
     required: false
     default: true
     description: >
-      Remap the returned dictionaries to compact calibration keys when they
-      are not already the single-channel file names, and give averaged and
-      merged records compact keys. Should match the setting the single-channel files
+      Use compact calibration keys in the returned dictionaries and for
+      averaged and merged records. Match the setting the single-channel files
       were written with.
   verbose:
     type: bool

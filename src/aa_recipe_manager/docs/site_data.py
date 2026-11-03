@@ -4,7 +4,7 @@
 
 A manifest lists the recipes the site documents. For each full recipe this
 writes the flow-diagram graph the site's viewer draws, and for every entry a
-Markdown partial holding its Flow diagram, YAML and Notebook tabs. A sub-recipe
+Markdown partial holding its Flow diagram, YAML and Python tabs. A sub-recipe
 is drawn as its full recipe's graph drilled into its include. For the registry
 it writes the op reference payload. Everything goes under ``docs/data`` and is
 committed, so the site build itself needs neither the scientific packages nor
@@ -22,17 +22,16 @@ from typing import TYPE_CHECKING, Any
 
 from ruamel.yaml import YAML
 
-from aa_recipe_manager.docs.notebook_slice import (
-    cells_to_markdown,
-    generate_parent_notebook,
-    notebook_to_markdown,
-    slice_steps,
-)
 from aa_recipe_manager.docs.payload import (
     build_payload,
     stale_link_ops,
     strip_environment,
     unresolved_ops,
+)
+from aa_recipe_manager.docs.recipe_code import (
+    generate_parent_notebook,
+    placeholder_dag,
+    recipe_code,
 )
 from aa_recipe_manager.graph import build_recipe_graph
 
@@ -181,15 +180,22 @@ def build_site_data(
                 f"'{include}' of '{entry.parent}'"
             )
 
+    parents = [entry for entry in entries if entry.parent is None]
     notebooks = {
         entry.slug: generate_parent_notebook(recipes[entry.slug], registry)
-        for entry in entries
-        if entry.parent is None
+        for entry in parents
     }
+    dags = {e.slug: placeholder_dag(recipes[e.slug], registry) for e in parents}
+    labels = {e.slug: _section_labels(e, entries, recipes) for e in parents}
 
     files: dict[str, str] = {}
     for entry in entries:
-        notebook_md, note = _notebook_tab(entry, recipes, notebooks)
+        root_slug = entry.parent or entry.slug
+        dag, restore = dags[root_slug]
+        step_ids = None
+        if entry.parent:
+            step_ids = [step.id for step in recipes[entry.slug].steps]
+        code = recipe_code(dag, restore, step_ids=step_ids, labels=labels[root_slug])
         yaml_text = (root / entry.path).read_text(encoding="utf-8")
         files[f"partials/{entry.slug}.md"] = _tabs_partial(
             entry,
@@ -197,8 +203,7 @@ def build_site_data(
             includes[entry.slug],
             children.get(entry.slug, {}),
             yaml_text,
-            notebook_md,
-            note,
+            code,
             by_slug,
         )
         if entry.parent is None:
@@ -361,25 +366,31 @@ def _parent_cruise(
     return parent.cruise if parent else None
 
 
-def _notebook_tab(
-    entry: ManifestEntry,
+def _section_labels(
+    parent: ManifestEntry,
+    entries: list[ManifestEntry],
     recipes: dict[str, Recipe],
-    notebooks: dict[str, Any],
-) -> tuple[str, str | None]:
-    """The Notebook tab's Markdown and an optional note shown above it."""
-    if entry.parent is None:
-        return notebook_to_markdown(notebooks[entry.slug], heading_shift=2), None
+) -> dict[str, str]:
+    """The section each step of a full recipe belongs to in its Python tab.
 
-    step_ids = [step.id for step in recipes[entry.slug].steps]
-    sliced = slice_steps(notebooks[entry.parent], step_ids)
-    note = None
-    if sliced.shared_with:
-        shared = ", ".join(f"`{step}`" for step in sliced.shared_with)
-        note = (
-            "Steps here run inside a per-file loop shared with steps from "
-            f"another level ({shared}), so the whole loop is shown."
-        )
-    return cells_to_markdown(sliced.cells, heading_shift=1), note
+    A step documented by a sub-recipe entry is labelled with that entry's
+    title, any other included step with its innermost include's file name, and
+    the full recipe's own steps with its file name. A recipe without includes
+    has no sections.
+    """
+    recipe = recipes[parent.slug]
+    if not recipe.include_blocks:
+        return {}
+    labels = {step.id: Path(parent.path).name for step in recipe.steps}
+    # Inner includes are listed before the files that include them.
+    for block in reversed(recipe.include_blocks):
+        for step_id in block.step_ids:
+            labels[step_id] = Path(block.source).name
+    for entry in entries:
+        if entry.parent == parent.slug:
+            for step in recipes[entry.slug].steps:
+                labels[step.id] = entry.title
+    return labels
 
 
 def _tabs_partial(
@@ -388,11 +399,10 @@ def _tabs_partial(
     include: str | None,
     children: dict[str, ManifestEntry],
     yaml_text: str,
-    notebook_md: str,
-    note: str | None,
+    code: str,
     by_slug: dict[str, ManifestEntry],
 ) -> str:
-    """The tabs a page pulls in with a snippet: Flow diagram, YAML, Notebook.
+    """The tabs a page pulls in with a snippet: Flow diagram, YAML, Python.
 
     Args:
         entry: The recipe the tabs document.
@@ -400,8 +410,7 @@ def _tabs_partial(
         include: The entry's include id in its root graph, None for a root.
         children: For a full recipe, its sub-recipe entries by include id.
         yaml_text: The recipe file's text.
-        notebook_md: The Notebook tab's Markdown.
-        note: A note shown above the notebook cells.
+        code: The Python tab's code.
         by_slug: Every manifest entry by slug.
     """
     page_dir = posixpath.dirname(entry.page) or "."
@@ -461,29 +470,25 @@ def _tabs_partial(
         )
     )
 
-    if notebook_md.strip():
-        notebook = []
-        if entry.parent is None:
-            notebook_path = f"data/notebooks/{entry.slug}.ipynb"
-            notebook += [
-                f"[Download the notebook]({link(notebook_path)}), as "
-                "`aa-recipe generate` writes it.",
-                "",
-            ]
-        else:
-            parent = by_slug[entry.parent]
-            notebook_path = f"data/notebooks/{parent.slug}.ipynb"
-            notebook += [
-                f"These are the cells that run this level, taken from the "
-                f"[{parent.title} notebook]({link(notebook_path)}). They use "
-                "variables earlier levels define, so run them from the full "
-                "notebook.",
-                "",
-            ]
-        if note:
-            notebook += ['!!! note "Shared loop"', "", f"    {note}", ""]
-        notebook.append(notebook_md.rstrip("\n"))
-        tabs.append(("Notebook", notebook))
+    if entry.parent is None:
+        notebook_path = f"data/notebooks/{entry.slug}.ipynb"
+        intro = (
+            "The function calls this recipe makes, with a comment per step. "
+            "`aa-recipe generate` writes them as a notebook: "
+            f"[download it]({link(notebook_path)})."
+        )
+    else:
+        parent = by_slug[entry.parent]
+        notebook_path = f"data/notebooks/{parent.slug}.ipynb"
+        intro = (
+            "The function calls this part of the "
+            f"[{parent.title} notebook]({link(notebook_path)}) makes. They use "
+            "variables earlier steps define, so run them from the full notebook."
+        )
+    fence = "```"
+    while fence in code:
+        fence += "`"
+    tabs.append(("Python", [intro, "", f"{fence}python", code.rstrip("\n"), fence]))
 
     parts: list[str] = []
     for label, lines in tabs:

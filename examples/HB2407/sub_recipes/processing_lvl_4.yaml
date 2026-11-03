@@ -1,7 +1,4 @@
-# Processing Level 4 - Machine Learning
-#
-# Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
-# runs HDBSCAN clustering, and produces the clustering report outputs.
+# Processing level 4: machine learning and clustering
 
 recipe:
   name: "processing_lvl_4"
@@ -13,63 +10,60 @@ recipe:
 inputs:
   mvbs:
     type: dataset
-    description: "MVBS dataset with line overlay variables added."
+    description: "Gridded MVBS to cluster, one ML sample per cell, with any line overlay variables already added."
+  # The feature list this recipe uses does not need it.
   echodata:
     type: echodata
     required: false
     description: >
-      EchoData object used for the 'seafloor_depth' and 'altitude' auxiliary ML
-      features. Only needed when seafloor_depth below is not wired, and not at
-      all for the features list this recipe currently uses.
+      Raw EchoData supplying the echosounder's own bottom pick for the
+      'seafloor_depth' and 'altitude' features. Used only when seafloor_depth
+      is not wired.
+  # In a per-file pipeline wire a merge_datasets step that collects the
+  # per-file lines; referencing the mapped step directly fails on a resumed
+  # run, since the runner prunes a mapped chain once its fan-in is a cache hit.
   seafloor_depth:
     type: dataarray
     required: false
     description: >
-      Pre-detected seafloor line, 1-D over ping_time, wired from a
-      detect_seafloor step. Takes precedence over echodata for the
-      'seafloor_depth' and 'altitude' features, so the ML features use the same
-      line the masking stack used rather than a channel mean recomputed
-      internally. In a per-file map_over pipeline, collect the per-file lines
-      into one survey-wide line and wire that, e.g. a merge_datasets step with
-      collect: ${detect_seafloor.seafloor_depth}. Referencing the mapped step
-      directly resolves on a cold run but fails on a resumed one, because the
-      runner prunes a mapped chain as a whole once the downstream fan-in is a
-      cache hit.
+      Seafloor line over ping_time, preferred over echodata for the
+      'seafloor_depth' and 'altitude' features so they use the line the
+      masking used.
   overlay_line_var:
     type: str
     default: "overlay_line"
-    description: "Line variable to overlay on the clustering report plot."
+    description: "Name of the line variable drawn over the clustering report plots."
   sv_clean_unmasked:
     type: dataset
     description: >
-      Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
-      and cluster echogram plots.
+      Noise-removed Sv before sparse-bin masking, used as the backdrop and ping
+      reference for the ML and cluster echograms.
   cell_stats_sv:
     type: dataset
-    description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+    description: "Per-cell statistics, such as the coefficient of variation, on the MVBS grid. Needed when the cell_cv feature is listed."
   min_depth:
     type: float
     default: 0
-    description: "Shallowest depth in meters shown by the ML and clustering echograms."
+    description: "Shallowest depth shown on the ML and clustering echograms, in metres."
   max_depth:
     type: float
     default: 100
-    description: "Deepest depth in meters shown by the ML and clustering echograms."
+    description: "Deepest depth shown on the ML and clustering echograms, in metres. Unset uses the deepest depth in the data."
   ping_min:
     type: int
     default: 0
-    description: "First ping index shown by the ML and clustering echograms."
+    description: "First ping index shown on the ML and clustering echograms."
   ping_max:
     type: int
-    description: "Last ping index shown by the ML and clustering echograms. Omit for every ping."
+    description: "Last ping index shown on the ML and clustering echograms. Unset shows through the last ping."
   x_axis_units:
     type: str
     default: "seconds"
-    description: "Units for the x-axis of the ML and clustering echograms."
+    description: "Echogram x axis: \"datetime\" (UTC clock time), \"seconds\" from the first ping shown, \"pings\", \"meters\" travelled, or \"bins\" (MVBS only)."
   y_axis_units:
     type: str
     default: "meters"
-    description: "Units for the y-axis of the ML and clustering echograms."
+    description: "Echogram y axis: \"meters\", \"range_sample\", or \"bins\" (MVBS only)."
 
 steps:
 

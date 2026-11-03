@@ -35,7 +35,11 @@ from aa_recipe_manager.preview import (  # noqa: F401  (re-exported)
     survey_hits_lost,
 )
 from aa_recipe_manager.storage import StorageLocation
-from aa_recipe_manager.validation import DryRunEngine, DryRunReport
+from aa_recipe_manager.validation import (
+    DryRunEngine,
+    DryRunReport,
+    explicitly_required,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -260,10 +264,14 @@ def dry_run(
         TypeError,
     ) as exc:
         recipe_label = str(recipe) if isinstance(recipe, (str, Path)) else "Recipe"
+        declared = {} if isinstance(recipe, (str, Path)) else recipe.inputs
         report = DryRunReport(
             is_valid=False,
             errors=[str(exc)],
             recipe_label=f"Recipe: {recipe_label}",
+            required_inputs=[
+                name for name, decl in declared.items() if explicitly_required(decl)
+            ],
         )
         return report
 
@@ -352,6 +360,7 @@ def recipe_graph(
     ops_base: str = "ops/",
     hashes: dict[str, str] | None = None,
     allow_unknown_ops: bool = False,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Build the flow diagram document for a recipe file or Recipe.
 
@@ -363,6 +372,10 @@ def recipe_graph(
         hashes: Step hashes by step id, attached to the step nodes.
         allow_unknown_ops: Draw a step whose op is not registered without
             ports instead of raising, so the rest of the recipe can be shown.
+        source: File name of the root recipe when ``recipe`` is a Recipe, so
+            root steps and inputs are labelled with it (``document``,
+            ``declared_in``) as they are for a path. Defaults to the recipe's
+            name. Ignored for a path.
 
     Returns:
         The graph document (schema 2), JSON serializable.
@@ -379,6 +392,9 @@ def recipe_graph(
         path = Path(recipe)
         loaded = load_recipe(path)
         slug, source = path.stem, path.name
+    elif source is not None:
+        loaded = recipe
+        slug = Path(source).stem
     else:
         loaded = recipe
         slug = source = loaded.name
@@ -397,6 +413,8 @@ def recipe_graph(
 def op_catalog(*, resolve_sources: bool = False) -> dict[str, Any]:
     """Return the op registry as the document the site's ``ops.json`` holds.
 
+    The specs' developer notes are left out; only the docs site shows them.
+
     Args:
         resolve_sources: Import each implementation's package to attach a
             source link, signature, and docstring. Slow, so off by default.
@@ -406,7 +424,7 @@ def op_catalog(*, resolve_sources: bool = False) -> dict[str, Any]:
     """
     from aa_recipe_manager.docs.payload import build_payload
 
-    return build_payload(resolve_sources=resolve_sources)
+    return build_payload(resolve_sources=resolve_sources, include_notes=False)
 
 
 def run_config(

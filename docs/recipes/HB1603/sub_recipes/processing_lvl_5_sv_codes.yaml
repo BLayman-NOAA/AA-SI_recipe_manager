@@ -4,12 +4,12 @@
 #
 #   generate_sv_codes -> sv_code_depth_table
 #
-# Projects the clustering back onto each dive as per-ping SVCodes, and builds
-# the NEFSC report's percent-of-dive-duration tables. Overlapping dives are
-# each coded over their shared minutes.
-#
-# Cluster ids change between runs, so read the codes against their per-code
-# Sv in the CSVs, not against an earlier analysis's numbering.
+# The clustering projected back onto each dive as per-ping SVCodes, and the
+# NEFSC report's percent-of-dive-duration tables. Each dive is coded on its
+# own slice of the pooled grid between its own 99% confidence lines, so
+# overlapping dives are each coded over their shared minutes and the combined
+# table counts those minutes once per dive. Cluster ids are run scoped: read
+# the codes against the per-code Sv in the CSVs.
 
 recipe:
   name: "hb1603_processing_lvl_5_sv_codes"
@@ -19,32 +19,36 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # Wire it to embed_results.ds_normalized.
   clustered:
     type: Dataset
-    description: "Dataset with the embedded cluster labels. Wire it to embed_results.ds_normalized."
+    description: "Dataset carrying the cluster label of every MVBS cell, from the clustering level."
   dive_windows:
     type: list
-    description: "Windows with start and end, one per dive. Wire it to plan_dives.windows."
+    description: "Dive time windows, a list of dicts each with start and end, one per dive."
+  # Must be the value level 3 gridded on; wire both from one parent input.
   ping_time_bin:
     type: str
     default: "10s"
     description: >
-      Level 3's ping-time bin, the time each ping adds to its code's duration.
-      Wire both levels from one parent input.
+      Ping-time bin of the level 3 grid, as a duration string such as "10s".
+      Each ping counts one bin of it in the duration tables.
   code_output_dir:
     type: path
     default: "./outputs/sv_codes"
-    description: "Where the per-dive CSVs and the duration tables are written."
+    description: "Folder the per-dive SV code CSVs and the duration tables are written to."
   depth_interval_m:
     type: float
     default: 200.0
-    description: "Depth bin of the duration table. 200 m matches the report."
+    description: "Depth bin of the SV code duration tables, in metres. 200 m matches the report."
 
 steps:
 
-  # Writes per-cell CSVs with each cell's 18 and 38 kHz Sv next to its code,
-  # plus a per-ping summary. Each ping counts toward the code that dominates
-  # between its dive's 99% lines, read per dive from the window's paths.
+  # Per-cell CSVs in the reference layout, plus the per-ping summary the
+  # duration table uses: each ping adds one ping_time_bin to the code that
+  # dominates the cells between its 99% bounds. Each row carries the cell's 18
+  # and 38 kHz Sv, so grouping by code describes each cluster. The dive lines
+  # are read here, per dive, from the paths on its window.
   - id: generate_sv_codes
     op: custom
     checkpoint: always
@@ -88,8 +92,10 @@ steps:
         source: git
         url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
 
-  # Percent of dive duration per depth interval and code. Depth comes from the
-  # fitted dive profile, not from the cells.
+  # "Percent of total dive duration the whale spent at 200 m depth intervals
+  # per code." Depth comes from the fitted dive profile, not from the cells:
+  # the question is how long the whale spent at a depth, and the code says what
+  # was around it there.
   - id: sv_code_depth_table
     op: custom
     checkpoint: always

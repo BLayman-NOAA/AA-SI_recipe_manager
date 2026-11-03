@@ -23,6 +23,16 @@
   display: none;
 }
 
+.rc-echogram-sources > summary {
+  color: var(--rc-muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rc-echogram-sources > :not(summary) {
+  margin-top: 4px;
+}
+
 .rc-echogram-layer {
   display: flex;
   flex-direction: column;
@@ -35,6 +45,10 @@
 
 .rc-echogram-layer:hover .rc-row-title {
   text-decoration: underline;
+}
+
+.rc-echogram-freshness {
+  font-size: 12px;
 }
 
 .rc-echogram-tier {

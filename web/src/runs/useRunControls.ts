@@ -5,13 +5,14 @@
  */
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
-import { findStep } from '../api/graph';
+import { findStep, type Graph } from '../api/graph';
 import { ApiError } from '../api/client';
 import { cachedPreview, queryKeys, useCancelRun, useCurrentSession, useStartRun, useStopRun } from '../api/queries';
 import { showPane } from '../shell/dock';
 import { useSessionStore } from '../state/session';
 import { useView } from '../state/view';
 import { readStored } from '../state/storage';
+import { afterFlush } from '../yaml/editors';
 import { intentFor, selectionTargets, type RunAction, type RunIntent } from './intent';
 import { nearestCheckpointedDownstream } from './runToHere';
 import { isRunActive, useRunStore } from './store';
@@ -77,12 +78,22 @@ export function useRunControlsContext(): RunControls {
   return useContext(RunControlsContext) ?? NO_RUN_CONTROLS;
 }
 
-/** The message offering a run to the target when Run Selected Only finds parents not cached. */
-export function upstreamMessage(error: ApiError, target: string): string | null {
+const MEMORY_ONLY =
+  ', which is memory only (not a checkpoint in the recipe) and can never be cached until the recipe checkpoints it';
+
+/**
+ * The message offering a run to the target when Run Selected Only finds
+ * parents not cached; a parent the recipe does not checkpoint says so.
+ */
+export function upstreamMessage(error: ApiError, target: string, graph?: Graph): string | null {
   if (error.status !== 409 || error.error !== 'UpstreamNotCachedError') return null;
   const details = (error.details ?? {}) as { missing?: string[] };
-  const missing = details.missing ?? [];
-  return `Parents of ${target} are not cached: ${missing.join(', ')}. Run to ${target} instead?`;
+  const missing = (details.missing ?? []).map((id) => {
+    const step = graph && findStep(graph, id);
+    return step && step.checkpoint !== 'always' ? `${id}${MEMORY_ONLY}` : id;
+  });
+  const separator = missing.some((text) => text.endsWith(MEMORY_ONLY)) ? '; ' : ', ';
+  return `Parents of ${target} are not cached: ${missing.join(separator)}. Run to ${target} instead?`;
 }
 
 /** Create the run controls; call once, in Shell. */
@@ -115,41 +126,46 @@ export function useRunControls(): RunControls {
       const store = useRunStore.getState();
       store.setError(null);
       store.setHint(null);
-      // Taken before the run writes anything; the diagram outlines the run from it.
-      const preview = sid ? cachedPreview(client, sid, intent) : null;
-      startMutate(intent, {
-        onSuccess: (run) => {
-          pending.current = false;
-          useRunStore.getState().begin(run.id, preview);
-          // A caller waiting on the run (the echogram pane) gets no hint: its "run to y
-          // instead" would cancel the run the caller waits on.
-          if (onStarted) {
-            onStarted(run.id);
-            return;
-          }
-          // The hint is about one step, so a run through a sub-recipe gets none.
-          const target = intent.mode === 'to' && intent.forceSteps.length === 0 && !intent.include ? intent.targets[0] : null;
-          const step = target && graph ? findStep(graph, target) : undefined;
-          if (!step || step.checkpoint === 'always' || readStored(HINT_KEY) === 'off') return;
-          const alternative = nearestCheckpointedDownstream(graph!, step.id);
-          const pinned = preview?.steps.find((entry) => entry.step_id === step.id)?.pinned;
-          useRunStore.getState().setHint({
-            step: step.id,
-            alternative: alternative && { step: alternative.step, extra: alternative.extraSteps.length },
-            saved: pinned ?? step.checkpoint !== 'never',
-            never: step.checkpoint === 'never',
-          });
-        },
-        onError: (error) => {
-          pending.current = false;
-          const target = intent.targets[0];
-          const offer = intent.mode === 'only' && error instanceof ApiError ? upstreamMessage(error, target) : null;
-          if (offer) {
-            if (window.confirm(offer)) start({ ...intent, mode: 'to' });
-            return;
-          }
-          useRunStore.getState().setError(`Run not started: ${error.message}`);
-        },
+      // The YAML typing still waiting is sent first, so the run uses it.
+      afterFlush(client, () => {
+        // Taken before the run writes anything; the diagram outlines the run from it.
+        const preview = sid ? cachedPreview(client, sid, intent) : null;
+        startMutate(intent, {
+          onSuccess: (run) => {
+            pending.current = false;
+            useRunStore.getState().begin(run.id, preview);
+            // A caller waiting on the run (the echogram pane) gets no hint: its "run to y
+            // instead" would cancel the run the caller waits on.
+            if (onStarted) {
+              onStarted(run.id);
+              return;
+            }
+            // The hint is about one step, so a run through a sub-recipe gets none.
+            const target =
+              intent.mode === 'to' && intent.forceSteps.length === 0 && !intent.include ? intent.targets[0] : null;
+            const step = target && graph ? findStep(graph, target) : undefined;
+            if (!step || step.checkpoint === 'always' || readStored(HINT_KEY) === 'off') return;
+            const alternative = nearestCheckpointedDownstream(graph!, step.id);
+            const pinned = preview?.steps.find((entry) => entry.step_id === step.id)?.pinned;
+            useRunStore.getState().setHint({
+              step: step.id,
+              alternative: alternative && { step: alternative.step, extra: alternative.extraSteps.length },
+              saved: pinned ?? step.checkpoint !== 'never',
+              never: step.checkpoint === 'never',
+            });
+          },
+          onError: (error) => {
+            pending.current = false;
+            const target = intent.targets[0];
+            const offer =
+              intent.mode === 'only' && error instanceof ApiError ? upstreamMessage(error, target, graph) : null;
+            if (offer) {
+              if (window.confirm(offer)) start({ ...intent, mode: 'to' });
+              return;
+            }
+            useRunStore.getState().setError(`Run not started: ${error.message}`);
+          },
+        });
       });
     },
     [startMutate, graph, client, sid],

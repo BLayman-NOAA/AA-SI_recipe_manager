@@ -1,17 +1,18 @@
 op: ep_add_depth
 cache_key: ep_add_depth  # pinned cache identity - keep stable across op renames
 description: >
-  Add a surface-referenced ``depth`` data variable to an Sv Dataset. This step
-  is echopype.consolidate.add_depth called directly, so the depth computation
-  and its parameters are echopype's. The result preserves all existing
-  variables (including ``echo_range``) and adds ``depth`` on
-  ``(channel, ping_time, range_sample)`` in metres below surface.
+  Add a ``depth`` variable, in metres below the surface, to an Sv Dataset
+  using echopype. Existing variables, including ``echo_range``, are kept.
+notes: >
+  This step is echopype.consolidate.add_depth called directly, so the depth
+  computation and its parameters are echopype's. ``depth`` is on
+  ``(channel, ping_time, range_sample)``.
 
-  Whatever depth-computation technique is selected (constant ``depth_offset``,
-  Platform vertical offsets, Platform/Beam angles, user-supplied ``tilt``)
-  is fully captured in the values of the resulting ``depth`` array, so
-  downstream consumers can treat the dataset as the single source of truth
-  for vertical reference frame without knowing which technique was used.
+  Whatever technique is selected (constant ``depth_offset``, Platform vertical
+  offsets, Platform or Beam angles, user-supplied ``tilt``) is fully captured
+  in the values of the resulting ``depth`` array, so downstream consumers can
+  treat the dataset as the single source of truth for the vertical reference
+  without knowing which technique was used.
 category: consolidate
 inputs:
   ds_Sv:
@@ -31,12 +32,13 @@ params:
   depth_offset:
     units: m
     description: >
-      Vertical offset for the transducer position, in metres. Either a constant,
-      or a per-ping DataArray wired from a producer step such as
-      ``compute_transducer_depth`` (echopype accepts both on this argument; a
-      DataArray must have exactly one dimension and is aligned to ping_time).
-      When set, takes precedence over Platform vertical offsets. Left untyped
-      because the two accepted forms are a scalar and a DataArray.
+      Transducer depth in metres, as a constant or a per-ping DataArray such
+      as ``compute_transducer_depth``'s output. When set, takes precedence over
+      Platform vertical offsets.
+    notes: >
+      echopype accepts both forms on this argument; a DataArray must have
+      exactly one dimension and is aligned to ping_time. Left untyped because
+      the two accepted forms are a scalar and a DataArray.
     required: false
     default: null
   tilt:

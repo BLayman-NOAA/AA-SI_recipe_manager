@@ -1,16 +1,10 @@
-# Processing Level 1 (GCS) - Raw Ingest and Calibration Extraction
+# Processing level 1 for data already in a bucket (no NCEI download). Raw files
+# are downloaded one at a time to local scratch, converted to zarr in --temp-dir
+# (which may be a bucket), and deleted before the next file.
 #
-# GCS-bucket variant of processing_lvl_1.yaml for the "data already in a bucket"
-# use case (no NCEI download). raw_input_folder / cal_input_folder may be gs://
-# URLs; raw files are downloaded one at a time to local scratch, converted to
-# zarr intermediates (written to --temp-dir, which may itself be a bucket), and
-# the local copy deleted before the next file.
-#
-# Unlike the NCEI-download pipeline, there is no query stage to restrict the file
-# set by time, so this variant wires the optional file_time_start / file_time_end
-# window through to initial_setup and generate_standardized_cal_mapping. The
-# filter is name-based (D{YYYYMMDD}-T{HHMMSS}), so out-of-window remote files are
-# never downloaded.
+# With no query stage, the file_time window is wired to both initial_setup and
+# the calibration scan. It filters on file names, so out-of-window remote files
+# are never downloaded.
 
 recipe:
   name: "processing_lvl_1_gcs_sequential"
@@ -22,48 +16,51 @@ recipe:
 inputs:
   raw_input_folder:
     type: path
-    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
-    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+    description: "Name of the subfolder of the run's outputs folder that calibration artifacts are written to."
   cruise_id:
     type: str
-    description: "Cruise identifier used in calibration mapping."
+    description: "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey."
   record_author:
     type: str
     default: "<Your Name>"
+    description: "Name recorded as the author of every generated single-channel calibration file."
   sonar_model:
     type: str
     default: "EK60"
+    description: "Echosounder model as echopype names it, such as \"EK60\" or \"EK80\"."
   raw_file_names:
     type: list
     default: []
     description: >
-      Optional subset of filenames within raw_input_folder to use. Empty list
-      means "use every .raw file in the folder".
+      Optional list of file names within raw_input_folder to process. An empty
+      list uses every .raw file in the folder.
   file_time_start:
     type: str
     required: false
     description: >
-      Optional inclusive ISO datetime restricting processing to raw files whose
-      filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound.
-      Applied to both the processed file set and the calibration scan; leave
-      unset to process every file.
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time
+      in each raw file name; files at or after it are processed and scanned for
+      calibration. Unset takes every file.
   file_time_end:
     type: str
     required: false
-    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+    description: >
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time
+      in each raw file name; files at or before it are processed and scanned for
+      calibration. Unset takes every file.
   ping_time_chunk:
     type: int
     default: 1000
     description: >
-      Chunk length along ping_time for the combined EchoData (and therefore its
-      zarr checkpoint). Larger values = fewer, bigger objects = faster gs://
-      checkpoint writes, at the cost of more RAM per chunk.
+      Chunk length along ping_time of each file's EchoData and its checkpoint.
+      Larger chunks mean fewer, faster remote writes but more memory per chunk.
 
 steps:
 

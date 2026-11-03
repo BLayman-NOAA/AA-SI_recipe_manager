@@ -187,6 +187,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schema/recipe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recipe Schema
+         * @description The JSON Schema of a recipe file.
+         */
+        get: operations["recipe_schema_api_schema_recipe_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -257,6 +277,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/config-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Choose Config
+         * @description Use a run config file under a recipe root, as ``--config``; null finds one.
+         */
+        put: operations["choose_config_api_sessions__sid__config_file_put"];
+        /**
+         * Create Config
+         * @description Write ``<recipe>.config.yaml`` beside the recipe from the template.
+         */
+        post: operations["create_config_api_sessions__sid__config_file_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/config-file/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save Config
+         * @description Write inputs and run settings to the run config file, keeping its comments.
+         */
+        post: operations["save_config_api_sessions__sid__config_file_save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/edits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Edit
+         * @description Apply edit operations in order, all or none.
+         */
+        post: operations["edit_api_sessions__sid__edits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/files/{path}": {
         parameters: {
             query?: never;
@@ -266,7 +350,7 @@ export interface paths {
         };
         /**
          * File Text
-         * @description The text of one of the session's recipe files, by its listed path.
+         * @description The text of one of the session's recipe files as edited, by its listed path.
          */
         get: operations["file_text_api_sessions__sid__files__path__get"];
         put?: never;
@@ -317,6 +401,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/redo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redo
+         * @description Apply the newest undone edit again.
+         */
+        post: operations["redo_api_sessions__sid__redo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reload
+         * @description Take files' texts from disk as undoable edits; all changed files when null.
+         */
+        post: operations["reload_api_sessions__sid__reload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert
+         * @description Discard every unsaved edit and the history.
+         */
+        post: operations["revert_api_sessions__sid__revert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/runs": {
         parameters: {
             query?: never;
@@ -335,6 +479,46 @@ export interface paths {
          * @description Start a run of the session in a new process.
          */
         post: operations["start_run_api_sessions__sid__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save
+         * @description Write every edited file to its origin, after a sync with the disk.
+         */
+        post: operations["save_api_sessions__sid__save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/save-as": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save As
+         * @description Save the recipe under a new name under a recipe root, or preview it.
+         */
+        post: operations["save_as_api_sessions__sid__save_as_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -360,6 +544,46 @@ export interface paths {
         get: operations["step_artifacts_api_sessions__sid__steps__step__artifacts_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync
+         * @description Reload files changed on disk that have no unsaved edits; report the rest.
+         */
+        post: operations["sync_api_sessions__sid__sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description Undo the newest edit.
+         */
+        post: operations["undo_api_sessions__sid__undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -393,6 +617,38 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * ChooseConfigRequest
+         * @description The run config file to use, as ``--config``; null finds it as the CLI does.
+         *
+         *     A relative ``path`` is taken from the recipe's folder.
+         */
+        ChooseConfigRequest: {
+            /** Path */
+            path: string | null;
+            /** Version */
+            version?: number | null;
+        };
+        /** CreateConfigRequest */
+        CreateConfigRequest: {
+            /** Version */
+            version?: number | null;
+        };
+        /**
+         * DiskConflict
+         * @description A file changed on disk that the last sync did not reload.
+         *
+         *     ``error`` is None when the session has unsaved edits to the file, else
+         *     why its disk text was not taken.
+         */
+        DiskConflict: {
+            /** Disk Sha256 */
+            disk_sha256: string;
+            /** Error */
+            error: string | null;
+            /** Path */
+            path: string;
+        };
         /** EchogramBlock */
         EchogramBlock: {
             /** Available */
@@ -403,6 +659,34 @@ export interface components {
             resolution: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * EditRequest
+         * @description Operations applied in order; ``version`` set means it must be current.
+         */
+        EditRequest: {
+            /** Operations */
+            operations: {
+                [key: string]: unknown;
+            }[];
+            /** Version */
+            version?: number | null;
+        };
+        /**
+         * EditResponse
+         * @description The session after an edit, undo, redo or reload.
+         *
+         *     ``changed_hashes`` lists the steps whose hash changed, in run order, then
+         *     the steps removed; null when the hashes could not be computed.
+         */
+        EditResponse: {
+            /** Changed */
+            changed: boolean;
+            /** Changed Hashes */
+            changed_hashes: string[] | null;
+            /** Entries */
+            entries: components["schemas"]["HistoryEntryModel"][];
+            session: components["schemas"]["SessionResponse"];
         };
         /** ErrorResponse */
         ErrorResponse: {
@@ -417,6 +701,11 @@ export interface components {
         };
         /** FileRef */
         FileRef: {
+            /**
+             * Dirty
+             * @default false
+             */
+            dirty: boolean;
             /** Editable */
             editable: boolean;
             /** Origin */
@@ -448,7 +737,64 @@ export interface components {
             /** Version */
             version: string;
         };
-        /** InputField */
+        /**
+         * HistoryBlock
+         * @description The undo and redo state; ``seq`` is the newest undoable entry's, else 0.
+         */
+        HistoryBlock: {
+            /** Can Redo */
+            can_redo: boolean;
+            /** Can Undo */
+            can_undo: boolean;
+            /** Note */
+            note: string | null;
+            /** Redo Kind */
+            redo_kind: string | null;
+            /** Seq */
+            seq: number;
+            /** Undo Kind */
+            undo_kind: string | null;
+        };
+        /**
+         * HistoryEntryModel
+         * @description One history entry.
+         *
+         *     JSON has no NaN or infinity, so a non finite number in ``op`` or
+         *     ``inverse`` (a file can hold ``.nan``) is sent as its YAML spelling,
+         *     ``.nan``, ``.inf`` or ``-.inf``, as in the session's graph.
+         */
+        HistoryEntryModel: {
+            /** Documents */
+            documents: string[];
+            /** Inverse */
+            inverse: {
+                [key: string]: unknown;
+            };
+            /** Op */
+            op: {
+                [key: string]: unknown;
+            };
+            /** Seq */
+            seq: number;
+            /** Time */
+            time: string;
+        };
+        /** HistoryRequest */
+        HistoryRequest: {
+            /** Version */
+            version?: number | null;
+        };
+        /**
+         * InputField
+         * @description A recipe input and where its value comes from.
+         *
+         *     ``required`` is True for an input with no default that a run must be
+         *     given: one declared ``required: true``, or one that feeds a required
+         *     input port or param.
+         *     ``source`` is ``missing`` for a required input with no value, or with a
+         *     null one, and ``unset`` for any other input with none, whose steps then
+         *     use their own defaults.
+         */
         InputField: {
             /** Default */
             default: unknown;
@@ -462,13 +808,16 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "unset" | "default" | "config" | "session";
+            source: "unset" | "missing" | "default" | "config" | "session";
             /** Type */
             type: string | null;
             /** Value */
             value: unknown;
         };
-        /** InputsBlock */
+        /**
+         * InputsBlock
+         * @description The declared inputs, and the values shown; NaN is sent as ``.nan``.
+         */
         InputsBlock: {
             /** Declared */
             declared: components["schemas"]["InputField"][];
@@ -577,12 +926,54 @@ export interface components {
             /** Roots */
             roots: string[];
         };
-        /** RunConfigBlock */
+        /**
+         * ReloadRequest
+         * @description Files to take from disk; null means every file that changed there.
+         */
+        ReloadRequest: {
+            /** Files */
+            files?: string[] | null;
+            /** Version */
+            version?: number | null;
+        };
+        /** RewriteModel */
+        RewriteModel: {
+            /** Absolute */
+            absolute: boolean;
+            /** New */
+            new: string;
+            /** Old */
+            old: string;
+            /** Where */
+            where: string;
+        };
+        /**
+         * RunConfigBlock
+         * @description The run settings a session's runs get, and the config file they come from.
+         *
+         *     The setting fields are the file's values with the session's
+         *     ``overrides`` over them. ``source`` is the file loaded, null when none was
+         *     found or it did not load. ``path`` is the file in use, also when it does
+         *     not load (a chosen file), and ``chosen`` the file chosen for the session,
+         *     null when it is found as the CLI finds it. ``candidate`` is the recipe's
+         *     own ``<stem>.config.yaml``, which Create Config writes. ``error`` says why
+         *     the file did not load. ``contents`` is the file as written, null when
+         *     there is no file or it is not YAML. ``shared_with`` lists the other recipes
+         *     in the folder whose runs use the same file, and ``unused_inputs`` the
+         *     file's inputs the recipe does not declare.
+         */
         RunConfigBlock: {
+            /** Candidate */
+            candidate: string;
+            /** Chosen */
+            chosen: string | null;
+            contents: components["schemas"]["RunConfigContents"] | null;
             /** Dask Scheduler */
             dask_scheduler: string | null;
             /** Dask Workers */
             dask_workers: number | null;
+            /** Error */
+            error: string | null;
             /** Executor */
             executor: string | null;
             /** Outputs Dir */
@@ -591,6 +982,10 @@ export interface components {
             overrides: {
                 [key: string]: unknown;
             };
+            /** Path */
+            path: string | null;
+            /** Shared With */
+            shared_with: string[];
             /** Source */
             source: string | null;
             /** Storage Options */
@@ -601,8 +996,26 @@ export interface components {
             survey_cache_dir: string | null;
             /** Temp Dir */
             temp_dir: string | null;
+            /** Unused Inputs */
+            unused_inputs: string[];
             /** User Cache Dir */
             user_cache_dir: string | null;
+        };
+        /**
+         * RunConfigContents
+         * @description A run config file as written: its ``inputs:`` and its run settings.
+         *
+         *     ``settings`` lists only the settings the file has, null ones included.
+         */
+        RunConfigContents: {
+            /** Inputs */
+            inputs: {
+                [key: string]: unknown;
+            };
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
         };
         /** RunResponse */
         RunResponse: {
@@ -643,6 +1056,8 @@ export interface components {
             pid: number | null;
             /** Pid Created */
             pid_created: number | null;
+            /** Recipe */
+            recipe?: string | null;
             /**
              * Schema
              * @default 1
@@ -694,16 +1109,147 @@ export interface components {
              */
             untargeted: number;
         };
+        /**
+         * SaveAsRequest
+         * @description A Save As; a relative ``path`` is taken from the recipe's folder.
+         */
+        SaveAsRequest: {
+            /**
+             * Copy Config
+             * @default true
+             */
+            copy_config: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Keep Paths
+             * @default false
+             */
+            keep_paths: boolean;
+            /**
+             * Overwrite
+             * @default false
+             */
+            overwrite: boolean;
+            /** Path */
+            path: string;
+        };
+        /** SaveAsResponse */
+        SaveAsResponse: {
+            result: components["schemas"]["SaveAsResultModel"];
+            session: components["schemas"]["SessionResponse"];
+        };
+        /** SaveAsResultModel */
+        SaveAsResultModel: {
+            /** Absolute */
+            absolute: string[];
+            /** Config */
+            config: string | null;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Existing */
+            existing: string[];
+            /** Rehashed */
+            rehashed: string[] | null;
+            /** Rewrites */
+            rewrites: {
+                [key: string]: components["schemas"]["RewriteModel"][];
+            };
+            /** Root */
+            root: string;
+            /** Written */
+            written: string[];
+        };
+        /**
+         * SaveConfigRequest
+         * @description Edits to the run config file in use, written keeping its comments.
+         *
+         *     ``inputs`` is the file's whole ``inputs:`` after the save: names left out
+         *     are removed, and null leaves the inputs as they are. ``settings`` writes
+         *     each run setting it names; a null one is written as null when the file
+         *     has it and not added when it does not. Settings left out are kept.
+         *
+         *     ``scope`` ``"recipe"`` writes the edits to a copy of the file at
+         *     ``<recipe stem>.config.yaml`` beside the recipe instead, which the
+         *     recipe then uses for every setting; ``"shared"`` edits the file in use.
+         */
+        SaveConfigRequest: {
+            /** Inputs */
+            inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Scope
+             * @default shared
+             * @enum {string}
+             */
+            scope: "shared" | "recipe";
+            settings?: components["schemas"]["SetRunConfigRequest"];
+            /** Version */
+            version?: number | null;
+        };
+        /**
+         * SaveConfigResponse
+         * @description The session after a config save.
+         *
+         *     ``changed`` is False when the file already held the values.
+         *     ``shared_with`` lists the other recipes in the folder the file applies
+         *     to. ``changed_hashes`` lists the steps whose hash changed, in run order,
+         *     then the steps removed, as for an edit; null when the hashes could not be
+         *     computed. ``cache_changed`` is True when the file's ``user_cache_dir``,
+         *     ``survey_cache_dir`` or ``storage_options`` changed, which can move a step
+         *     to another cache tier without changing its hash.
+         */
+        SaveConfigResponse: {
+            /** Cache Changed */
+            cache_changed: boolean;
+            /** Changed */
+            changed: boolean;
+            /** Changed Hashes */
+            changed_hashes: string[] | null;
+            session: components["schemas"]["SessionResponse"];
+            /** Shared With */
+            shared_with: string[];
+        };
+        /** SaveRequest */
+        SaveRequest: {
+            /**
+             * Overwrite
+             * @default false
+             */
+            overwrite: boolean;
+        };
+        /**
+         * SaveResponse
+         * @description The session after a save.
+         *
+         *     ``reloaded`` lists the files the sync before the save took from disk.
+         */
+        SaveResponse: {
+            /** Reloaded */
+            reloaded: string[];
+            session: components["schemas"]["SessionResponse"];
+            /** Written */
+            written: string[];
+        };
         /** SessionResponse */
         SessionResponse: {
+            /** Conflicts */
+            conflicts: components["schemas"]["DiskConflict"][];
             /** Created */
             created: string;
+            /** Dirty */
+            dirty: string[];
             /** Files */
             files: components["schemas"]["FileRef"][];
             /** Graph */
             graph: {
                 [key: string]: unknown;
             };
+            history: components["schemas"]["HistoryBlock"];
             /** Id */
             id: string;
             inputs: components["schemas"]["InputsBlock"];
@@ -787,6 +1333,72 @@ export interface components {
              */
             targets: string[];
         };
+        /**
+         * StartRunResponse
+         * @description A run just started; ``reloaded`` lists the files taken from disk first.
+         */
+        StartRunResponse: {
+            /** Cancel Requested At */
+            cancel_requested_at: string | null;
+            /** Created */
+            created: string;
+            /** Cwd */
+            cwd?: string | null;
+            /** Executor */
+            executor: string | null;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Finished */
+            finished: string | null;
+            /** Force */
+            force: boolean;
+            /** Force Steps */
+            force_steps: string[];
+            /** Id */
+            id: string;
+            /** Killed */
+            killed: boolean;
+            /** Last Seq */
+            last_seq: number;
+            /** Log */
+            log: string;
+            /** Manifest */
+            manifest: string | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "all" | "to" | "only";
+            /** Outputs Dir */
+            outputs_dir: string | null;
+            /** Pid */
+            pid: number | null;
+            /** Pid Created */
+            pid_created: number | null;
+            /** Recipe */
+            recipe?: string | null;
+            /** Reloaded */
+            reloaded: string[];
+            /**
+             * Schema
+             * @default 1
+             */
+            schema: number;
+            /** Session */
+            session: string;
+            /** Started */
+            started: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+            /** Stop Requested At */
+            stop_requested_at?: string | null;
+            summary: components["schemas"]["RunSummary"] | null;
+            /** Targets */
+            targets: string[];
+        };
         /** StepArtifactsResponse */
         StepArtifactsResponse: {
             /** Artifacts */
@@ -837,6 +1449,16 @@ export interface components {
             step_id: string;
             /** Tier */
             tier: string | null;
+        };
+        /** SyncResponse */
+        SyncResponse: {
+            /** Conflicts */
+            conflicts: components["schemas"]["DiskConflict"][];
+            /** Entries */
+            entries: components["schemas"]["HistoryEntryModel"][];
+            /** Reloaded */
+            reloaded: string[];
+            session: components["schemas"]["SessionResponse"];
         };
         /** ValidationBlock */
         ValidationBlock: {
@@ -1494,6 +2116,82 @@ export interface operations {
             };
         };
     };
+    recipe_schema_api_schema_recipe_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_sessions_api_sessions_get: {
         parameters: {
             query?: never;
@@ -1876,6 +2574,326 @@ export interface operations {
             };
         };
     };
+    choose_config_api_sessions__sid__config_file_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChooseConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_config_api_sessions__sid__config_file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_config_api_sessions__sid__config_file_save_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveConfigResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    edit_api_sessions__sid__edits_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     file_text_api_sessions__sid__files__path__get: {
         parameters: {
             query?: never;
@@ -2114,6 +3132,246 @@ export interface operations {
             };
         };
     };
+    redo_api_sessions__sid__redo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reload_api_sessions__sid__reload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revert_api_sessions__sid__revert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_runs_api_sessions__sid__runs_get: {
         parameters: {
             query?: never;
@@ -2211,7 +3469,167 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunResponse"];
+                    "application/json": components["schemas"]["StartRunResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_api_sessions__sid__save_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_as_api_sessions__sid__save_as_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveAsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveAsResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2295,6 +3713,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StepArtifactsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    sync_api_sessions__sid__sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    undo_api_sessions__sid__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
                 };
             };
             /** @description Bad Request */

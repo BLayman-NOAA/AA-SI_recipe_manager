@@ -187,6 +187,18 @@
   stroke: var(--rc-output);
 }
 
+.rc-edge-bus-config .react-flow__edge-path {
+  stroke: var(--rc-config);
+}
+
+.rc-edge-bus-config .rc-edge-arrow {
+  fill: var(--rc-config);
+}
+
+.rc-edge-label-config {
+  color: var(--rc-config);
+}
+
 .rc-edge-arrow {
   fill: var(--rc-faint);
 }
@@ -257,7 +269,8 @@
   outline-offset: 2px;
 }
 
-.rc-match {
+/* Two classes, so the ring wins over each kind's own box-shadow further down. */
+.rc-node.rc-match {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-warning) 70%, transparent);
 }
 
@@ -444,11 +457,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: none;
   color: var(--rc-muted);
   cursor: pointer;
@@ -460,24 +473,16 @@
 }
 
 .rc-node-tool svg {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   fill: currentColor;
 }
 
 .rc-node-tool.rc-node-button {
   flex: none;
-  width: 26px;
-  height: 26px;
   border: 1px solid var(--rc-faint);
-  border-radius: 6px;
   background: var(--rc-panel);
   color: var(--rc-fg);
-}
-
-.rc-node-tool.rc-node-button svg {
-  width: 20px;
-  height: 20px;
 }
 
 .rc-node-tool.rc-node-button:hover {
@@ -741,6 +746,81 @@
   font-size: calc(11px * var(--rc-text-scale, 1));
 }
 
+.rc-box-rows li.rc-box-row-missing {
+  background: color-mix(in srgb, var(--rc-error) 14%, transparent);
+}
+
+/* A run config line handle sits on the box border, level with its row. */
+.rc-box-rows li {
+  position: relative;
+}
+
+.rc-handle-row.react-flow__handle-left {
+  left: -11px;
+}
+
+.rc-handle-row.react-flow__handle-right {
+  right: -7px;
+  left: auto;
+}
+
+/* The run config box */
+
+.rc-box-config {
+  border-color: var(--rc-config);
+  border-style: double;
+  border-width: 3px;
+}
+
+.rc-box-config .rc-box-title {
+  color: var(--rc-config);
+}
+
+.rc-box-file {
+  font-family: var(--rc-font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rc-box-config .rc-box-value {
+  color: var(--rc-config);
+}
+
+.rc-box-config .rc-box-value-null,
+.rc-box-row-config-overridden .rc-box-value,
+.rc-box-row-config-unused .rc-box-value,
+.rc-box-row-config-unused .rc-box-name {
+  color: var(--rc-muted);
+}
+
+.rc-box-row-config-overridden .rc-box-value {
+  text-decoration: line-through dotted;
+}
+
+.rc-box-row-config-unused .rc-box-tag,
+.rc-box-row-config-overridden .rc-box-tag {
+  background: color-mix(in srgb, var(--rc-muted) 18%, transparent);
+  color: var(--rc-muted);
+}
+
+.rc-box-rows li.rc-box-row-setting {
+  color: var(--rc-muted);
+  flex-wrap: nowrap;
+}
+
+.rc-box-setting-value {
+  overflow: hidden;
+  font-family: var(--rc-font-mono);
+  font-size: calc(11px * var(--rc-text-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-box-error {
+  color: var(--rc-error);
+  font-size: calc(11px * var(--rc-text-scale, 1));
+}
+
 /* Context: steps outside the drilled sub-recipe */
 
 .rc-ghost {
@@ -812,6 +892,11 @@
 
 .rc-key-input {
   border: 1.5px solid var(--rc-input);
+  border-radius: 5px;
+}
+
+.rc-key-config {
+  border: 3px double var(--rc-config);
   border-radius: 5px;
 }
 
@@ -895,12 +980,13 @@
   cursor: pointer;
 }
 
+/* Outside the selection outline, so a selected node still shows its pulse. */
 .rc-running::after {
   content: '';
   position: absolute;
-  inset: -4px;
-  border: 2px solid var(--rc-accent);
-  border-radius: 7px;
+  inset: -8px;
+  border: 3px solid var(--rc-accent);
+  border-radius: 10px;
   pointer-events: none;
   animation: rc-running-pulse 1.2s ease-in-out infinite;
 }
@@ -1075,6 +1161,33 @@
 }
 
 .rc-step .rc-eye.rc-eye-off {
+  opacity: 0.45;
+}
+
+/* The save icon (the recipe's checkpoint setting): always shown while the
+   recipe sets one, else on hover or selection. Filled for checkpoint: always. */
+.rc-step .rc-save {
+  flex: none;
+  visibility: hidden;
+}
+
+.rc-step .rc-save.rc-save-on,
+.rc-step .rc-save.rc-save-set,
+.rc-step:hover .rc-save,
+.rc-step.rc-node-selected .rc-save {
+  visibility: visible;
+}
+
+.rc-step .rc-save.rc-save-on {
+  color: var(--rc-ok);
+}
+
+.rc-step .rc-save.rc-save-set {
+  color: var(--rc-muted);
+}
+
+.rc-step .rc-save:disabled {
+  cursor: default;
   opacity: 0.45;
 }
 

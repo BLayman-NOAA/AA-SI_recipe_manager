@@ -4,14 +4,32 @@
 #
 #   read_raw -> combine_raw
 #
-# The top of the per-file chain: one instance per file, streamed from NCEI, to
-# a lazily opened EchoData. Nothing here is checkpointed; level 2's Sv is what
-# gets cached.
+# The top of the per-file chain: one instance per file, streamed from NCEI,
+# ending at a lazily opened EchoData. It knows nothing about calibration, so
+# the survey recipes continue it in processing_lvl_2_survey.yaml and the raw
+# calibration variant in processing_lvl_2_raw_cal.yaml. Nothing here is
+# checkpointed: read_raw writes scratch stores the run deletes.
 #
-# Every recipe that includes this file shares its per-file cache, so editing a
-# step here recomputes the whole survey Sv.
-# Include levels 1 to 3 back to back with the same per_file_source, and put
-# nothing that isn't per-file between them, or the chain splits.
+# WHAT THE STEPS MAP OVER
+#
+#   per_file_source, set by the including recipe: normally
+#   ${query_ncei.raw_urls}, or for dive-only runs that query filtered by
+#   file_names. It is substituted into map_over textually, so the fingerprint
+#   sees the step reference. Every level continuing the chain needs the same
+#   value, or the chain splits.
+#
+# THE STEPS BELOW ARE FROZEN
+#
+#   A fingerprint folds in wiring, params and parents, not the declaring file,
+#   so every recipe including this addresses the same per-file checkpoints, and
+#   editing anything here invalidates the whole survey Sv. Instances are keyed
+#   on the raw file URL, not list position, but the catalogue query is a
+#   parent.
+#
+# INCLUDE LEVELS 1 TO 3 BACK TO BACK
+#
+#   They are one chain mapped over per_file_source. A non-mapped step declared
+#   between two of them splits it.
 
 recipe:
   name: "hb1603_processing_lvl_1_per_file"
@@ -24,25 +42,33 @@ inputs:
   per_file_source:
     type: str
     description: >
-      The list the per-file steps map over, normally ${query_ncei.raw_urls}.
-      Required, and the same value for every level in the chain.
+      The step output list the per-file steps map over, one instance per
+      entry, normally ${query_ncei.raw_urls}. Required; give every level in
+      the chain the same value.
   sonar_model:
     type: str
     default: "EK60"
-    description: "Sonar model string for echopype."
+    description: >
+      Echosounder model as echopype names it, such as "EK60" or "EK80".
 
 steps:
 
-  # Converts each raw file to a temporary store. intermediate_format stays a
-  # literal because wiring it to an input changes the hash and recomputes the
-  # survey Sv. "none" keeps each file in memory instead of on disk.
+  # checkpoint: never because the output is a scratch store the run deletes.
+  # Keyed on its own URL, each instance resumes independently.
+  #
+  # intermediate_format is the run's largest local disk consumer: "zarr" and
+  # "netcdf" keep one store per catalogue file until the run ends unless
+  # disposed (below). "zarr" can live on a bucket through a gs:// temp_dir;
+  # "none" holds each file's EchoData in memory instead. It is a literal, not
+  # an input, because wiring it to an input changes read_raw's hash.
   - id: read_raw
     op: read_raw_files
     map_over: ${inputs.per_file_source}
     checkpoint: never
-    # Deletes each file's store as soon as its instance finishes. Every step a
-    # fan-in collects from this chain must then be checkpointed, or it reads
-    # back as NaN.
+    # Delete each file's store when its instance finishes. Safe only while
+    # every chain member a fan-in collects is checkpointed; an uncheckpointed
+    # one would read the deleted store back as NaN. Level 2a's crop and level
+    # 3's per-file grid and cell statistics are checkpointed for this.
     dispose_outputs: [raw_stores]
     execution:
       dask_config:

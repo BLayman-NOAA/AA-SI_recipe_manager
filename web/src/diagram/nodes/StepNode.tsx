@@ -1,6 +1,7 @@
 import { echogramCandidate, opLabel, type StepNode as GraphStep } from '../../api/graph';
 import { Prose } from '../../Prose';
-import { NOT_NEEDED_TITLE, notNeeded, tierLetter, type StepBadge } from '../../runs/badges';
+import { notNeeded, skippedCached, tierLetter, type StepBadge } from '../../runs/badges';
+import { NOT_NEEDED_TITLE, SKIPPED_CACHED_TITLE } from '../../runs/wording';
 import { clip, firstSentence, plainText } from '../../text';
 import type { Badge } from '../buildView';
 import {
@@ -98,11 +99,38 @@ export function eyeLook(badge: StepBadge | null, checkpoint: GraphStep['checkpoi
   return { title: 'Not saved: show runs to this step first and saves it', className: 'rc-eye-off' };
 }
 
+/** The save icon's look and tooltip for the recipe's checkpoint setting. */
+export function checkpointLook(checkpoint: GraphStep['checkpoint']): {
+  title: string;
+  className: string;
+  icon: 'disk' | 'diskOutline';
+} {
+  if (checkpoint === 'always') {
+    return { title: 'Checkpoint: always in the recipe; click removes it', className: 'rc-save-on', icon: 'disk' };
+  }
+  if (checkpoint === null) {
+    return { title: 'Make this a checkpoint (checkpoint: always)', className: 'rc-save-off', icon: 'diskOutline' };
+  }
+  return {
+    title: `checkpoint: ${checkpoint} in the recipe; click sets always`,
+    className: 'rc-save-set',
+    icon: 'diskOutline',
+  };
+}
+
+/** The step's tooltip for its run status, when the status needs one. */
+function statusTitle(badge: StepBadge): string | undefined {
+  if (badge.actual === 'failed') return 'Failed: click to open its log';
+  if (skippedCached(badge)) return SKIPPED_CACHED_TITLE;
+  if (notNeeded(badge)) return NOT_NEEDED_TITLE;
+  return undefined;
+}
+
 /** A recipe step: id and op, ports, badges, run marks and, expanded, its parameters. */
 export function StepNode({ data }: ViewNodeProps<'step'>) {
   const { node } = data;
   const { step, badges, expanded, params, badge } = node.data;
-  const { toggleStepExpanded, runToHere, canRun, showEchogram } = useDiagram();
+  const { toggleStepExpanded, runToHere, canRun, showEchogram, toggleCheckpoint, canEdit } = useDiagram();
   const inPorts = step.inputs.map((port) => ({
     id: `in:${port.name}`,
     label: port.name,
@@ -115,9 +143,9 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
   }));
   const checkpointed = step.checkpoint === 'always';
   const eye = eyeLook(badge, step.checkpoint);
-  const title =
-    badge?.note ??
-    (badge?.actual === 'failed' ? 'Failed: click to open its log' : badge && notNeeded(badge) ? NOT_NEEDED_TITLE : undefined);
+  const save = checkpointLook(step.checkpoint);
+  const editable = canEdit?.(step.document) ?? false;
+  const title = badge?.note ?? (badge ? statusTitle(badge) : undefined);
 
   return (
     <div
@@ -144,6 +172,15 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
             title={eye.title}
             className={`rc-node-tool rc-eye ${eye.className}`}
             onClick={() => showEchogram(step.id)}
+          />
+        )}
+        {toggleCheckpoint && (
+          <IconButton
+            icon={save.icon}
+            title={editable ? save.title : `checkpoint: ${step.checkpoint ?? 'not set'} (this file is read only here)`}
+            className={`rc-node-tool rc-save ${save.className}`}
+            disabled={!editable}
+            onClick={() => toggleCheckpoint(step.id, !checkpointed)}
           />
         )}
         <ExpandButton expanded={expanded} what="parameters" onClick={() => toggleStepExpanded(step.id)} />

@@ -136,11 +136,15 @@ export function layoutProblems(view: View, request: LayoutRequest, layout: Layou
     }
   }
 
-  const routesOf = (bus: 'in' | 'out') =>
+  const routesOf = (bus: 'in' | 'out' | 'config') =>
     view.edges
       .filter((edge) => edge.bus === bus && layout.routes[edge.id])
       .map((edge): [string, Point[]] => [edge.id, layout.routes[edge.id].points]);
-  problems.crossings.push(...linesCross('in', routesOf('in')), ...linesCross('out', routesOf('out')));
+  problems.crossings.push(
+    ...linesCross('in', routesOf('in')),
+    ...linesCross('out', routesOf('out')),
+    ...linesCross('config', routesOf('config')),
+  );
 
   if (core.length > 0) {
     const coreBoxes = core.map((node) => boxes[node.id]);
@@ -149,9 +153,13 @@ export function layoutProblems(view: View, request: LayoutRequest, layout: Layou
     const right = Math.max(...coreBoxes.map((box) => box.x + box.width));
     const bottom = Math.max(...coreBoxes.map((box) => box.y + box.height));
     const down = request.direction === 'DOWN';
+    const inputs = leaves.find((leaf) => leaf.bus === 'in');
     for (const node of leaves.filter((leaf) => leaf.bus)) {
       const box = boxes[node.id];
-      if (node.bus === 'in') {
+      if (node.bus === 'config' && inputs) {
+        const before = box.x + box.width <= boxes[inputs.id].x && Math.abs(box.y - boxes[inputs.id].y) < PAD;
+        if (!before) problems.placement.push(`${node.id} not left of the inputs box, level with it`);
+      } else if (node.bus === 'in' || node.bus === 'config') {
         const ok = down ? box.y + box.height <= top : box.x + box.width <= left;
         if (!ok) problems.placement.push(`${node.id} not ${down ? 'above' : 'left of'} the core`);
       } else if (box.x < right || box.y < bottom) {

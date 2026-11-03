@@ -27,14 +27,17 @@ import { readStoredJson, writeStored } from '../state/storage';
 import {
   asResolution,
   ECHOGRAM_ROOT,
+  goneText,
   isGone,
   layerId,
   missText,
-  outOfDateLayers,
   restoredLayer,
   savedLayer,
+  saveKind,
   settingsFor,
   sourcesWithoutLayers,
+  unsavedText,
+  withFreshness,
   withLabels,
   type ComputedSteps,
   type EchogramLayer,
@@ -62,12 +65,16 @@ export interface PendingRun {
   step: string;
   /** Null until the user starts the run. */
   runId: string | null;
+  /** The row whose Run button started the run; it is refreshed when the run finishes. */
+  layer?: string;
+  /** The step is not a checkpoint, so the offer can make it one. */
+  memoryOnly?: boolean;
 }
 
 /** What a caller knows of a step that an eye click alone does not. */
 export interface ShowOptions {
-  /** The recipe says checkpoint: never, so no run can save it. */
-  neverSaved?: boolean;
+  /** The recipe's checkpoint setting, used when the preview has no entry for the step. */
+  checkpoint?: string | null;
   /** Shown after the run started to save it: draw the default, ask nothing. */
   afterRun?: boolean;
 }
@@ -89,6 +96,10 @@ export interface EchogramState {
   /** The panel's settings, kept across closing the pane and a reload. */
   settings: ViewSettings | null;
   panel: PanelLike | null;
+  /** The run all preview, which the rows' freshness and the unsaved messages read. */
+  preview: Preview | null;
+  /** What the last finished run computed and saved. */
+  computed: ComputedSteps | null;
 
   /** Draw a step's saved output, after an eye click. */
   show: (sid: string, step: string, options?: ShowOptions) => Promise<void>;
@@ -98,8 +109,8 @@ export interface EchogramState {
   remove: (id: string) => void;
   /** Fetch a layer's step again and draw the newer data, or retry the same. */
   refresh: (id: string) => Promise<void>;
-  /** Set each layer's out of date mark from the preview's hashes and the last run. */
-  markOutOfDate: (hashes: Record<string, string>, computed: ComputedSteps | null) => void;
+  /** Take the run all preview and the last run, and set each layer's freshness from them. */
+  track: (preview: Preview | null, computed: ComputedSteps | null) => void;
   /** The panel's layer stack changed: drop a source whose last layer the user removed there. */
   onPanelLayersChange: (layers: Layer[]) => void;
   /** An error the panel showed; a layer whose mount the server forgot is resolved again. */
@@ -108,11 +119,13 @@ export interface EchogramState {
   settingsChanged: () => void;
   /** Keep the panel's settings now. */
   captureSettings: () => void;
-  /** The run to a pending step started. */
-  runStarted: (step: string, runId: string) => void;
-  /** A run finished; draw the pending step if it was its run and saved it. */
+  /** The run to a pending step started, from the offer or from a row's Run button. */
+  runStarted: (step: string, runId: string, layer?: string) => void;
+  /** A run finished; draw the pending step, or refresh its row, if it was its run and saved it. */
   runFinished: (run: RunState, start: Preview | null) => void;
   cancelRun: () => void;
+  /** The offered step was made a checkpoint. */
+  checkpointMade: (step: string) => void;
   attach: (panel: PanelLike) => Promise<void>;
   /** The pane has no WebGPU: drop the rows it cannot draw, keeping them saved for another browser. */
   gpuUnavailable: () => void;
@@ -194,9 +207,10 @@ let reported: Layer[] | null = null;
 let settingsTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useEchogramStore = create<EchogramState>((set, get) => {
-  // Every change to the rows goes through here, so labels stay unique.
+  // Every change to the rows goes through here, so labels stay unique and freshness current.
   const setLayers = (change: (layers: EchogramLayer[]) => EchogramLayer[]) =>
-    set((state) => ({ layers: withLabels(change(state.layers)) }));
+    set((state) => ({ layers: withFreshness(withLabels(change(state.layers)), state.preview, state.computed) }));
+  const previewOf = (step: string) => get().preview?.steps.find((entry) => entry.step_id === step);
   const patch = (id: string, change: Partial<EchogramLayer>) =>
     setLayers((layers) => layers.map((layer) => (layer.id === id ? { ...layer, ...change } : layer)));
 
@@ -207,6 +221,8 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
     return spec;
   };
   const find = (id: string) => get().layers.find((layer) => layer.id === id);
+  /** The last finished run, which a layer fetched now was drawn after. */
+  const lastRun = () => get().computed?.runId ?? null;
 
   const persist = () => {
     const { sid, layers, settings } = get();
@@ -239,7 +255,12 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
     }
   };
 
-  /** Fetch a layer's step for its output and variable; null after marking the row with why not. */
+  /**
+   * Fetch a layer's step for its output and variable; null after marking the
+   * row with why not. A row drawn at another hash whose current hash holds
+   * nothing keeps what it draws, and notes the hash, so its freshness says
+   * the hash is not saved rather than offering the refresh again.
+   */
   const fetchLayer = async (layer: EchogramLayer): Promise<{ found: StepArtifacts; resolution: Resolution } | null> => {
     const sid = get().sid;
     if (!sid) return null;
@@ -247,7 +268,12 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       const found = await fetchStepArtifacts(sid, layer.step, { output: layer.output, var: layer.variable });
       if (get().sid !== sid) return null;
       if (found.found === 0) {
-        patch(layer.id, { state: 'error', error: `${layer.step} is not saved any more.` });
+        if (found.step_hash === layer.stepHash) patch(layer.id, { state: 'error', error: goneText(layer.step) });
+        else if (!layer.resolution) {
+          patch(layer.id, { state: 'error', error: unsavedText(layer.step, saveKind(previewOf(layer.step))) });
+        } else {
+          patch(layer.id, { missed: { stepHash: found.step_hash, after: lastRun() } });
+        }
         return null;
       }
       const answer = readAnswer(found, true);
@@ -269,8 +295,9 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
     patch(id, {
       resolution,
       stepHash,
-      outOfDate: false,
       addedAt: Date.now(),
+      drawnAfter: lastRun(),
+      missed: undefined,
       state: panel ? 'refreshing' : 'loading',
       error: null,
     });
@@ -308,8 +335,9 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       resolution,
       state: 'loading',
       error: null,
-      outOfDate: false,
+      freshness: { state: 'unknown' },
       addedAt: Date.now(),
+      drawnAfter: lastRun(),
     };
     setLayers((layers) => [...layers, layer]);
     persist();
@@ -349,7 +377,7 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
           const fetched = await fetchLayer(layer);
           if (!fetched) continue;
           const { found, resolution } = fetched;
-          patch(layer.id, { resolution, stepHash: found.step_hash, addedAt: Date.now() });
+          patch(layer.id, { resolution, stepHash: found.step_hash, addedAt: Date.now(), drawnAfter: lastRun() });
         }
         await draw(panel, layer.id);
       }
@@ -374,6 +402,8 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
     busy: null,
     settings: null,
     panel: null,
+    preview: null,
+    computed: null,
 
     show: async (sid, step, options = {}) => {
       if (get().sid !== sid) return;
@@ -407,8 +437,9 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
           set({ message: `The run to ${step} finished, but ${step} was not saved.` });
           return;
         }
-        if (options.neverSaved) {
-          set({ message: `${step} is never saved (checkpoint: never in the recipe), so it can't be drawn.` });
+        const kind = saveKind(previewOf(step), options.checkpoint ?? null);
+        if (kind === 'never') {
+          set({ message: unsavedText(step, kind) });
           return;
         }
         const running = get().pendingRun;
@@ -416,10 +447,10 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
           set({ message: `A run to ${running.step} is going. Click the eye on ${step} again when it finishes.` });
           return;
         }
-        const why = found.note ? ` (${found.note})` : '';
+        const gone = get().layers.some((layer) => layer.step === step && layer.stepHash === found.step_hash);
         set({
-          pendingRun: { step, runId: null },
-          message: `${step} has not been saved${why}. Run to ${step}? The run saves it, and it is drawn here when the run finishes.`,
+          pendingRun: { step, runId: null, memoryOnly: kind === 'memory' },
+          message: gone ? goneText(step) : unsavedText(step, kind, found.note),
         });
         return;
       }
@@ -474,14 +505,19 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       if (!layer) return;
       patch(id, { state: 'refreshing', error: null });
       const fetched = await fetchLayer(layer);
-      if (!fetched) return;
-      await replace(id, fetched.resolution, fetched.found.step_hash);
+      if (fetched) {
+        await replace(id, fetched.resolution, fetched.found.step_hash);
+        return;
+      }
+      // A row fetchLayer did not mark with an error keeps drawing what it drew.
+      if (find(id)?.state === 'refreshing') patch(id, { state: layer.state, error: layer.error });
     },
 
-    markOutOfDate: (hashes, computed) => {
-      const ids = outOfDateLayers(get().layers, hashes, computed);
-      if (get().layers.every((layer) => layer.outOfDate === ids.has(layer.id))) return;
-      set((state) => ({ layers: state.layers.map((layer) => ({ ...layer, outOfDate: ids.has(layer.id) })) }));
+    track: (preview, computed) => {
+      set({ preview, computed });
+      const layers = get().layers;
+      const next = withFreshness(layers, preview, computed);
+      if (next.some((layer, index) => layer !== layers[index])) set({ layers: next });
     },
 
     onPanelLayersChange: (layers) => {
@@ -525,8 +561,11 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       persist();
     },
 
-    runStarted: (step, runId) =>
-      set({ pendingRun: { step, runId }, message: `Running to ${step}; it is drawn here when the run finishes.` }),
+    runStarted: (step, runId, layer) =>
+      set({
+        pendingRun: layer ? { step, runId, layer } : { step, runId },
+        message: `Running to ${step}; it is drawn here when the run finishes.`,
+      }),
 
     runFinished: (run, start) => {
       const pending = get().pendingRun;
@@ -535,14 +574,22 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       set({ pendingRun: null, message: null });
       const atStart = start?.steps.find((step) => step.step_id === pending.step);
       const targeted = run.started?.targets?.includes(pending.step) ?? false;
-      if (savedOnDisk(undefined, run.steps[pending.step], atStart, targeted)) {
-        void get().show(sid, pending.step, { afterRun: true });
-      } else {
+      if (!savedOnDisk(undefined, run.steps[pending.step], atStart, targeted)) {
         set({ message: `The run to ${pending.step} ended (${run.finished.status}) without saving it.` });
+      } else if (pending.layer && find(pending.layer)) {
+        void get().refresh(pending.layer);
+      } else {
+        void get().show(sid, pending.step, { afterRun: true });
       }
     },
 
     cancelRun: () => set({ pendingRun: null, message: null }),
+
+    checkpointMade: (step) => {
+      const pending = get().pendingRun;
+      if (pending?.step !== step || pending.runId) return;
+      set({ pendingRun: { ...pending, memoryOnly: false }, message: unsavedText(step, 'checkpoint') });
+    },
 
     gpuUnavailable: () => {
       const { layers, busy } = get();
@@ -587,6 +634,8 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
         pendingRun: null,
         message: null,
         busy: null,
+        preview: null,
+        computed: null,
       });
       if (panel) void drawAll(panel);
     },

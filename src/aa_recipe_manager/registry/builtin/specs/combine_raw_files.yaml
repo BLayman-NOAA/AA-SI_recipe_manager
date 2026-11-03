@@ -1,15 +1,14 @@
 op: combine_raw_files
 cache_key: combine_raw_files  # pinned cache identity - keep stable across op renames
 description: >
-  Lazily open per-file intermediate stores (zarr or netcdf paths) produced by
-  read_raw_files, or combine in-memory EchoData objects (none mode), into a
-  single combined EchoData object. Mark this step checkpoint: always in your
-  recipe so the checkpoint system writes the combined output once and reuses it
-  on subsequent runs.
-
+  Combine the per-file stores or EchoData objects from read_raw_files into one
+  EchoData object. Mark the step checkpoint: always so the combined output is
+  written once and reused.
+notes: >
   The reading and the combine itself are echopype.open_converted and
-  echopype.combine_echodata. Around them this step adds store-path handling,
-  input ordering, and the ping_time chunking of the combined result.
+  echopype.combine_echodata, opening stores lazily. Around them this step adds
+  store-path handling, input ordering, and the ping_time chunking of the
+  combined result.
 category: io
 inputs:
   raw_stores:
@@ -25,13 +24,15 @@ params:
     required: false
     default: 1000
     description: >
-      Target chunk length along ping_time for the combined EchoData, which
-      directly sets the chunking of the downstream zarr checkpoint. Larger
-      values mean fewer, bigger objects: faster remote (gs://) checkpoint
-      writes and fewer read requests, at the cost of more RAM per computed
-      chunk and coarser lazy-read granularity for windowed access. 1000 is a
-      balanced default; try 2000-4000 for bucket-backed caches if the combined
-      checkpoint write is slow and memory allows.
+      Chunk length along ping_time for the combined EchoData and its
+      checkpoint, in pings. Larger values write faster to gs:// but use more
+      memory; try 2000 to 4000 for bucket caches.
+    notes: >
+      Larger values mean fewer, bigger objects: faster remote checkpoint writes
+      and fewer read requests, at the cost of more RAM per computed chunk and
+      coarser lazy-read granularity for windowed access. 1000 is a balanced
+      default; raise it for bucket-backed caches when the combined checkpoint
+      write is slow and memory allows.
 implementations:
   - key: default
     callable_path: aa_si_utils.utils.combine_raw_stores

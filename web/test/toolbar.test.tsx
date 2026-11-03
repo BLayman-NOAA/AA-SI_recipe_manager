@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Graph } from '../src/api/graph';
 import type { Preview } from '../src/api/models';
 import { queryKeys } from '../src/api/queries';
+import { ApiError } from '../src/api/client';
+import { useEditingStore } from '../src/editing/store';
 import { RunHint } from '../src/runs/RunHint';
 import { useCurrentPreview, usePreviewIntent } from '../src/runs/usePreviewIntent';
 import { useRunStore } from '../src/runs/store';
@@ -11,16 +13,18 @@ import {
   HINT_KEY,
   NO_RUN_CONTROLS,
   STOP_NOW_CONFIRM,
+  upstreamMessage,
   useRunControls,
   type RunControls,
 } from '../src/runs/useRunControls';
 import { Toolbar } from '../src/shell/Toolbar';
 import { useSessionStore } from '../src/state/session';
 import { useView } from '../src/state/view';
-import { makeSession, mockApi, renderWithClient, withSubGraph } from './helpers';
+import { apiErrorResponse, editableSession, makeSession, mockApi, renderWithClient, withSubGraph } from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
 const RUNS = `POST /api/sessions/${SID}/runs`;
+const EDITS = `POST /api/sessions/${SID}/edits`;
 
 function Harness() {
   const run = useRunControls();
@@ -40,7 +44,7 @@ function ControlsProbe() {
 }
 
 function runRecord(id: string, body: Record<string, unknown>) {
-  return { id, session: SID, status: 'starting', ...body };
+  return { id, session: SID, status: 'starting', reloaded: [], ...body };
 }
 
 function button(name: string): HTMLElement {
@@ -206,7 +210,10 @@ describe('Toolbar', () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let calls = 0;
-    const fetchMock = openSession(withSubGraph, {
+    const graph = structuredClone(withSubGraph);
+    const seed = graph.nodes.find((node) => node.id === 'seed');
+    if (seed?.kind === 'step') seed.checkpoint = 'always';
+    const fetchMock = openSession(graph, {
       [RUNS]: () => {
         calls += 1;
         if (calls > 1) return runRecord('r2', { mode: 'to' });
@@ -225,7 +232,10 @@ describe('Toolbar', () => {
     await waitFor(() => expect(button('Run selected')).toBeEnabled());
     await user.click(button('Run selected'));
     await waitFor(() => expect(useRunStore.getState().current?.runId).toBe('r2'));
-    expect(confirm).toHaveBeenCalledWith('Parents of total are not cached: seed, leaf_add. Run to total instead?');
+    expect(confirm).toHaveBeenCalledWith(
+      'Parents of total are not cached: seed; leaf_add, which is memory only (not a checkpoint in the recipe) ' +
+        'and can never be cached until the recipe checkpoints it. Run to total instead?',
+    );
     expect(bodies(fetchMock, RUNS)).toEqual([
       { mode: 'only', targets: ['total'], force: false, force_steps: [] },
       { mode: 'to', targets: ['total'], force: false, force_steps: [] },
@@ -401,5 +411,65 @@ describe('RunHint', () => {
     await user.click(screen.getByRole('button', { name: "Don't show again" }));
     expect(window.localStorage.getItem(HINT_KEY)).toBe('off');
     expect(useRunStore.getState().hint).toBeNull();
+  });
+
+  it('makes the step a checkpoint from its third button, then hides', async () => {
+    const user = userEvent.setup();
+    const session = editableSession();
+    const fetchMock = mockApi({
+      [`GET /api/sessions/${SID}`]: session,
+      [EDITS]: { session, changed: true, changed_hashes: [], entries: [] },
+    });
+    useSessionStore.getState().setSid(SID);
+    renderWithClient(<RunHint />);
+    act(() => useRunStore.getState().setHint({ step: 'seed', alternative: null }));
+    await user.click(await screen.findByRole('button', { name: 'Make this a checkpoint' }));
+    await waitFor(() => expect(useRunStore.getState().hint).toBeNull());
+    expect(bodies(fetchMock, EDITS)).toEqual([
+      { operations: [{ kind: 'set_checkpoint', step: 'seed', value: 'always', position: null }], version: 0 },
+    ]);
+  });
+
+  it('keeps the hint when the edit fails, and offers no checkpoint in a read only session', async () => {
+    useEditingStore.getState().reset();
+    const user = userEvent.setup();
+    mockApi({
+      [`GET /api/sessions/${SID}`]: editableSession(),
+      [EDITS]: apiErrorResponse(422, 'EditRejected', 'refused', { problems: ['refused'] }),
+    });
+    useSessionStore.getState().setSid(SID);
+    const { unmount } = renderWithClient(<RunHint />);
+    act(() => useRunStore.getState().setHint({ step: 'seed', alternative: null }));
+    await user.click(await screen.findByRole('button', { name: 'Make this a checkpoint' }));
+    await waitFor(() => expect(useEditingStore.getState().error).toBe('refused'));
+    expect(useRunStore.getState().hint?.step).toBe('seed');
+    unmount();
+
+    openSession();
+    renderWithClient(<RunHint />);
+    act(() => useRunStore.getState().setHint({ step: 'seed', alternative: null }));
+    await screen.findByText(/is not a checkpoint in the recipe/);
+    expect(screen.queryByRole('button', { name: 'Make this a checkpoint' })).toBeNull();
+  });
+});
+
+describe('upstreamMessage', () => {
+  it('names a parent the recipe checkpoints plainly and a memory only one with the note', () => {
+    const graph = structuredClone(withSubGraph);
+    const seed = graph.nodes.find((node) => node.id === 'seed');
+    if (seed?.kind === 'step') seed.checkpoint = 'always';
+    const error = (missing: string[]) =>
+      new ApiError(409, 'UpstreamNotCachedError', 'not cached', { targets: ['total'], missing });
+    expect(upstreamMessage(error(['seed']), 'total', graph)).toBe(
+      'Parents of total are not cached: seed. Run to total instead?',
+    );
+    expect(upstreamMessage(error(['leaf_add']), 'total', graph)).toBe(
+      'Parents of total are not cached: leaf_add, which is memory only (not a checkpoint in the recipe) and can ' +
+        'never be cached until the recipe checkpoints it. Run to total instead?',
+    );
+    expect(upstreamMessage(error(['leaf_add']), 'total')).toBe(
+      'Parents of total are not cached: leaf_add. Run to total instead?',
+    );
+    expect(upstreamMessage(new ApiError(409, 'StaleVersion', 'stale'), 'total', graph)).toBeNull();
   });
 });

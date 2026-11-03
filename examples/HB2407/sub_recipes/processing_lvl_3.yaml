@@ -1,7 +1,4 @@
-# Processing Level 3 - Sparse Masking, MVBS, and Per-Cell Statistics
-#
-# Applies sparse-bin masking to the clean Sv dataset, computes MVBS, and also
-# computes per-cell statistics from the pre-sparse-mask Sv dataset for ML use.
+# Processing level 3: sparse-bin masking, MVBS and per-cell statistics
 
 recipe:
   name: "processing_lvl_3"
@@ -13,30 +10,27 @@ recipe:
 inputs:
   sv_clean_unmasked:
     type: dataset
-    description: "Clean Sv dataset after noise removal and before sparse-bin masking."
+    description: "Noise-removed Sv before sparse-bin masking; the sparse mask and the per-cell statistics are computed from it."
   range_bin:
     type: str
     default: "20m"
-    description: "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
-    description: "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
   nan_threshold:
     type: float
     default: 0.6
-    description: "Fraction of NaN samples in a bin above which the sparse-bin mask excludes it."
+    description: "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
+  # A separate rechunk step sets it because mask_sparse_bins loads Sv into
+  # memory; standalone, it survives that step being removed or reordered.
   mvbs_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size to apply before compute_mvbs, so it can process
-      the survey in dask-parallel chunks instead of as one in-memory block.
-      mask_sparse_bins always materializes Sv eagerly internally (its
-      NaN-fraction computation is plain numpy), so chunking has to be
-      re-established after it via a standalone rechunk step rather than as
-      a side effect of masking -- that way it survives mask_sparse_bins
-      being removed, reordered, or replaced by an echopype-native equivalent.
+      Ping-time chunk size set before the MVBS step, so it runs in dask chunks
+      rather than as one in-memory block.
 
 steps:
 

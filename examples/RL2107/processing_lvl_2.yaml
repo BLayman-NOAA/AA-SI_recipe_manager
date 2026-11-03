@@ -1,8 +1,7 @@
-# Processing Level 2 - Sv Computation and Noise Removal
-#
-# Starts from the combined echodata plus extracted calibration parameters,
-# computes Sv, builds and applies the masking stack, and performs background
-# noise removal.
+# Processing level 2: Sv, masking and noise removal. RL2107 copy of the HB1603
+# level for EK80 complex data: Sv uses the raw files' own calibration, depth
+# takes a fixed 6 m offset, and the seafloor comes from echopype's basic
+# detector instead of the .bot pick.
 
 recipe:
   name: "processing_lvl_2"
@@ -14,13 +13,15 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Combined EchoData object from the raw ingest stage."
+    description: "Combined raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
+  # cal_params and env_params are unused while compute_sv's lines for them are
+  # commented out.
   cal_params:
     type: dict
-    description: "Calibration parameters extracted from the standardized mapping."
+    description: "Calibration values for each channel, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters extracted from the standardized mapping."
+    description: "Environmental values for each channel, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
 
 steps:
 
@@ -31,8 +32,8 @@ steps:
       echodata: ${inputs.echodata}
       # cal_params: ${inputs.cal_params}
       # env_params: ${inputs.env_params}
-      waveform_mode: "CW" # changed
-      encode_mode: "complex" # changed
+      waveform_mode: "CW"
+      encode_mode: "complex"
 
   - id: ep_add_depth
     op: ep_add_depth
@@ -50,9 +51,10 @@ steps:
       echodata: ${inputs.echodata}
     params:
       waveform_mode: "CW"
-      encode_mode: "complex" #changed
+      encode_mode: "complex"
       to_disk: false
 
+  # The HB1603 .bot seafloor, off because RL2107 reads no .bot files.
   # - id: log_seafloor_stats
   #   op: log_seafloor_detection_stats
   #   inputs:

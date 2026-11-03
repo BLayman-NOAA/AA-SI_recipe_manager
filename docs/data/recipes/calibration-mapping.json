@@ -20,7 +20,7 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw",
-      "description": "Folder of .raw files, read for channel configuration only.",
+      "description": "Folder of raw .raw files, a local path or a gs:// URL, read for channel configuration only.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -31,7 +31,7 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS",
-      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).",
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -42,7 +42,7 @@
       "declared": true,
       "required": false,
       "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder for the calibration artifacts.",
+      "description": "Name of the subfolder of the run's outputs folder that calibration artifacts are written to.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -53,7 +53,7 @@
       "declared": true,
       "required": false,
       "default": "RL2307",
-      "description": "Recorded in every generated single-channel file so it stays traceable to the survey.",
+      "description": "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -64,7 +64,7 @@
       "declared": true,
       "required": false,
       "default": "<Your Name>",
-      "description": "Recorded as the author of every generated single-channel file.",
+      "description": "Name recorded as the author of every generated single-channel calibration file, and of any record averaged or merged while resolving conflicts.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -75,7 +75,7 @@
       "declared": true,
       "required": false,
       "default": "2023-07-17T16:30:46",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -86,7 +86,7 @@
       "declared": true,
       "required": false,
       "default": "2023-07-18T19:50:19",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -97,7 +97,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Reviewed channels from single_channel_data, written in place of the manufacturer files. Unset, both phases share standardize_cal's cache.",
+      "description": "Reviewed standardized channels, in the shape of the single_channel_data output, written in place of parsing the manufacturer files. Unset parses the files.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -108,7 +108,7 @@
       "declared": true,
       "required": false,
       "default": "interactive",
-      "description": "When a raw channel matches several calibration files: \"report\" returns the conflicts and writes no mapping, \"error\" lists them and stops, and \"interactive\" prompts, which needs a terminal.",
+      "description": "What to do when one raw channel matches several calibration files: \"error\" lists the conflicts and stops; \"interactive\" prompts on the terminal, so it cannot run unattended. \"report\" returns the conflicts and writes no mapping.",
       "declared_in": "calibration_mapping.yaml"
     },
     {
@@ -140,7 +140,7 @@
       "document": "calibration_mapping.yaml",
       "hash": null,
       "editable": false,
-      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "description": "Validate the raw files in the input folder, create the calibration output directory if needed, and return the raw file paths and that directory.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -154,19 +154,27 @@
           "name": "raw_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "description": "Folder of .raw files, local or a remote URL such as gs://bucket/survey/raw. Remote folders are listed without downloading any data.",
           "default": null,
           "set": true,
-          "value": "${inputs.raw_input_folder}"
+          "value": "${inputs.raw_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "auto"
         },
         {
           "name": "calibration_outputs",
           "type": "str",
           "units": null,
-          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "description": "Subdirectory under the run's outputs folder where calibration artifacts are written, with JSON logs in its logs/ subfolder.",
           "default": "calibration",
           "set": true,
-          "value": "${inputs.calibration_outputs}"
+          "value": "${inputs.calibration_outputs}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "raw_file_names",
@@ -175,7 +183,10 @@
           "description": "Explicit file name list; empty means include all files in folder",
           "default": [],
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "clear_previous_json_logs",
@@ -184,16 +195,22 @@
           "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_start",
           "type": "str",
           "units": null,
-          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "description": "Inclusive ISO datetime, for example \"2016-07-25T20:58\"; keeps only raw files whose filename time (D{YYYYMMDD}-T{HHMMSS}) is at or after it. Unset keeps all files.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_start}"
+          "value": "${inputs.file_time_start}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_end",
@@ -202,7 +219,10 @@
           "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_end}"
+          "value": "${inputs.file_time_end}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -242,7 +262,7 @@
       "document": "calibration_mapping.yaml",
       "hash": null,
       "editable": false,
-      "description": "Read ONE raw file's channel configuration from its datagram headers.\nThe fan-out unit of the calibration raw scan. Map it over initial_setup.raw_file_paths with checkpoint: always and each file becomes its own cache entry, so a run interrupted at file 400 of 500 keeps the 399 already scanned. Pair it with record_raw_file_configs, which collects the results into the survey's raw_file_configs.yaml.",
+      "description": "Read one raw file's channel configuration from its datagram headers. Map it over the raw file paths and collect the results with record_raw_file_configs.",
       "sink": false,
       "mapped": true,
       "group": "group:0",
@@ -256,37 +276,49 @@
           "name": "raw_file_path",
           "type": "path",
           "units": null,
-          "description": "One .raw file. May be a local path or a remote fsspec URL, which is downloaded to local scratch, read, and deleted before this step returns. Normally wired to ${_item}. Not fingerprinted, because the mapped item already content-addresses the instance.",
+          "description": "One .raw file, as a local path or a remote URL. Normally wired to ${_item}.",
           "default": null,
           "set": true,
-          "value": "${_item}"
+          "value": "${_item}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verify_start_time",
           "type": "bool",
           "units": null,
-          "description": "If true, EK80 files are additionally read with the full SimradFileReader to verify metadata_start_time, which is slower. The default single pass scan is enough for channel configuration.",
+          "description": "If true, also read EK80 files in full to verify metadata_start_time, which is slower. The default single pass scan is enough for channel configuration.",
           "default": false,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
           "type": "bool",
           "units": null,
-          "description": "Print per-file progress. Worth setting false on a long fan-out, where one banner per file buries the rest of the log.",
+          "description": "Print per-file progress. Set false on a long fan-out to keep the log readable.",
           "default": true,
           "set": true,
-          "value": false
+          "value": false,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "max_scan_bytes",
           "type": "int",
           "units": null,
-          "description": "Ceiling on how many leading bytes of a remote EK60 or EK80 file may be read in place of transferring it whole. The scan starts at min(8 MiB, this) and doubles up to this cap, stopping as soon as the configuration settles every channel, so a file that settles early pays only the small read and the local prefix grows in place rather than being re-read from zero.\nSize it for the deepest configuration in the survey. Too low is expensive, not wrong: a file that never settles is read whole.\nEK80: CW files settle within a fraction of a MiB; FM files sit behind much larger RAW3 payloads and scale with file size, so a survey of ~1 GiB FM files needs a cap in the tens of MiB.\nEK60 settles far earlier, and the cap doubles as the starting read, so setting it to 1 MiB turns a cruise-wide scan into one small read per file. Measured on HB1603 (52 MB files, five channels), the configuration settles at 256 KiB. Do not be tempted lower on the strength of the channel list alone: at 64 KiB every channel is already listed and looks complete, but three of the five carry CON0's configured 2000 W rather than the 500, 300 and 750 W actually transmitted. The step guards against that by requiring one RAW0 datagram per channel before it trusts a prefix, so a too-small cap costs a whole-file read rather than wrong calibration.\nBecause a prefix cannot measure them, the per-file datagram counts and gps_data come back null; last_ping_time is recovered from the file's tail. Leave unset for the whole-file read, which is also what local files and verify_start_time always get.",
+          "description": "Most leading bytes of a remote EK60 or EK80 file to read instead of the whole file, in bytes. Unset reads whole files. Around 1 MiB suits EK60; FM EK80 needs tens of MiB. Too low only costs a whole-file read.",
           "default": null,
           "set": true,
-          "value": 134217728
+          "value": 134217728,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -318,7 +350,7 @@
       "document": "calibration_mapping.yaml",
       "hash": null,
       "editable": false,
-      "description": "Collect per-file channel configurations into the survey's raw config file.\nThe fan-in half of the raw scan. Drops the files that could not be read, sorts the rest by metadata_start_time, and writes raw_file_configs/raw_file_configs.yaml under the calibration output directory. Declare it with collect on the scan step's file_config output.",
+      "description": "Collect per-file channel configurations into raw_file_configs/raw_file_configs.yaml under the calibration output directory. Use collect on the scan step's file_config output.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -345,7 +377,12 @@
           "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -354,7 +391,10 @@
           "description": "Print a summary of what was recorded.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -402,7 +442,7 @@
       "document": "calibration_mapping.yaml",
       "hash": null,
       "editable": false,
-      "description": "Convert manufacturer calibration files to standardized single-channel files.\nParses the EK60 .cal or EK80 .xml files in the calibration input folder, validates them against the standardized schema, and writes one .yaml per channel into single_channel_calibration_files/ under the calibration output directory. These per-channel files are what NCEI archives.\nThe parse is skipped when standardization.fingerprint.json shows the same manufacturer files already produced the files that are there. That sidecar answers to the manufacturer folder, so deleting a single-channel file does not bring it back, which is what the mapping step's \"error\" conflict workflow relies on.",
+      "description": "Convert manufacturer calibration files (EK60 .cal or EK80 .xml) to standardized single-channel .yaml files under single_channel_calibration_files/. Skipped when the manufacturer files are unchanged.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -426,10 +466,15 @@
           "name": "cal_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80). May be a remote fsspec URL, which is downloaded whole to local scratch for the duration of the parse.",
+          "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), local or a remote URL.",
           "default": null,
           "set": true,
-          "value": "${inputs.cal_input_folder}"
+          "value": "${inputs.cal_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "auto"
         },
         {
           "name": "output_base",
@@ -438,7 +483,12 @@
           "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "cruise_id",
@@ -447,25 +497,34 @@
           "description": "Cruise identifier recorded in every generated single-channel file (e.g. \"HB2407\"), so a standardized file stays traceable to the survey it came from.",
           "default": null,
           "set": true,
-          "value": "${inputs.cruise_id}"
+          "value": "${inputs.cruise_id}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "record_author",
           "type": "str",
           "units": null,
-          "description": "Name recorded as the author of every generated single-channel file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "description": "Name recorded as the author of every generated single-channel file. Not used in any calculation.",
           "default": null,
           "set": true,
-          "value": "${inputs.record_author}"
+          "value": "${inputs.record_author}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "short_filenames",
           "type": "bool",
           "units": null,
-          "description": "Use compact names for the generated single-channel files. Set false for longer, more descriptive names. The names become the calibration keys the mapping is built from, so this participates in the reuse fingerprint.",
+          "description": "Use compact names for the generated single-channel files. Set false for longer, more descriptive names.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "overwrite",
@@ -474,7 +533,10 @@
           "description": "Re-parse and rewrite even when the sidecar says the existing files are current, forcing a clean rebuild of the single-channel folder.",
           "default": false,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -483,16 +545,22 @@
           "description": "Print the parsed parameters and the files written.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "override_channels",
           "type": "dict",
           "units": null,
-          "description": "Write these channels as the single-channel files instead of parsing the manufacturer files. Same shape as the single_channel_data output: omit an entry to discard that channel, and edit values in place to correct them. This is how a reviewed and edited set of channels comes back from a caller that has no access to the folder.\n_calibration_file_key is ignored on input, because filenames are re-derived from the supplied values and an edit can therefore rename a file. The channels are validated against the standardized schema before anything is written, and the folder is cleared first so a discarded channel leaves no orphan behind for the mapping to match. Folded into the standardization fingerprint, so changing them rewrites the folder, and a later run that parses the manufacturer files again clears what an override wrote rather than mapping both sets.",
+          "description": "Write these channels as the single-channel files instead of parsing the manufacturer files. Same shape as the single_channel_data output: omit an entry to discard that channel, and edit values in place to correct them.",
           "default": null,
           "set": true,
-          "value": "${inputs.override_channels}"
+          "value": "${inputs.override_channels}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -523,7 +591,7 @@
         {
           "name": "single_channel_data",
           "type": "dict",
-          "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, each carrying the _calibration_file_key that the mapping is built on. Produced on the fresh parse, the reuse path and an override alike, so a caller can review the channels without reading the folder. Plain JSON types only, so it checkpoints as JSON rather than a pickle and stays eligible for the shared survey cache.",
+          "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, for review without reading the folder.",
           "disposed": false,
           "many": false,
           "semantic": null
@@ -548,7 +616,7 @@
       "document": "calibration_mapping.yaml",
       "hash": null,
       "editable": false,
-      "description": "Match each raw channel to its calibration data and save the mapping files.\nLoads the raw file configurations and the standardized single-channel files, runs the matching algorithm, moves aside any calibration file no raw channel matched, resolves conflicts, writes mapping_files/channel_mapping.yaml, calibration_configurations.yaml and calibration_provenance.yaml, and verifies the result.\nReads the single-channel files from disk rather than taking them as data. The mapping keys are those files' names, which only the on-disk loader attaches, and this step rewrites that folder.\nMark it regenerate: always in a recipe. Its real product is the files on disk, and a hand-deleted single-channel file cannot change a cache key computed before the run, so a cache hit would return the dictionaries without re-reading the folder. The step is cheap: a few small local YAML reads and the matcher.",
+      "description": "Match each raw channel to its calibration data and save the mapping files under mapping_files/. Mark the step regenerate: always in a recipe.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -575,16 +643,26 @@
           "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "single_channel_dir",
           "type": "path",
           "units": null,
-          "description": "Folder of standardized single-channel files. Defaults to single_channel_calibration_files/ under output_base. Wire it to the standardization step's single_channel_dir output for the ordering dependency. Not fingerprinted, because a step-output reference is still an unresolved placeholder when cache keys are computed; use regenerate: always instead.",
+          "description": "Folder of standardized single-channel files. Defaults to single_channel_calibration_files/ under output_base. Wire it to the standardization step's single_channel_dir output.",
           "default": null,
           "set": true,
-          "value": "${standardize_cal.single_channel_dir}"
+          "value": "${standardize_cal.single_channel_dir}",
+          "required": false,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "raw_configs_path",
@@ -593,43 +671,60 @@
           "description": "Path of the saved raw_file_configs.yaml. Defaults to raw_file_configs/raw_file_configs.yaml under output_base, and is only consulted when raw_file_configs is not supplied.",
           "default": null,
           "set": true,
-          "value": "${record_raw_configs.raw_configs_path}"
+          "value": "${record_raw_configs.raw_configs_path}",
+          "required": false,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "conflict_resolution",
           "type": "str",
           "units": null,
-          "description": "What to do when one raw channel matches several calibration files. \"error\" (the default) lists the conflicts and stops, so you delete the unwanted single-channel file and re-run. \"interactive\" prompts on the terminal, and raises before any file is moved when the run has no interactive input. \"report\" neither raises nor prompts: it returns the conflicts on the conflicts output and writes no mapping file, which is the mode for a caller with no terminal that will present the choices and run the step again with calibration_choices.",
+          "description": "What to do when one raw channel matches several calibration files. \"error\" (default) lists the conflicts and stops. \"interactive\" prompts on the terminal. \"report\" returns them on the conflicts output and writes no mapping.",
           "default": "error",
           "set": true,
-          "value": "${inputs.conflict_resolution}"
+          "value": "${inputs.conflict_resolution}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "calibration_choices",
           "type": "dict",
           "units": null,
-          "description": "Conflict decisions supplied up front, mapping a conflict id from a previous run's conflicts output to a choice. A choice is the calibration key to keep; a list of candidate keys, or {\"average\": [keys]}, to average them; or {\"merge\": [items]} to merge them as the EK80 software does, where an item is a key or an {\"average\": [keys]}. A merge takes the calibrations in the order given: the first is used wherever its sphere is valid and each later one fills only what the earlier ones leave, so the sphere may differ. Frequencies none of them covers stay uncovered, which is reported as a warning and in the provenance, never refused. An average or merge is written as a new single-channel file with is_averaged or is_merged set, the conflict's channels are mapped to it, and the candidates it was made from are set aside; an average made only to be merged is not written. Only calibrations of the same transducer, at the same settings and with the same sphere, can be averaged; only FM calibrations can be merged. Applied in every conflict_resolution mode before that mode's handler runs, so a partial map resolves what it covers and leaves the rest to be reported, prompted for, or raised on. An unknown conflict id, a malformed choice, a key that is not one of that conflict's candidates, or candidates that cannot be combined, is an error, and nothing is changed.",
+          "description": "Maps a conflict id from a previous run's conflicts output to a choice: the key to keep; a list of keys, or {\"average\": [keys]}, to average; or {\"merge\": [items]} to merge FM calibrations EK80 style, an item being a key or an average.",
           "default": null,
           "set": true,
-          "value": "${inputs.calibration_choices}"
+          "value": "${inputs.calibration_choices}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "tolerances",
           "type": "dict",
           "units": null,
-          "description": "Per-field match tolerances, merged over the matcher's defaults so a dict naming only one field widens only that field. The defaults are exact for frequency, frequency_start, frequency_end and transmit_power (1 Hz / 1 W) and 1e-6 s for transmit_duration_nominal, because a calibration is formally valid only for the configuration it was measured at.\nWidening one is a scientific decision, not a convenience: a channel that matches only under a widened tolerance was calibrated at a different setting than it is being applied to, and the resulting gain and sa_correction carry a bias of that difference. Every override is reported on the terminal. Reach for it when a survey changed a setting mid-cruise and no calibration exists for the other side of the change, and record why in the recipe.",
+          "description": "Per-field match tolerances, merged over the defaults (1 Hz for the frequencies, 1 W for transmit_power, 1e-6 s for transmit_duration_nominal). Widening one applies a calibration measured at a different setting.",
           "default": null,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "unmapped_channels",
           "type": "str",
           "units": null,
-          "description": "The policy the extract_standardized_cal_params step that consumes this mapping runs with, \"warn\" or \"error\". Informational only: it changes nothing about the matching, and only lets the provenance report state what actually happened to an unmatched channel instead of listing both possibilities. Set it to the same value that step uses, or leave it out and the report says the outcome is decided downstream.",
+          "description": "The unmapped_channels policy, \"warn\" or \"error\", of the step that extracts calibration parameters from this mapping. Only labels the provenance report; unset says the outcome is decided downstream.",
           "default": null,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "cruise_id",
@@ -638,7 +733,10 @@
           "description": "Recorded in the provenance report when given.",
           "default": null,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "record_author",
@@ -647,7 +745,10 @@
           "description": "Recorded as the author of any record averaged or merged while resolving conflicts. When omitted, the combined calibrations' author is kept if they share one.",
           "default": null,
           "set": true,
-          "value": "${inputs.record_author}"
+          "value": "${inputs.record_author}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "keep_unused",
@@ -656,16 +757,22 @@
           "description": "Move calibration files no raw channel matched into unused_calibration_files/ instead of deleting them. They are the evidence when a channel comes out unmapped.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "short_filenames",
           "type": "bool",
           "units": null,
-          "description": "Remap the returned dictionaries to compact calibration keys when they are not already the single-channel file names, and give averaged and merged records compact keys. Should match the setting the single-channel files were written with.",
+          "description": "Use compact calibration keys in the returned dictionaries and for averaged and merged records. Match the setting the single-channel files were written with.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -674,7 +781,10 @@
           "description": "Print the mapping summary, preview, and verification results.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -705,7 +815,7 @@
         {
           "name": "unused_files",
           "type": "list",
-          "description": "Names of single-channel calibration files the mapping does not reference, including the ones this run moved aside. An empty list means every calibration file matched a raw channel, so a non-empty one is the signal that a channel went unmapped. Under \"report\" no mapping exists to check against, so this carries only the files the run moved aside.",
+          "description": "Names of single-channel calibration files the mapping does not reference, including ones this run moved aside. Non-empty means a channel may have gone unmapped.",
           "disposed": false,
           "many": false,
           "semantic": null
@@ -713,7 +823,7 @@
         {
           "name": "provenance",
           "type": "dict",
-          "description": "Per-channel account of what calibration was applied over which stretch of the cruise, and why. Each channel carries segments, one per run of raw files that behaved the same way, with a time range, the raw and calibration settings behind it, and an outcome: the calibration was applied, it was applied only because a tolerance was widened, or nothing matched and the channel fell back or stopped the run. A cruise of thousands of files reports as a handful of segments per channel.\nJSON-safe, so a server can hand it to a client without reading the file off disk. The same content is written to mapping_files/calibration_provenance.yaml.\nComplete whatever happens downstream: the mapping stage sees every file in the catalogue, so this covers the whole cruise even when the per-file tier that consumes the mapping is still running or stopped early.",
+          "description": "Per-channel account of what calibration was applied over which stretch of the cruise, and why, as time segments with their settings and outcome. Also written to mapping_files/calibration_provenance.yaml.",
           "disposed": false,
           "many": false,
           "semantic": null
@@ -729,7 +839,7 @@
         {
           "name": "conflicts",
           "type": "dict",
-          "description": "Unresolved multiple-match conflicts, keyed by a stable conflict id. Each carries the candidate calibration keys, a summary of every candidate, the raw files and channel ids it affects, and distinguishing_fields naming what actually differs between the candidates. That list excludes the fields two calibration records differ in by construction, such as the source filename and the created timestamp, so it names only what a reviewer has to weigh. It is empty when the candidates match everywhere it matters. Only populated under conflict_resolution \"report\"; empty when the mapping completed. A non-empty value means no mapping file was written, so feed the choices back as calibration_choices and run the step again.",
+          "description": "Unresolved multiple-match conflicts, keyed by conflict id; only filled under conflict_resolution \"report\". Non-empty means no mapping was written: pass choices as calibration_choices and run again.",
           "disposed": false,
           "many": false,
           "semantic": null
@@ -737,7 +847,7 @@
         {
           "name": "single_channel_data",
           "type": "dict",
-          "description": "{\"channels\": [...]}, the standardized channels the mapping was built from plus any record averaged or merged from several of them, each carrying its _calibration_file_key. Every key in mapping_dict names one of them, so this, not the standardization step's payload, is what to hand to save_calibration_archive once an average or merge has been chosen. JSON-safe.",
+          "description": "{\"channels\": [...]}, the standardized channels the mapping was built from plus any averaged or merged records. Pass this to save_calibration_archive once an average or merge has been chosen.",
           "disposed": false,
           "many": false,
           "semantic": null

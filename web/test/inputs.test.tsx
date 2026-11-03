@@ -43,6 +43,41 @@ describe('InputsForm', () => {
     expect(screen.getByLabelText('items').tagName).toBe('TEXTAREA');
   });
 
+  it('shows an optional input with no value as unset, not required', () => {
+    const declared: InputField[] = [
+      { name: 'time_min', type: 'str', description: null, default: null, required: false, value: null, source: 'unset' },
+      { name: 'folder', type: 'path', description: null, default: null, required: true, value: null, source: 'missing' },
+    ];
+    render(<InputsForm declared={declared} problems={[]} onApply={() => {}} />);
+    const unset = screen.getByLabelText('time_min').closest('.rc-field')!;
+    expect(unset.querySelector('.rc-badge-unset')).toHaveTextContent(/^unset: the steps use their own defaults$/);
+    expect(unset).not.toHaveTextContent('required');
+    expect(screen.getByLabelText('folder').closest('.rc-field')).toHaveTextContent('required');
+  });
+
+  it('shows a NaN value as text and never sends it back unedited', async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const nan: InputField = {
+      name: 'x',
+      type: 'float',
+      description: null,
+      default: '.inf',
+      required: false,
+      value: '.nan',
+      source: 'config',
+    };
+    render(<InputsForm declared={[...DECLARED, nan]} problems={[]} onApply={onApply} />);
+    const x = screen.getByLabelText('x');
+    expect(x).toHaveAttribute('type', 'text');
+    expect(x).toHaveValue('.nan');
+    const k = screen.getByLabelText('k');
+    await user.clear(k);
+    await user.type(k, '7');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(onApply).toHaveBeenCalledWith({ n: 2, k: 7 });
+  });
+
   it('applies the session values plus the changed ones only', async () => {
     const user = userEvent.setup();
     const onApply = vi.fn();

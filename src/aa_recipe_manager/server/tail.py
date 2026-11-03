@@ -16,12 +16,12 @@ PROGRESS_STREAM = "progress"
 
 _FINISHED_LABEL = {
     "computed": "computed",
-    "hit-user-cache": "loaded from your cache",
-    "hit-survey-cache": "loaded from the survey cache",
+    "hit-user-cache": "loaded from user cache",
+    "hit-survey-cache": "loaded from survey cache",
     "marker": "already done",
-    "skipped": "not needed",
-    "pruned": "not needed",
-    "untargeted": "outside the run target",
+    "skipped": "skipped: cached",
+    "pruned": "skipped: cached",
+    "untargeted": "not needed",
 }
 
 #: Dispositions whose time is worth showing.
@@ -134,8 +134,8 @@ def _step_finished(data: dict[str, Any]) -> str:
             f"{number} {word}"
             for number, word in (
                 (instances["computed"], "computed"),
-                (instances["cached"], "cached"),
-                (instances["skipped"], "not needed"),
+                (instances["cached"], "loaded"),
+                (instances["skipped"], "skipped"),
             )
             if number
         ]

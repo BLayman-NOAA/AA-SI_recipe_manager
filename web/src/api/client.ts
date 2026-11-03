@@ -38,6 +38,27 @@ export function isNetworkError(error: unknown): boolean {
   return error instanceof ApiError && error.status === NETWORK_ERROR_STATUS;
 }
 
+/** A server error of one kind, by its `error` code. */
+export function isApiError(error: unknown, code: string): error is ApiError {
+  return error instanceof ApiError && error.error === code;
+}
+
+/** The messages of an edit refusal: the 422's problems, else its message. */
+export function editProblems(error: Error): string[] {
+  const details = error instanceof ApiError ? error.details : null;
+  const problems = (details as { problems?: unknown } | null)?.problems;
+  if (!Array.isArray(problems) || problems.length === 0) return [error.message];
+  return problems.map((problem) =>
+    typeof problem === 'string' ? problem : String((problem as { message?: unknown })?.message ?? problem),
+  );
+}
+
+/** The paths a 409 ChangedOnDisk or TargetExists names in its details. */
+export function errorPaths(error: unknown): string[] {
+  const details = (error as { details?: unknown } | null)?.details as { paths?: unknown } | null | undefined;
+  return Array.isArray(details?.paths) ? details.paths.map(String) : [];
+}
+
 /** fetch, with a network failure (a TypeError) turned into a clear ApiError. */
 async function send(path: string, init: RequestInit): Promise<Response> {
   try {

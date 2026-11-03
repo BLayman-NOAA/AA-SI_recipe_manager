@@ -1,11 +1,10 @@
 op: compute_sv
 cache_key: compute_sv  # pinned cache identity - keep stable across op renames
 description: >
-  Compute volume backscattering strength (Sv) from raw EchoData.
-  When cal_params and env_params are supplied they are applied to the
-  computation. When omitted, echopype uses default environmental and
-  calibration values embedded in the raw file.
-
+  Compute volume backscattering strength (Sv) from raw EchoData, applying
+  cal_params and env_params when given and the raw file's own values
+  otherwise.
+notes: >
   This step is echopype.calibrate.compute_Sv called directly, so the
   calibration model and its defaults are echopype's.
 category: level 2

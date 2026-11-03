@@ -58,7 +58,8 @@ function MenuEntry({ item, onDone }: { item: MenuItem; onDone: () => void }) {
   );
 }
 
-function MenuList({ items, label, onDone }: MenuListProps) {
+/** A menu's items as a list, used by the menu bar and the pane tab menu. */
+export function MenuList({ items, label, onDone }: MenuListProps) {
   return (
     <ul className="rc-menu-list" role="menu" aria-label={label}>
       {items.map((item) => (

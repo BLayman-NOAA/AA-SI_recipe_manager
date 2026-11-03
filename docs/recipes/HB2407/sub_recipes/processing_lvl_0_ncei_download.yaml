@@ -1,8 +1,6 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/sub_recipes/processing_lvl_0.yaml
 
 # Processing level 0: data retrieval.
-#
-# Queries NCEI and downloads the matching raw files into the output directory.
 
 recipe:
   name: "processing_lvl_0"
@@ -14,16 +12,21 @@ recipe:
 inputs:
   raw_input_folder:
     type: path
-    description: "Destination folder for downloaded raw files."
+    description: "Local folder the NCEI download writes raw files into."
   file_time_start:
     type: str
-    description: "Inclusive start time for the NCEI query."
+    description: >
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
   file_time_end:
     type: str
-    description: "Inclusive end time for the NCEI query."
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
   cruise_name:
     type: str
-    description: "Cruise name filter passed to the NCEI query."
+    description: >
+      Cruise name searched for in the NCEI catalogue, such as "HB1603".
 
 steps:
 

@@ -1,6 +1,9 @@
 import { stepNodes } from '../api/graph';
-import type { Problem } from '../api/models';
+import type { Problem, SessionDocument } from '../api/models';
 import { useCurrentSession, useHealth, useOpeningRecipe, useRuns } from '../api/queries';
+import { EditingError, Notice } from '../editing/Notice';
+import { useEditingStore } from '../editing/store';
+import { keptCount } from '../editing/useDiskSync';
 import { failedSteps, runProgress, type RunState } from '../runs/reducer';
 import { useRunStore } from '../runs/store';
 import { useSessionStore } from '../state/session';
@@ -91,12 +94,25 @@ function RunStatus() {
   );
 }
 
+/** "session: dive (unsaved: 2 files)". */
+export function sessionText(doc: SessionDocument): string {
+  const notes = [];
+  if (doc.read_only) notes.push('read only');
+  if (doc.dirty.length > 0) notes.push(`unsaved: ${plural(doc.dirty.length, 'file')}`);
+  return `session: ${doc.title}${notes.length ? ` (${notes.join(', ')})` : ''}`;
+}
+
+/** "1 file differs from disk", for the files the user kept the session's version of. */
+export function differsText(count: number): string {
+  return count === 1 ? '1 file differs from disk' : `${count} files differ from disk`;
+}
+
 function SessionStatus() {
   const session = useCurrentSession();
   const opening = useOpeningRecipe();
   const doc = session.data;
   if (opening) return <span>{`Opening ${opening}...`}</span>;
-  if (doc) return <span>{`session: ${doc.title}${doc.read_only ? ' (read only)' : ''}`}</span>;
+  if (doc) return <span>{sessionText(doc)}</span>;
   if (session.error) {
     return <span className="rc-status-error">{`session: ${session.error.message}`}</span>;
   }
@@ -111,10 +127,13 @@ export function StatusBar() {
   const doc = session.data;
   const problems = doc?.validation.problems ?? [];
   const hasErrors = problems.some((problem) => problem.severity === 'error');
+  const kept = useEditingStore((state) => state.kept);
+  const differs = doc ? keptCount(doc.conflicts, kept) : 0;
 
   return (
     <div className="rc-statusbar" role="status">
       <SessionStatus />
+      {differs > 0 && <span className="rc-status-muted">{differsText(differs)}</span>}
       {doc && <span>{plural(stepNodes(doc.graph).length, 'step')}</span>}
       {doc && (
         <span className={hasErrors ? 'rc-status-error' : problems.length ? 'rc-status-warning' : 'rc-status-ok'}>
@@ -122,6 +141,8 @@ export function StatusBar() {
         </span>
       )}
       {doc && <RunStatus />}
+      <EditingError />
+      <Notice />
       <span className="rc-spacer" />
       <span className={health.isError ? 'rc-status-error' : health.data ? 'rc-status-ok' : undefined}>
         {health.isError ? 'server: not reachable' : health.data ? `server: ok ${health.data.version}` : 'server: connecting'}

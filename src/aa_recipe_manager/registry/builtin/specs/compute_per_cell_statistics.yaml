@@ -1,21 +1,24 @@
 op: compute_per_cell_statistics
 cache_key: compute_per_cell_statistics  # pinned cache identity - keep stable across op renames
 description: >
-  Compute per-MVBS-cell statistics (e.g. coefficient of variation) from
-  fine-resolution Sv data before masking or MVBS averaging. Results are
-  stored as new DataArrays in the returned dataset at MVBS-bin resolution.
-  Must be called with the same range_bin, ping_time_bin and range_var values
-  used by mask_sparse_bins and compute_mvbs so that bin grids align exactly.
-  Pass the returned dataset to add_auxiliary_features via the ds_sv input
-  to absorb the statistics into the ML feature matrix.
+  Compute statistics within each MVBS cell (such as the coefficient of
+  variation) from fine-resolution Sv, at MVBS bin resolution. Use the same
+  bins as mask_sparse_bins and compute_mvbs, and pass the result to
+  add_auxiliary_features as ds_sv.
+notes: >
+  Run it before masking or MVBS averaging. The statistics are stored as new
+  DataArrays in the returned dataset. range_bin, ping_time_bin and range_var
+  must match mask_sparse_bins and compute_mvbs so the bin grids align
+  exactly.
 category: ml_preprocessing
 inputs:
   ds_Sv:
     type: Dataset
     description: >
       Fine-resolution Sv Dataset to summarize, normally the noise-removed Sv
-      from remove_background_noise. Take it from before mask_sparse_bins:
-      the within-cell spread is the signal here, and dropping sparse bins
+      from remove_background_noise, taken from before mask_sparse_bins.
+    notes: >
+      The within-cell spread is the signal here, and dropping sparse bins
       first would hide the cells whose variability is most informative.
     expected_variables:
       - Sv
@@ -50,13 +53,14 @@ params:
   range_var:
     type: str
     description: >
-      Meter-valued variable to bin along, which must match the value given to
-      mask_sparse_bins and compute_mvbs or the cell statistics describe cells
-      offset from the MVBS cells they are joined to. 'echo_range' measures
-      from the transducer face, 'depth' from the surface and needs the dataset
-      to carry a depth variable. The cell dimension names stay
-      cell_ping_time and cell_echo_range either way, since
-      add_auxiliary_features selects on them by name.
+      Meter-valued variable to bin along: 'echo_range' (from the transducer
+      face) or 'depth' (from the surface; the dataset must carry depth). Must
+      match mask_sparse_bins and compute_mvbs.
+    notes: >
+      A mismatch makes the cell statistics describe cells offset from the MVBS
+      cells they are joined to. The cell dimension names stay cell_ping_time
+      and cell_echo_range either way, since add_auxiliary_features selects on
+      them by name.
     required: false
     default: "echo_range"
   range_var_max:
@@ -64,31 +68,30 @@ params:
     units: m
     description: >
       Deepest value the cells cover, as a unit string (e.g. '1810m'), matching
-      the value given to compute_mvbs.
-
-      When unset the extent is read from the data. That forces a compute on a
-      lazy dataset, and it lets each dataset choose its own cell grid length,
-      which is only safe when this step runs once on one merged dataset. Mapped
-      over a survey's per-file Sv it is the bug: each file bins to its own
-      extent and the fan-in outer-joins cell_echo_range and NaN-pads the short
-      ones, the same trap the survey tier guards against on range_sample.
-
-      Pin it whenever the results will be merged.
+      compute_mvbs. Unset reads the extent from the data. Pin it whenever the
+      results will be merged.
+    notes: >
+      Reading the extent from the data forces a compute on a lazy dataset, and
+      it lets each dataset choose its own cell grid length, which is only safe
+      when this step runs once on one merged dataset. Mapped over a survey's
+      per-file Sv, each file bins to its own extent and the fan-in outer-joins
+      cell_echo_range and NaN-pads the short ones, the same trap the survey
+      tier guards against on range_sample.
     required: false
     default: null
   cells_only:
     type: bool
     description: >
       Return only the statistic arrays instead of a copy of ds_Sv carrying
-      them.
-
-      The default keeps the source variables, which is what a single call on a
-      merged dataset wants. Set it true whenever this step is checkpointed or
-      its results are merged: otherwise the fine-resolution Sv is written a
-      second time, and a merge on cell_ping_time drags ping_time and
-      range_sample into the join, which across files with differing
-      range_sample lengths outer-joins and NaN-pads them. That is the same trap
-      the survey tier exists to avoid, reintroduced one dimension over.
+      them. Set true whenever this step is checkpointed or its results are
+      merged.
+    notes: >
+      The default keeps the source variables, which suits a single call on a
+      merged dataset. Otherwise the fine-resolution Sv is written a second
+      time, and a merge on cell_ping_time drags ping_time and range_sample into
+      the join, which across files with differing range_sample lengths
+      outer-joins and NaN-pads them. That is the same trap the survey tier
+      exists to avoid, one dimension over.
     required: false
     default: false
 implementations:

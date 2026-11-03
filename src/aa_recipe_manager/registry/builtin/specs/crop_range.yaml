@@ -1,53 +1,49 @@
 op: crop_range
 cache_key: crop_range  # pinned cache identity - keep stable across op renames
 description: >
-  Trim trailing range samples that carry no data. A raw file records to the
-  sonar's configured range, so after seafloor masking the deep end of
-  ``range_sample`` is entirely NaN. Those samples still cost memory and time in
-  every downstream step, and they widen the binned cell grid that
-  ``compute_mvbs`` and ``compute_per_cell_statistics`` build - the flox
-  reduction behind the latter allocates dense bookkeeping sized by
-  channels x ping bins x range bins, so an over-wide range axis is what pushes
-  it into a MemoryError on a long survey.
+  Trim the deep range samples that hold no data after seafloor masking. Run it
+  on the whole survey, after the per-file fan-in. Active criteria each give a
+  cut and the shallowest wins.
+notes: >
+  A raw file records to the sonar's configured range, so after seafloor masking
+  the deep end of ``range_sample`` is entirely NaN. Those samples still cost
+  memory and time in every downstream step, and they widen the binned cell grid
+  that ``compute_mvbs`` and ``compute_per_cell_statistics`` build. The flox
+  reduction behind the latter allocates dense bookkeeping sized by channels x
+  ping bins x range bins, so an over-wide range axis pushes it into a
+  MemoryError on a long survey.
 
-  A standalone step rather than a parameter on ``apply_sv_mask``, for the same
-  reason ``rechunk_dataset`` is standalone: masking is ping-local and runs
-  correctly per file, but the crop point is a property of the whole survey.
-  Cropping per file would leave the segments with different ``range_sample``
-  lengths, and the ping_time concatenation resolves that by padding the short
-  ones back out with NaN - which undoes the crop and leaves NaN in
-  ``echo_range``, where downstream range binning reads it. Place this after the
-  fan-in instead.
+  It is a standalone step rather than a parameter on ``apply_sv_mask`` for the
+  same reason ``rechunk_dataset`` is: masking is ping-local and runs correctly
+  per file, but the crop point is a property of the whole survey. Cropping per
+  file would leave segments with different ``range_sample`` lengths, and the
+  ping_time concatenation pads the short ones back out with NaN. That undoes
+  the crop and leaves NaN in ``echo_range``, where downstream range binning
+  reads it.
 
-  Three criteria are available and compose - whichever are active each produce
-  a candidate cut and the shallowest wins:
+  ``outlier_sigma`` rejects anomalous pings and then crops to the deepest
+  retained ping. Prefer it survey-wide: a single glitch ping reaching far past
+  the seafloor otherwise holds the whole range axis open, which defeats the
+  lossless mode. The threshold is deliberately generous, so uncommon but real
+  depths survive and only wild outliers go.
 
-  * ``outlier_sigma`` rejects anomalous pings and then crops to the deepest
-    **retained** ping. Prefer this survey-wide: a single glitch ping reaching
-    far past the seafloor otherwise holds the whole range axis open, which is
-    exactly what defeats the lossless mode. The threshold is deliberately
-    generous, so uncommon-but-real depths survive and only wild outliers go.
-  * ``max_range_m`` is a hard ceiling, applied whether or not samples above it
-    hold data. Cheapest when the answer is already known (e.g. from the
-    deepest point in the survey's seabed lines).
-  * ``drop_trailing_all_nan`` is the lossless fallback used when no outlier
-    test is requested.
+  ``max_range_m`` is a hard ceiling, cheapest when the answer is already known,
+  for example from the deepest point in the survey's seabed lines.
+  ``drop_trailing_all_nan`` is the lossless fallback used when no outlier test
+  is requested.
 category: preprocessing
 inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Sv Dataset to crop, normally after apply_sv_mask so the seafloor
-      returns are already NaN. Place this after any per-file fan-in, since
-      the crop point is a property of the whole survey.
+      Survey Sv Dataset to crop, normally after apply_sv_mask so the seafloor
+      returns are already NaN.
     expected_variables:
       - Sv
 outputs:
   ds_Sv:
     type: Dataset
-    description: >
-      The same Dataset with the trailing empty range samples dropped, so
-      every downstream step works on a narrower range axis.
+    description: The same Dataset with the trailing empty range samples dropped.
     expected_variables:
       - Sv
 params:
@@ -55,37 +51,39 @@ params:
     type: float
     units: m
     description: >
-      Explicit cap. Range samples deeper than this are dropped whether or not
-      they hold data, so a cap shallower than the deepest echo of interest
-      discards it. Leave unset to derive the crop from the data.
+      Hard cap on range. Samples deeper than this are dropped whether or not
+      they hold data. Unset derives the crop from the data.
     required: false
     default: null
   outlier_sigma:
     type: float
     description: >
-      Standard deviations above the mean, over the per-ping deepest finite
-      sample, at which a ping becomes a candidate outlier. Combined with
-      outlier_margin to form the reject threshold. Leave unset to disable
-      outlier rejection and fall back to drop_trailing_all_nan.
+      Standard deviations above the mean of each ping's deepest finite sample
+      at which a ping counts as an outlier and is ignored. Unset disables
+      outlier rejection and uses drop_trailing_all_nan.
+    notes: >
+      The reject threshold is outlier_margin x (mean + outlier_sigma x sd),
+      taken over the per-ping deepest finite sample. The crop then goes to the
+      deepest retained ping.
     required: false
     default: null
   outlier_margin:
     type: float
     description: >
-      Multiplier applied to (mean + outlier_sigma * sd) to get the reject
-      threshold. Raise it to flag fewer pings, lower it to flag more. The
-      default 1.5 is deliberately loose: on HB2407's 2024-10-15 window it puts
-      the threshold at 424 m against a deepest retained ping of 214 m, so it
-      catches only genuine anomalies. Only used when outlier_sigma is set.
+      Multiplier on (mean + outlier_sigma x sd) giving the outlier threshold.
+      Raise it to flag fewer pings. Only used when outlier_sigma is set.
+    notes: >
+      The default 1.5 is deliberately loose: on HB2407's 2024-10-15 window it
+      puts the threshold at 424 m against a deepest retained ping of 214 m, so
+      it catches only genuine anomalies.
     required: false
     default: 1.5
   drop_trailing_all_nan:
     type: bool
     description: >
-      Crop to one past the deepest range sample holding a finite Sv value
-      anywhere in the dataset. Lossless. Ignored when outlier_sigma is set.
-      Set false with the other two criteria unset to disable the step without
-      removing it from the recipe.
+      Crop to one past the deepest sample with a finite value anywhere
+      (lossless). Ignored when outlier_sigma is set. False, with the other two
+      unset, turns the step into a no-op.
     required: false
     default: true
   data_var:

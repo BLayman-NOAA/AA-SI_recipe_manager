@@ -149,17 +149,18 @@ function StepParameters({ step }: { step: StepNode }) {
           </tbody>
         </table>
       )}
-      {step.sweep && (
-        <>
-          <h3>Sweep ({step.sweep.mode})</h3>
-          <Facts
-            rows={Object.entries(step.sweep.params).map(([name, values]) => [
-              name,
-              <Mono>{showValue(values)}</Mono>,
-            ])}
-          />
-        </>
-      )}
+    </section>
+  );
+}
+
+function StepSweep({ step }: { step: StepNode }) {
+  if (!step.sweep) return null;
+  return (
+    <section>
+      <h3>Sweep ({step.sweep.mode})</h3>
+      <Facts
+        rows={Object.entries(step.sweep.params).map(([name, values]) => [name, <Mono>{showValue(values)}</Mono>])}
+      />
     </section>
   );
 }
@@ -232,10 +233,11 @@ function StepPorts({ graph, step }: { graph: Graph; step: StepNode }) {
 interface StepInspectorProps {
   graph: Graph;
   step: StepNode;
+  params?: (step: StepNode) => ReactNode;
   extras?: (step: StepNode) => ReactNode;
 }
 
-function StepInspector({ graph, step, extras }: StepInspectorProps) {
+function StepInspector({ graph, step, params, extras }: StepInspectorProps) {
   return (
     <div className="rc-pane rc-inspector">
       <div className="rc-inspector-title">
@@ -243,22 +245,54 @@ function StepInspector({ graph, step, extras }: StepInspectorProps) {
         <span className="rc-badge">step</span>
       </div>
       <StepOverview step={step} />
-      <StepParameters step={step} />
+      {params?.(step) ?? <StepParameters step={step} />}
+      <StepSweep step={step} />
       <StepPorts graph={graph} step={step} />
       {extras?.(step)}
     </div>
   );
 }
 
+/** The rows of a sub-recipe's Overrides and Inputs sections. */
+export interface IncludeSectionRows {
+  overrides: InputRow[];
+  inputs: InputRow[];
+}
+
+/** Renders a sub-recipe's Overrides and Inputs sections in place of the read only ones. */
+export type IncludeSections = (include: GraphInclude, rows: IncludeSectionRows) => ReactNode;
+
 interface IncludeInputsProps {
   graph: Graph;
   include: GraphInclude;
   inputValues: Record<string, unknown>;
   inputSources?: Record<string, InputSource>;
+  sections?: IncludeSections;
+}
+
+/** The Overrides and Inputs sections of a sub-recipe: the given ones, else the read only ones. */
+function IncludeRowSections({
+  graph,
+  include,
+  rows,
+  sections,
+}: {
+  graph: Graph;
+  include: GraphInclude;
+  rows: IncludeSectionRows;
+  sections?: IncludeSections;
+}) {
+  if (sections) return sections(include, rows);
+  return (
+    <>
+      <OverridesSection graph={graph} rows={rows.overrides} />
+      <OwnInputsSection graph={graph} include={include} rows={rows.inputs} />
+    </>
+  );
 }
 
 /** The overrides an include entry sets, one expandable row each. */
-function OverridesSection({ graph, rows }: { graph: Graph; rows: InputRow[] }) {
+export function OverridesSection({ graph, rows }: { graph: Graph; rows: InputRow[] }) {
   return (
     <>
       <h3>Overrides</h3>
@@ -275,7 +309,15 @@ function OverridesSection({ graph, rows }: { graph: Graph; rows: InputRow[] }) {
 }
 
 /** The inputs a sub-recipe file declares and its entry leaves alone, one expandable row each. */
-function OwnInputsSection({ graph, include, rows }: { graph: Graph; include: GraphInclude; rows: InputRow[] }) {
+export function OwnInputsSection({
+  graph,
+  include,
+  rows,
+}: {
+  graph: Graph;
+  include: GraphInclude;
+  rows: InputRow[];
+}) {
   return (
     <>
       <h3>Inputs</h3>
@@ -300,7 +342,7 @@ function declaredText(include: GraphInclude): string | null {
   return `${include.inputs.length} declared, ${overridden} overridden`;
 }
 
-function IncludeInspector({ graph, include, inputValues, inputSources }: IncludeInputsProps) {
+function IncludeInspector({ graph, include, inputValues, inputSources, sections }: IncludeInputsProps) {
   const { drillInto } = useViewStore().getState();
   const { docsUrl, linkTarget, pages } = useDocsEnv();
   const page = pages[include.id];
@@ -343,8 +385,12 @@ function IncludeInspector({ graph, include, inputValues, inputSources }: Include
             : []),
         ]}
       />
-      <OverridesSection graph={graph} rows={inputs.overrides} />
-      <OwnInputsSection graph={graph} include={include} rows={inputs.own} />
+      <IncludeRowSections
+        graph={graph}
+        include={include}
+        rows={{ overrides: inputs.overrides, inputs: inputs.own }}
+        sections={sections}
+      />
       <h3>Outputs</h3>
       {outputs.rows.length === 0 ? (
         <div className="rc-empty">No output is used outside the sub-recipe.</div>
@@ -502,7 +548,7 @@ export function RecipeInputDetails({ graph, row }: { graph: Graph; row: InputRow
 }
 
 /** The badge of a sub-recipe input row: the run source, else what gives its value. */
-function rowBadge(row: InputRow): string {
+export function rowBadge(row: InputRow): string {
   if (row.setBy === 'run') return row.runSource ?? 'set';
   return row.setBy;
 }
@@ -523,7 +569,7 @@ function setByText(row: InputRow): string {
 }
 
 /** A sub-recipe input's details: the file's type and default, the value and who sets it. */
-function InputRowDetails({ graph, row }: { graph: Graph; row: InputRow }) {
+export function InputRowDetails({ graph, row }: { graph: Graph; row: InputRow }) {
   return (
     <>
       {row.description && (
@@ -549,7 +595,7 @@ function InputRowDetails({ graph, row }: { graph: Graph; row: InputRow }) {
   );
 }
 
-function OverrideDetails({ graph, row }: { graph: Graph; row: InputRow }) {
+export function OverrideDetails({ graph, row }: { graph: Graph; row: InputRow }) {
   return (
     <Facts
       rows={[
@@ -602,7 +648,7 @@ function RecipeInputsList({ graph, inputValues, inputSources }: RecipeInputsList
 }
 
 /** A drilled in sub-recipe's inputs box: the overrides its entry sets, then the inputs it declares. */
-function IncludeInputsInspector({ graph, include, inputValues, inputSources }: IncludeInputsProps) {
+function IncludeInputsInspector({ graph, include, inputValues, inputSources, sections }: IncludeInputsProps) {
   const drill = includePath(graph, include.id);
   const { overrides, inputs } = splitRows(inputsBoxRows(graph, drill, inputValues, inputSources));
   const more = inputsBoxMore(graph, drill);
@@ -616,8 +662,7 @@ function IncludeInputsInspector({ graph, include, inputValues, inputSources }: I
         Inputs of {include.title} (<Mono>{include.source}</Mono>): the overrides the parent sets, then the inputs
         the file declares.
       </p>
-      <OverridesSection graph={graph} rows={overrides} />
-      <OwnInputsSection graph={graph} include={include} rows={inputs} />
+      <IncludeRowSections graph={graph} include={include} rows={{ overrides, inputs }} sections={sections} />
       {more > 0 && (
         <p className="rc-field-help">{plural(more, 'more input')} declared in sub-recipes below this one.</p>
       )}
@@ -631,17 +676,31 @@ interface InputsBoxInspectorProps {
   inputValues: Record<string, unknown>;
   inputSources?: Record<string, InputSource>;
   recipeInputs?: ReactNode;
+  includeSections?: IncludeSections;
 }
 
 /** The recipe inputs box, or a drilled in sub-recipe's inputs box. */
-function InputsBoxInspector({ graph, id, inputValues, inputSources, recipeInputs }: InputsBoxInspectorProps) {
+function InputsBoxInspector({
+  graph,
+  id,
+  inputValues,
+  inputSources,
+  recipeInputs,
+  includeSections,
+}: InputsBoxInspectorProps) {
   if (!id.startsWith('overrides:')) {
     return recipeInputs ?? <RecipeInputsList graph={graph} inputValues={inputValues} inputSources={inputSources} />;
   }
   const include = findInclude(graph, id.slice('overrides:'.length));
   if (!include) return <Missing />;
   return (
-    <IncludeInputsInspector graph={graph} include={include} inputValues={inputValues} inputSources={inputSources} />
+    <IncludeInputsInspector
+      graph={graph}
+      include={include}
+      inputValues={inputValues}
+      inputSources={inputSources}
+      sections={includeSections}
+    />
   );
 }
 
@@ -696,10 +755,19 @@ export interface InspectorBodyProps {
   declared?: InputField[];
   /** Where each recipe input's value comes from, by name; derived from `declared` when absent. */
   inputSources?: Record<string, InputSource>;
+  /**
+   * Replaces the read only Parameters table of a step (the app's edit form);
+   * returning null keeps the table.
+   */
+  stepParams?: (step: StepNode) => ReactNode;
   /** Sections after Inputs and outputs for a step (the app's Cache section). */
   stepExtras?: (step: StepNode) => ReactNode;
   /** Replaces the recipe inputs list (the app's Apply form). */
   recipeInputs?: ReactNode;
+  /** Replaces the read only Overrides and Inputs sections of a sub-recipe (the app's, with edit controls). */
+  includeSections?: IncludeSections;
+  /** The run config box's inspector (the app's; the site has no run config). */
+  runConfig?: ReactNode;
 }
 
 /** Details of the selected step, sub-recipe, inputs box or outputs box. */
@@ -710,8 +778,11 @@ export function InspectorBody({
   inputValues = {},
   declared,
   inputSources,
+  stepParams,
   stepExtras,
   recipeInputs,
+  includeSections,
+  runConfig,
 }: InspectorBodyProps) {
   if (!selected) {
     return (
@@ -724,12 +795,20 @@ export function InspectorBody({
   switch (selected.kind) {
     case 'step': {
       const step = findStep(graph, selected.id);
-      return step ? <StepInspector graph={graph} step={step} extras={stepExtras} /> : <Missing />;
+      return step ? <StepInspector graph={graph} step={step} params={stepParams} extras={stepExtras} /> : <Missing />;
     }
     case 'include': {
       const include = findInclude(graph, selected.id);
       if (!include) return <Missing />;
-      return <IncludeInspector graph={graph} include={include} inputValues={inputValues} inputSources={sources} />;
+      return (
+        <IncludeInspector
+          graph={graph}
+          include={include}
+          inputValues={inputValues}
+          inputSources={sources}
+          sections={includeSections}
+        />
+      );
     }
     case 'input':
       return <InputInspector graph={graph} id={selected.id} fields={declared} />;
@@ -741,9 +820,12 @@ export function InspectorBody({
           inputValues={inputValues}
           inputSources={sources}
           recipeInputs={recipeInputs}
+          includeSections={includeSections}
         />
       );
     case 'outputsBox':
       return <OutputsBoxInspector graph={graph} owner={selected.id} drill={drill} />;
+    case 'runConfig':
+      return runConfig ?? <Missing />;
   }
 }

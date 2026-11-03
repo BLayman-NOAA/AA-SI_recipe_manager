@@ -1,22 +1,27 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/save_calibration.yaml
 
-# RL2307 calibration, phase 3: archive the finished calibration
-#
+# RL2307 calibration, phase 3: archive the finished calibration.
 # Runs after calibration_standardize.yaml and calibration_mapping.yaml and
-# copies what the survey keeps into archive_dir.
-#
-#   aa-recipe run save_calibration.yaml --input archive_dir=./archive
-#   aa-recipe run save_calibration.yaml --input archive_dir=gs://bucket/RL2307/calibration
-#
-# Run locally with only archive_dir set, and it reads the folder phase 2 wrote.
-# Keep its run config identical to the other two phases so it finds that folder.
-# A caller with no folder passes phase 2's mapping_dict, provenance and
-# single_channel_data instead.
-# A non-empty archive_dir is refused unless overwrite is true.
+# writes what a survey keeps:
 #
 #   <archive_dir>/channel_mapping.yaml
 #   <archive_dir>/calibration_provenance.yaml
 #   <archive_dir>/Standardized_Reports/     one file per standardized channel
+#
+# It shares no steps with the first two phases, so it is outside their
+# cache-sharing contract.
+#
+#   LOCAL      Set only archive_dir. The step reads the folder phase 2 wrote
+#              under outputs/calibration/, so keep this recipe's run config
+#              identical to the other two.
+#   A CALLER   Pass mapping_dict, provenance and single_channel_data from
+#              phase 2's outputs; nothing is read from disk.
+#
+# A destination that is not empty is refused unless overwrite is true.
+#
+# Usage:
+#   aa-recipe run save_calibration.yaml --input archive_dir=./archive
+#   aa-recipe run save_calibration.yaml --input archive_dir=gs://bucket/RL2307/calibration
 
 recipe:
   name: "rl2307_save_calibration"
@@ -29,13 +34,14 @@ inputs:
   archive_dir:
     type: path
     required: true
-    description: "Directory to archive the calibration into, a local path or a gs:// URL."
+    description: "Folder the calibration archive is written to, a local path or a gs:// URL."
+  # calibration_outputs is only consulted when an archive input is left unset.
   calibration_outputs:
     type: str
     default: "calibration"
     description: >
-      Subdirectory under the outputs folder the earlier phases wrote to. Keep it
-      the same as in the other two phase recipes.
+      Subfolder of the outputs folder the earlier calibration phases wrote to.
+      Keep it the same as in those phase recipes.
   output_base:
     type: path
     required: false
@@ -45,15 +51,22 @@ inputs:
   overwrite:
     type: bool
     default: false
-    description: "Replace an archive already in archive_dir, clearing Standardized_Reports/ first."
+    description: >
+      Replace an archive already in archive_dir, clearing
+      Standardized_Reports/ first. False stops the run when the destination is
+      not empty.
   single_channel_data:
     type: dict
     required: false
-    description: "Phase 2's single_channel_data output. Read from the outputs folder when unset."
+    description: >
+      Phase 2's single_channel_data output, the standardized channels the
+      mapping was built from. Read from the outputs folder when unset.
   mapping_dict:
     type: dict
     required: false
-    description: "Phase 2's mapping_dict output. Read from the outputs folder when unset."
+    description: >
+      Phase 2's mapping_dict output: each raw file's channels mapped to their
+      calibration key. Read from the outputs folder when unset.
   provenance:
     type: dict
     required: false
@@ -61,8 +74,8 @@ inputs:
 
 steps:
 
-  # Always runs: the archive is outside the outputs directory, so a cache hit
-  # could not tell whether it still exists.
+  # regenerate: always: the archive lives outside the run's outputs directory,
+  # where the executor cannot check it is still there.
   - id: save_calibration
     op: save_calibration_archive
     checkpoint: never
@@ -89,7 +102,9 @@ outputs:
   provenance_path:
     step_id: save_calibration
     output_name: provenance_path
-    description: "Full path of the archived calibration_provenance.yaml."
+    description: >
+      Full path of the archived calibration_provenance.yaml. Unlike the mapping
+      recipe's output of the same name, this one outlives the run.
   reports_dir:
     step_id: save_calibration
     output_name: reports_dir
@@ -101,4 +116,6 @@ outputs:
   files_written:
     step_id: save_calibration
     output_name: files_written
-    description: "Every file the archive holds, in write order."
+    description: >
+      Every file the archive holds, in write order, so a caller can report the
+      archive without listing the destination itself.

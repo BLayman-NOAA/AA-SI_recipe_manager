@@ -1,35 +1,32 @@
-# HB2407 Masked Sv for the Echogram Viewer
+# HB2407 masked Sv for the echogram viewer
 #
-# Produces the artifact an analyst actually wants to look at when checking a
-# mask: Sv with the seabed and surface cut out, and nothing else done to it.
+# Sv with the seabed and surface cut out and nothing else done to it, the
+# artifact an analyst checks a mask against.
 #
 #   level 1   per file: read -> calibration params
 #   level 2a  per file: Sv -> transducer depth -> depth -> crop; merged, chunked
 #   level 2b  select_window -> EVL seafloor -> masks -> apply_mask [checkpoint]
 #
-# It stops there on purpose. Background noise removal rewrites every sample, so
-# looking at a denoised echogram to judge a seabed cut is judging two things at
-# once. The masked-only store is also the honest input for the viewer's own
-# reduction: a level's coarse pixel is the linear mean of the source samples
-# that survived the mask, and NaN is what tells it which those are.
+# It stops at apply_mask on purpose: noise removal rewrites every sample, and
+# the viewer's reduction averages only the samples that survived the mask,
+# which NaN marks. Level 2b is processing_lvl_2_user.yaml's chain stopped at
+# apply_mask, so its checkpoints are shared with the full analysis recipe.
 #
-# The survey-level blocks are the same two includes every other HB2407 recipe
-# uses, so they hash identically and come back as cache hits. Level 2b is
-# processing_lvl_2_user.yaml's chain stopped at apply_mask; its step ids and
-# params match, so the checkpoints are shared with the full analysis recipe in
-# both directions.
+# The survey window is set here, which is not the usual choice: the four local
+# raw files are a test segment, so survey_time_start / survey_time_end bound
+# the ingest. That re-keys the survey checkpoints away from a real survey-wide
+# run, which is correct since they are different data.
 #
-# THE SURVEY WINDOW IS SET HERE, WHICH IS NOT THE USUAL CHOICE. The four local
-# raw files this points at are a test segment, not the survey, so
-# survey_time_start / survey_time_end bound the ingest rather than leaving it
-# to read every .raw in the folder. That re-keys the survey checkpoints away
-# from a real survey-wide run, which is correct: they are different data.
-#
-# Build the viewer store from the checkpoint this leaves behind, using the
-# stand-in for the milestone 13 op in AA-SI_EchogramGL:
+# Build the viewer store from the checkpoint this leaves, with the stand-in for
+# the milestone 13 op in AA-SI_EchogramGL:
 #
 #   aa-recipe run echogram_masked.yaml
-#   python scripts/build_viewer_store.py #       --cache   <this folder>/recipe_cache #       --manifest <this folder>/outputs/manifest.json #       --raw     <this folder>/raw/D20240924-T19*.raw #                 <this folder>/raw/D20240924-T2[012]*.raw #       --out stores/hb2407_masked --levels 8
+#   python scripts/build_viewer_store.py \
+#       --cache    <this folder>/recipe_cache \
+#       --manifest <this folder>/outputs/manifest.json \
+#       --raw      <this folder>/raw/D20240924-T19*.raw \
+#                  <this folder>/raw/D20240924-T2[012]*.raw \
+#       --out stores/hb2407_masked --levels 8
 #
 # Usage: aa-recipe dry-run echogram_masked.yaml --visualize
 
@@ -41,63 +38,84 @@ recipe:
   schema_version: "1"
 
 inputs:
-  # --- Survey-level. Matches survey_preprocess.yaml apart from the window. --
+  # Survey level: matches survey_preprocess.yaml apart from the window.
   raw_input_folder:
     type: path
     default: "./raw"
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
 
   # The test segment: four contiguous files from the evening of 2024-09-24,
-  # 3330 pings each. Bounds are filename stamps and the end is inclusive, so
-  # this selects T194054 through T222726 and stops short of T232256.
+  # 3330 pings each. The end bound is inclusive on filename stamps, so this
+  # selects T194054 through T222726 and stops short of T232256.
   survey_time_start:
     type: str
     default: "2024-09-24T19:40:54"
+    description: "Optional inclusive ISO datetime bounding the start of the survey, matched to the time in each raw file name. Unset ingests every file."
   survey_time_end:
     type: str
     default: "2024-09-24T22:27:26"
+    description: "Optional inclusive ISO datetime upper bound of the survey, matched to the time in each raw file name. Unset ingests through the last file."
 
-  # Not the survey-wide 250 m. The .evl line puts this segment's seabed
-  # between 17.9 and 53.3 m, so a 250 m ceiling would leave four fifths of
-  # every ping below the mask and the store four fifths nodata. 70 m keeps a
-  # margin of blank water under the deepest seabed and nothing more.
+  # Not the survey-wide 250 m: the .evl line puts this segment's seabed between
+  # 17.9 and 53.3 m, so 250 m would leave the store four fifths nodata. 70 m
+  # keeps a margin of blank water under the deepest seabed.
   crop_max_range_m:
     type: float
     default: 70.0
+    description: >
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. Changing it recomputes the whole survey Sv.
   survey_chunk_ping_time:
     type: int
     default: 2000
+    description: >
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
-  # --- User-level. ---------------------------------------------------------
+  # User level
   seabed_line_folder:
     type: path
     default: "./seabed_lines"
+    description: >
+      Folder of Echoview .evl seabed line exports, a local path or a gs:// URL.
+      The files covering the time window are combined into the seafloor; a
+      single .evl file is read whole.
 
-  # The pings, not the filename stamps: the last file runs about 55 minutes
-  # past its own stamp, and the window has to cover its pings for both
-  # select_ping_time_range and the .evl selection.
+  # Bound the pings, not the filename stamps: the last file runs about 55
+  # minutes past its own stamp.
   file_time_start:
     type: str
     default: "2024-09-24T19:40:54"
+    description: >
+      Inclusive ISO UTC datetime start of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the start open.
   file_time_end:
     type: str
     default: "2024-09-24T23:25:00"
+    description: >
+      Inclusive ISO UTC datetime end of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the end open.
 
   surface_depth_m:
     type: float
     default: 5.0
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
   seafloor_buffer_m:
     type: float
     default: 1.0
+    description: "Height above the seabed line, in metres, that is also masked, to drop the bottom echo and detection error."
 
 steps:
 
-  # ======================================================================
-  # SURVEY LEVEL
-  # ======================================================================
+  # Survey level
 
   - include: sub_recipes/processing_lvl_1_survey.yaml
     input_overrides:
@@ -120,9 +138,7 @@ steps:
       crop_max_range_m: ${inputs.crop_max_range_m}
       survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
 
-  # ======================================================================
-  # USER LEVEL - the window enters here and nowhere above.
-  # ======================================================================
+  # User level: the window enters here and nowhere above.
 
   - include: sub_recipes/processing_lvl_2_user_masked.yaml
     input_overrides:

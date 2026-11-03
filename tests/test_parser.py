@@ -8,15 +8,19 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from aa_recipe_manager.exceptions import RecipeParseError
 from aa_recipe_manager.model.types import Step
-from aa_recipe_manager.parser.yaml_reader import load_recipe
+from aa_recipe_manager.parser.yaml_reader import build_recipe, load_recipe
 from aa_recipe_manager.resolver.params import (
     extract_edge_refs,
     extract_input_refs,
     resolve_input_refs,
 )
+
+
+CLIENT_FIXTURES = Path(__file__).parent / "fixtures" / "client_recipes"
 
 
 def _write_recipe(tmp_path: Path, content: str) -> Path:
@@ -498,6 +502,69 @@ class TestRecipeIncludes:
 
         with pytest.raises(RecipeParseError, match="Circular recipe include"):
             load_recipe(first)
+
+
+def _read_plain(path: Path) -> dict:
+    return YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+
+
+class TestBuildRecipe:
+    def test_build_recipe_with_a_memory_loader_equals_load_recipe(self):
+        root = CLIENT_FIXTURES / "with_sub.yaml"
+        asked: list[Path] = []
+
+        def loader(path: Path) -> dict:
+            asked.append(path)
+            return _read_plain(path)
+
+        built = build_recipe(_read_plain(root), root.resolve(), loader)
+
+        assert built.model_dump() == load_recipe(root).model_dump()
+        sub = (CLIENT_FIXTURES / "sub").resolve()
+        assert asked == [sub / "chain.yaml", sub / "leaf.yaml"]
+
+    def test_loader_serves_a_file_that_is_not_on_disk(self, tmp_path):
+        child = {
+            "recipe": {"name": "child", "version": "1.0", "schema_version": "1"},
+            "inputs": {"k": {"type": "int", "default": 2}},
+            "steps": [{"id": "only", "op": "query_ncei_data", "params": {}}],
+        }
+        root = {
+            "recipe": {"name": "parent", "version": "1.0", "schema_version": "1"},
+            "steps": [{"include": "sub/child.yaml"}],
+        }
+
+        recipe = build_recipe(root, tmp_path / "root.yaml", lambda path: child)
+
+        assert [step.id for step in recipe.steps] == ["only"]
+        assert recipe.inputs["k"].default == 2
+        assert recipe.include_blocks[0].path == "sub/child.yaml"
+
+    def test_loader_parse_errors_propagate(self, tmp_path):
+        root = {
+            "recipe": {"name": "parent", "version": "1.0", "schema_version": "1"},
+            "steps": [{"include": "missing.yaml"}],
+        }
+        error = RecipeParseError("loader says no")
+
+        def loader(path: Path) -> dict:
+            raise error
+
+        with pytest.raises(RecipeParseError) as raised:
+            build_recipe(dict(root), tmp_path / "root.yaml", loader)
+        assert raised.value is error
+
+        with pytest.raises(RecipeParseError, match="Included recipe file not found"):
+            build_recipe(dict(root), tmp_path / "root.yaml")
+
+    def test_model_errors_and_non_mappings_raise_recipe_parse_error(self, tmp_path):
+        path = tmp_path / "root.yaml"
+        no_steps = {"recipe": {"name": "x", "version": "1.0", "schema_version": "1"}}
+
+        with pytest.raises(RecipeParseError, match="Invalid recipe"):
+            build_recipe(no_steps, path)
+        with pytest.raises(RecipeParseError, match="Expected a YAML mapping"):
+            build_recipe(["not", "a", "mapping"], path)
 
 
 class TestExtractEdgeRefs:

@@ -1,33 +1,21 @@
-# HB1603 Acoustic Survey - Parallel Pipeline, Recombined After Sv
+# HB1603 processing levels with Sv computed per file and the survey recombined
+# after Sv. Each raw file is read, calibrated, converted to Sv and masked on its
+# own (map_over); the masked Sv is then concatenated along ping_time.
 #
-# Parallel variant of recombine_after_sv.yaml. The survey is NOT combined into
-# a single EchoData before Sv is computed. Instead every raw file is opened,
-# calibrated, Sv-computed and masked independently (map_over), and the survey
-# is reassembled once, after Sv, by concatenating the per-file masked Sv
-# datasets along ping_time.
+#   level 0    download raw files
+#   level 1    per file: read, open, select this file's calibration
+#   level 2    per file: Sv, depth, seafloor, masks; fan-in to one survey Sv;
+#              survey: crop, rechunk, remove background noise
+#   level 3    survey: sparse masking, MVBS, per-cell statistics
+#   level 4    survey: ML reshape, clustering, reporting
 #
-#   level 0    download raw files (unchanged)
-#   level 1    per file: read -> materialize -> select this file's calibration
-#   level 2    per file: Sv -> depth/angles -> seafloor -> masks -> apply
-#              FAN-IN: merge per-file Sv into one survey Sv
-#              survey:  rechunk -> remove background noise
-#   level 3    survey: sparse masking, MVBS, per-cell statistics (unchanged)
-#   level 4    survey: ML reshape, clustering, reporting (unchanged)
+# remove_noise is the first step whose estimate spans pings, so the fan-in comes
+# before it and everything from there matches the non-parallel pipeline. See
+# processing_lvl_2_parallel.yaml.
 #
-# Everything from remove_noise onward is survey-wide and produces the same
-# result as the non-parallel pipeline -- remove_noise is the first step whose
-# estimate spans a ping window, so the fan-in deliberately happens before it.
-# See processing_lvl_2_parallel.yaml for why the merge sits at apply_mask
-# rather than immediately after compute_sv.
-#
-# Run sequentially (one file at a time, same results, no extra setup):
-#   aa-recipe run recombine_after_sv_parallel.yaml
-#
-# Run with per-file instances distributed across worker processes:
-#   aa-recipe run recombine_after_sv_parallel.yaml --executor dask
-#
-# Usage: aa-recipe generate recombine_after_sv_parallel.yaml
-#        aa-recipe dry-run  recombine_after_sv_parallel.yaml --visualize
+# Run sequentially, or with the per-file instances on worker processes:
+#   aa-recipe run recombine_after_sv.yaml
+#   aa-recipe run recombine_after_sv.yaml --executor dask
 
 recipe:
   name: "processing_levels_pipeline_parallel"
@@ -40,18 +28,23 @@ inputs:
   raw_input_folder:
     type: path
     default: "./raw_file_inputs"
+    description: "Local folder the NCEI download writes raw files into."
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 
@@ -70,8 +63,8 @@ steps:
       record_author: "<Your Name>"
       sonar_model: "EK60"
 
-  # Must follow level 1 (parallel) directly: its steps continue the same
-  # per-file mapped chain, and its fan-in reassembles the survey.
+  # Must follow level 1 (parallel) directly: it continues the same per-file
+  # mapped chain.
   - include: sub_recipes/processing_lvl_2_parallel.yaml
     input_overrides:
       echodata: ${combine_raw.echodata}
@@ -124,10 +117,8 @@ steps:
             color: "red"
             linewidth: 3.5
 
-  # No echodata is wired here: this pipeline never builds a survey-wide
-  # EchoData, and level 4 only needs it for the 'seafloor_depth'/'altitude'
-  # auxiliary features, which this configuration does not use (features:
-  # [cell_cv], which is served by cell_stats_sv).
+  # No echodata: this pipeline builds no survey-wide EchoData, and level 4's
+  # cell_cv feature does not need it.
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}

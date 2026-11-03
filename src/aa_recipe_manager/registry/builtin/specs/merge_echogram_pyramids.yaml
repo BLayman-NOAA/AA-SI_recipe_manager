@@ -1,17 +1,17 @@
 op: merge_echogram_pyramids
 cache_key: merge_echogram_pyramids  # pinned cache identity - keep stable across op renames
 description: >
-  Collect per segment pyramids into one.
-
+  Collect per segment pyramids into one, level by level. Only correct when the
+  parts were cut by plan_pyramid_segments.
+notes: >
   The fan-in for a segment-parallel pyramid build. Level k of the survey is
   level k of each part laid end to end, so this concatenates per level rather
   than rebuilding, and adds no levels: each part already carries every level.
   The per chunk summaries are recomputed, because a part's chunk grid is not the
   whole survey's and its keys cannot be shifted into place.
 
-  Only correct when the parts were cut by plan_pyramid_segments. A split off the
-  grid puts a partial cell in the middle of the survey and every coarse level
-  after it is wrong.
+  A split off the plan_pyramid_segments grid puts a partial cell in the middle
+  of the survey, and every coarse level after it is wrong.
 category: visualization
 inputs:
   parts:

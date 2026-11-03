@@ -1,22 +1,27 @@
 import { choices, type Resolution, type ViewSettings } from 'aa-si-echogram-gl';
 import { describe, expect, it } from 'vitest';
-import type { StepArtifacts } from '../src/api/models';
+import type { Preview, StepArtifacts, StepPreview } from '../src/api/models';
 import {
   asResolution,
   computedSteps,
   foundText,
+  goneText,
   isGone,
+  layerFreshness,
   layerId,
   missText,
-  outOfDateLayers,
   restoredLayer,
   savedLayer,
+  saveKind,
   settingsFor,
   sourcesWithoutLayers,
   tierLetters,
+  unsavedText,
+  withFreshness,
   withLabels,
   type EchogramLayer,
 } from '../src/echogram/layers';
+import { actionsFor } from '../src/echogram/LayerList';
 import { initialRunState, type RunState } from '../src/runs/reducer';
 import diveSv from './fixtures/artifacts.dive_sv.json';
 import embed from './fixtures/artifacts.embed_results.json';
@@ -35,8 +40,9 @@ function layer(step: string, overrides: Partial<EchogramLayer> = {}): EchogramLa
     resolution: null,
     state: 'shown',
     error: null,
-    outOfDate: false,
+    freshness: { state: 'unknown' },
     addedAt: 1000,
+    drawnAfter: null,
     ...overrides,
   };
 }
@@ -75,29 +81,115 @@ describe('layer ids and resolutions', () => {
   });
 
   it('round trips a layer through what is saved across a reload', () => {
-    const saved = savedLayer(layer('sv', { resolution: resolutionOf(svMapped), outOfDate: true }));
+    const saved = savedLayer(layer('sv', { resolution: resolutionOf(svMapped), freshness: { state: 'available' } }));
     expect(Object.keys(saved).sort()).toEqual(['addedAt', 'label', 'output', 'step', 'stepHash', 'variable']);
     expect(restoredLayer(saved)).toEqual(layer('sv', { state: 'loading' }));
   });
 });
 
-describe('out of date layers', () => {
-  const computed = (steps: string[], at: number) => ({ steps: new Set(steps), at });
+/** A step's preview entry; by default at hash h1, held by nothing. */
+function stepAt(step: string, overrides: Partial<StepPreview> = {}): StepPreview {
+  return {
+    step_id: step,
+    step_hash: 'h1',
+    held_by: [],
+    instances: null,
+    instances_held: {},
+    fanned_out: false,
+    planned: 'compute',
+    tier: null,
+    note: null,
+    checkpoint: 'will-save',
+    recipe_checkpoint: 'always',
+    pinned: false,
+    ...overrides,
+  };
+}
 
-  it('marks a layer whose step hash moved in the preview', () => {
-    const layers = [layer('a'), layer('b')];
-    expect(outOfDateLayers(layers, { a: 'h2', b: 'h1' }, null)).toEqual(new Set(['a/ds_Sv/Sv']));
+const previewOf = (...steps: StepPreview[]) => ({ steps }) as unknown as Preview;
+
+describe('layer freshness', () => {
+  const computed = (steps: string[], runId: string) => ({ steps: new Set(steps), runId });
+  const state = (entry: StepPreview | undefined, ran: ReturnType<typeof computed> | null = null, at = layer('a')) =>
+    layerFreshness(at, entry, ran);
+
+  it('is current at the drawn hash with no later run, and unknown without a preview entry', () => {
+    expect(state(stepAt('a', { held_by: ['user'] }))).toEqual({ state: 'current' });
+    expect(state(stepAt('a'), computed(['b'], 'r1'))).toEqual({ state: 'current' });
+    expect(state(undefined)).toEqual({ state: 'unknown' });
   });
 
-  it('marks a layer whose step a run computed after it was drawn', () => {
-    const layers = [layer('a', { addedAt: 1000 }), layer('b', { addedAt: 3000 })];
-    expect(outOfDateLayers(layers, {}, computed(['a', 'b'], 2000))).toEqual(new Set(['a/ds_Sv/Sv']));
+  it('is available when a run saved the step after it was drawn, at the same hash', () => {
+    expect(state(stepAt('a', { held_by: ['user'] }), computed(['a'], 'r1'))).toEqual({ state: 'available' });
+    expect(state(stepAt('a'), computed(['a'], 'r1'), layer('a', { drawnAfter: 'r1' }))).toEqual({ state: 'current' });
+    expect(state(stepAt('a'), computed(['a'], 'r2'), layer('a', { drawnAfter: 'r1' }))).toEqual({ state: 'available' });
   });
 
-  it('leaves alone a layer with the same hash and no later run, or a step the preview lacks', () => {
-    expect(outOfDateLayers([layer('a')], { a: 'h1' }, computed(['b'], 5000)).size).toBe(0);
-    expect(outOfDateLayers([layer('a')], {}, null).size).toBe(0);
+  it('is partial for a fanned out step held for some files only, at the drawn hash too', () => {
+    const mapped = { fanned_out: true, instances: 3, instances_held: { user: 2 } };
+    expect(state(stepAt('a', mapped))).toEqual({ state: 'partial', held: 2, of: 3 });
+    expect(state(stepAt('a', mapped), computed(['a'], 'r1'))).toEqual({ state: 'partial', held: 2, of: 3 });
   });
+
+  it('is available when a tier holds another hash than the drawn one, as after a value is changed back', () => {
+    expect(state(stepAt('a', { step_hash: 'h0', held_by: ['user'] }))).toEqual({ state: 'available' });
+    expect(state(stepAt('a', { step_hash: 'h0', held_by: ['survey'] }))).toEqual({ state: 'available' });
+  });
+
+  it('is not computed when nothing holds the new hash', () => {
+    expect(state(stepAt('a', { step_hash: 'h2' }))).toEqual({ state: 'not_computed' });
+  });
+
+  it('is partial for a fanned out step held for some files only, and available once all are', () => {
+    const mapped = { step_hash: 'h2', fanned_out: true, instances: 3 };
+    expect(state(stepAt('a', { ...mapped, instances_held: { user: 2, survey: 0 } }))).toEqual({ state: 'partial', held: 2, of: 3 });
+    expect(state(stepAt('a', { ...mapped, instances_held: { user: 0 } }))).toEqual({ state: 'not_computed' });
+    expect(state(stepAt('a', { ...mapped, held_by: ['user'], instances_held: { user: 3 } }))).toEqual({ state: 'available' });
+  });
+
+  it('keeps the same row object when its freshness is unchanged', () => {
+    const rows = [layer('a', { freshness: { state: 'current' } }), layer('b')];
+    const next = withFreshness(rows, previewOf(stepAt('a'), stepAt('b', { step_hash: 'h2' })), null);
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1].freshness).toEqual({ state: 'not_computed' });
+    expect(withFreshness(next, null, null).map((row) => row.freshness.state)).toEqual(['unknown', 'unknown']);
+  });
+});
+
+describe('unsaved step messages', () => {
+  it('tells a checkpoint from a step kept in memory or pinned only as a target, and never', () => {
+    expect(saveKind(stepAt('a'))).toBe('checkpoint');
+    expect(saveKind(stepAt('a', { checkpoint: 'memory-only', recipe_checkpoint: null }))).toBe('memory');
+    expect(saveKind(stepAt('a', { checkpoint: 'will-save', pinned: true, recipe_checkpoint: null }))).toBe('memory');
+    expect(saveKind(stepAt('a', { recipe_checkpoint: 'never', checkpoint: 'memory-only' }))).toBe('never');
+    expect(saveKind(undefined, 'never')).toBe('never');
+    expect(saveKind(undefined, 'always')).toBe('checkpoint');
+    expect(saveKind(undefined, null)).toBe('unknown');
+  });
+
+  it('takes a step the recipe checkpoints as a checkpoint, though this run leaves it out', () => {
+    for (const planned of ['untargeted', 'pruned', 'skipped']) {
+      const step = stepAt('a', { planned, checkpoint: 'memory-only', recipe_checkpoint: 'always' });
+      expect(saveKind(step)).toBe('checkpoint');
+      expect(unsavedText('a', saveKind(step))).not.toMatch(/isn't a checkpoint/);
+    }
+    expect(saveKind(stepAt('a', { checkpoint: 'will-save', pinned: true, recipe_checkpoint: 'always' }))).toBe('checkpoint');
+  });
+
+  it('words each case', () => {
+    expect(unsavedText('sv', 'memory')).toBe(
+      "sv isn't a checkpoint, so only a run to it saves it. Run to sv to draw it, or make it a checkpoint so every run saves it.",
+    );
+    expect(unsavedText('sv', 'checkpoint')).toBe('sv has no saved result yet. Run to sv to draw it.');
+    expect(unsavedText('sv', 'unknown', 'no cache configured')).toBe(
+      'sv has no saved result yet (no cache configured). Run to sv to draw it.',
+    );
+    expect(unsavedText('sv', 'never')).toBe("sv is never saved (checkpoint: never in the recipe), so it can't be drawn.");
+    expect(goneText('sv')).toBe('sv is not saved any more.');
+  });
+});
+
+describe('what a finished run computed', () => {
 
   const instances = { count: null, done: 0, computed: 0, cached: 0, skipped: 0 };
   const step = { tier: null, hash: null, planned: null, index: 0, total: 0, seconds: null, error: null, chain: null };
@@ -116,29 +208,27 @@ describe('out of date layers', () => {
     };
   }
 
-  it('reads what a finished run computed, and when from its run_finished event', () => {
+  it('reads what a finished run computed, and which run it was', () => {
     expect(computedSteps(initialRunState('r1'))).toBeNull();
-    const run = finishedRun({ finishedAt: 20, logs: [log(1, 10), log(2, 12.5)] });
-    expect(computedSteps(run)).toEqual({ steps: new Set(['a', 'c']), at: 20000 });
+    expect(computedSteps(finishedRun())).toEqual({ steps: new Set(['a', 'c']), runId: 'r1' });
   });
 
-  it('falls back to the last event logged, and to nothing rather than the clock', () => {
-    expect(computedSteps(finishedRun({ logs: [log(1, 12.5), log(2, 10)] }))?.at).toBe(12500);
-    expect(computedSteps(finishedRun())).toBeNull();
+  it('leaves out a step the start preview says the run kept in memory only', () => {
+    const run = finishedRun();
+    const start = previewOf(stepAt('a', { checkpoint: 'memory-only' }), stepAt('c', { checkpoint: 'memory-only', pinned: true }));
+    expect(computedSteps(run, start)?.steps).toEqual(new Set(['c']));
   });
 
-  it('reads a long log without spreading it into arguments', () => {
-    const logs = Array.from({ length: 300000 }, (_, index) => log(index, index));
-    expect(computedSteps(finishedRun({ logs }))?.at).toBe(299999000);
-  });
-
-  it('does not mark a layer refreshed after the run again', () => {
-    const run = finishedRun({ finishedAt: Date.now() / 1000 - 5 });
-    const refreshed = layer('a', { addedAt: Date.now() });
-    expect(outOfDateLayers([refreshed], {}, computedSteps(run))).toEqual(new Set());
-    // Asked again later, the run's time is still its own.
-    expect(outOfDateLayers([refreshed], {}, computedSteps(run))).toEqual(new Set());
-    expect(outOfDateLayers([layer('a', { addedAt: 0 })], {}, computedSteps(run))).toEqual(new Set(['a/ds_Sv/Sv']));
+  it('marks a layer drawn before the run, whatever the two clocks say', () => {
+    const now = Date.now();
+    // The server's clock an hour behind the browser's.
+    const behind = finishedRun({ finishedAt: now / 1000 - 3600, logs: [log(1, now / 1000 - 3600)] });
+    const drawnBefore = layer('a', { addedAt: now - 60000, drawnAfter: null });
+    expect(layerFreshness(drawnBefore, stepAt('a'), computedSteps(behind)).state).toBe('available');
+    // The server's clock an hour ahead.
+    const ahead = finishedRun({ finishedAt: now / 1000 + 3600, logs: [log(1, now / 1000 + 3600)] });
+    const drawnAfter = layer('a', { addedAt: now, drawnAfter: 'r1' });
+    expect(layerFreshness(drawnAfter, stepAt('a'), computedSteps(ahead)).state).toBe('current');
   });
 });
 
@@ -228,5 +318,18 @@ describe('experience test fixes', () => {
       'embed_results:gridded_results',
     ]);
     expect(withLabels([layer('sv', { label: 'kept' })])[0].label).toBe('kept');
+  });
+});
+
+describe('row actions', () => {
+  it('offers Run when nothing holds the current hash, Refresh for newer data or an error, else nothing', () => {
+    const row = (state: EchogramLayer['state'], freshness: EchogramLayer['freshness']) => actionsFor({ state, freshness });
+    expect(row('shown', { state: 'current' })).toBeNull();
+    expect(row('shown', { state: 'unknown' })).toBeNull();
+    expect(row('shown', { state: 'available' })).toBe('refresh');
+    expect(row('error', { state: 'current' })).toBe('refresh');
+    expect(row('shown', { state: 'not_computed' })).toBe('run');
+    expect(row('error', { state: 'not_computed' })).toBe('run');
+    expect(row('shown', { state: 'partial', held: 1, of: 3 })).toBe('run');
   });
 });

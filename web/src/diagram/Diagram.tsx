@@ -1,16 +1,20 @@
 /** The application's diagram: the open session's graph with its run marks and run controls. */
+import { useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { fieldSources } from '../api/fields';
 import { findStep, GRAPH_SCHEMA, stepNodes } from '../api/graph';
-import type { SessionDocument } from '../api/models';
-import { useCurrentSession, useOpeningRecipe } from '../api/queries';
+import { fileEditable, type SessionDocument } from '../api/models';
+import { applyEdit, useCurrentSession, useOpeningRecipe } from '../api/queries';
 import { showEchogram } from '../echogram/show';
+import { DiskBanner } from '../editing/DiskBanner';
+import { setCheckpoint } from '../editing/operations';
 import { stepBadges } from '../runs/badges';
 import { RunHint } from '../runs/RunHint';
 import { openStepLog, shownRun, shownRunPreview, useRunStore } from '../runs/store';
 import { useCurrentPreview } from '../runs/usePreviewIntent';
 import { useRunControlsContext } from '../runs/useRunControls';
 import { DiagramView } from './DiagramView';
+import { runConfigView } from './runConfig';
 import { SubRecipeBanner } from './SubRecipeBanner';
 
 /** A session's diagram with the marks of the current preview and the run shown. */
@@ -40,8 +44,21 @@ function SessionDiagram({ session }: { session: SessionDocument }) {
     }),
     [sid, graph],
   );
+  const client = useQueryClient();
+  // Keyed on the files, not the session, whose version changes on every sync.
+  const readOnly = session.read_only;
+  const files = session.files;
+  const checkpoint = useMemo(
+    () => ({
+      toggle: (stepId: string, on: boolean) => void applyEdit(client, sid, [setCheckpoint(stepId, on ? 'always' : null)]),
+      enabled: (document: string) => fileEditable({ read_only: readOnly, files }, document),
+    }),
+    [client, sid, readOnly, files],
+  );
   const declared = session.inputs.declared;
   const inputSources = useMemo(() => fieldSources(declared), [declared]);
+  const config = session.run_config;
+  const runConfig = useMemo(() => runConfigView(config, declared), [config, declared]);
   return (
     <DiagramView
       graph={graph}
@@ -50,14 +67,17 @@ function SessionDiagram({ session }: { session: SessionDocument }) {
       inputSources={inputSources}
       badges={badges}
       runSteps={runLive ? runSteps : null}
+      runConfig={runConfig}
       runToHere={run}
       echogram={echogram}
+      checkpoint={checkpoint}
       onStepClick={(step, badge) => {
         if (badge?.actual === 'failed') openStepLog(step.id);
       }}
       notices={
         <>
           <SubRecipeBanner origin={session.origin} />
+          <DiskBanner sid={session.id} conflicts={session.conflicts} />
           <RunHint />
         </>
       }

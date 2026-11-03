@@ -1,12 +1,7 @@
-# Machine Learning Sub-Recipe — Parameter Sweep (Ensemble) Variant
-#
-# Stage 8 demonstration of the `sweep` + `collect` (parameter-parallel)
-# pattern. Identical to machine_learning.yaml through normalization, but the
-# single HDBSCAN run is replaced by a *sweep* over several `min_cluster_size`
-# values. Each swept instance is a pure-compute run of `run_hdbscan`, and the
-# resulting clustering_results are gathered with `collect` into an ensemble
-# that `embed_clustering_results` / `plot_clustering_report` consume as a list
-# (both ops already declare `many: true` on `clustering_results`).
+# ML sub-recipe demonstrating sweep and collect. Matches machine_learning.yaml
+# through normalization, then sweeps run_hdbscan over min_cluster_size and
+# collects the results into an ensemble; embed_clustering_results and
+# plot_clustering_report take clustering_results as a list (many: true).
 #
 # Usage: aa-recipe generate machine_learning_sweep.yaml
 
@@ -20,22 +15,25 @@ recipe:
 inputs:
   mvbs_with_lines:
     type: dataset
-    description: "MVBS dataset with line overlay variables added."
+    description: "Gridded MVBS with the line overlay variables added, flattened into one ML sample per cell."
   echodata:
     type: echodata
-    description: "EchoData object used for auxiliary ML features."
+    description: "Raw EchoData supplying the echosounder's own bottom pick for the 'seafloor_depth' and 'altitude' features. Used only when seafloor_depth is not wired."
   overlay_line_var:
     type: str
     default: "overlay_line"
+    description: "Name of the line variable drawn over the clustering report plots."
   sv_clean_unmasked:
     type: dataset
-    description: "Pre-sparse-mask Sv used for per-cell stats and echogram backdrop."
+    description: "Noise-removed Sv before sparse-bin masking, used for the per-cell statistics and as the backdrop and ping reference for the ML and cluster echograms."
   range_bin:
     type: str
     default: "20m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 
@@ -81,10 +79,8 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       shift_positive: false
 
-  # --- Parameter-parallel fan-out (sweep) ---------------------------------
-  # Run HDBSCAN once per min_cluster_size value. Pure compute, so each instance
-  # returns a small clustering_results Dataset that is checkpointed under its
-  # own content-addressed instance hash.
+  # Fan-out: one run_hdbscan instance per min_cluster_size value, each
+  # checkpointed under its own instance hash.
   - id: hdbscan_sweep
     op: run_hdbscan
     inputs:
@@ -101,8 +97,7 @@ steps:
       cluster_selection_method: "eom"
       use_hdbscan: true
 
-  # --- Fan-in (collect) ---------------------------------------------------
-  # Gather all swept clustering_results into one list and embed them together.
+  # Fan-in: embed every swept result together.
   - id: embed_ensemble
     op: embed_clustering_results
     collect: ${hdbscan_sweep.clustering_results}

@@ -21,34 +21,45 @@ recipe:
 inputs:
   raw_input_folder:
     type: path
-    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
-    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subfolder of the outputs folder for calibration files."
+    description: "Name of the subfolder of the run's outputs folder that calibration artifacts are written to."
   cruise_id:
     type: str
-    description: "Cruise identifier used in calibration mapping."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
+    description: "Name recorded as the author of every generated single-channel calibration file."
   raw_file_names:
     type: list
     default: []
-    description: "Optional subset of filenames in raw_input_folder. Empty uses every .raw file."
+    description: >
+      Optional list of file names within raw_input_folder to process. An empty
+      list uses every .raw file in the folder.
+  # file_time_start also sets the fan-out width: one mapped instance per
+  # selected file. On a gs:// folder the filter runs on names, before any download.
   file_time_start:
     type: str
     required: false
     description: >
-      Optional inclusive ISO start time, matched to the time in each raw
-      filename. Limits both the processed files and the calibration scan.
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time
+      in each raw file name; files at or after it are processed and scanned
+      for calibration. Unset takes every file.
   file_time_end:
     type: str
     required: false
-    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+    description: >
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time
+      in each raw file name; files at or before it are processed and scanned
+      for calibration. Unset takes every file.
 
 steps:
 
@@ -62,7 +73,8 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # Runs once for the whole survey, so the calibration files are parsed once.
+  # Runs once for the survey; each extract_cal_params instance picks its own
+  # file's entry out of mapping_dict.
   - id: gen_cal_mapping
     op: generate_standardized_cal_mapping
     params:

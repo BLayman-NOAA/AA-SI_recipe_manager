@@ -22,7 +22,7 @@ def session_record(config, sid: str) -> dict:
 def test_open_with_sub(client, config):
     session = open_session(client, "with_sub.yaml")
     assert session["title"] == "with_sub"
-    assert session["read_only"] is True
+    assert session["read_only"] is False
     assert session["version"] == 0
     assert session["origin"] == (FIXTURES / "with_sub.yaml").resolve().as_posix()
 
@@ -34,7 +34,8 @@ def test_open_with_sub(client, config):
 
     files = [ref["path"] for ref in session["files"]]
     assert files == ["with_sub.yaml", "sub/leaf.yaml", "sub/chain.yaml"]
-    assert all(ref["editable"] is False for ref in session["files"])
+    assert all(ref["editable"] is True for ref in session["files"])
+    assert all(ref["dirty"] is False for ref in session["files"])
     assert session["files"][1]["origin"].endswith("/sub/leaf.yaml")
 
     assert session["validation"] == {"valid": True, "problems": []}
@@ -45,8 +46,9 @@ def test_open_with_sub(client, config):
     assert session["inputs"]["values"]["n"] == 3
 
     record = session_record(config, session["id"])
-    assert record["schema"] == 1
-    assert record["files"] == files
+    assert record["schema"] == 2
+    assert record["files"] == [{"path": name} for name in files]
+    assert record["copy_root"] == "with_sub.yaml"
     assert record["inputs"] == {} and record["run_config"] == {}
 
 
@@ -269,28 +271,60 @@ def test_malformed_folder_config_is_a_problem(client, config, tmp_path):
     assert listed == [session["id"]]
 
 
-def test_include_under_another_recipe_root(client, config, tmp_path):
+def test_include_outside_the_recipe_folder_is_refused(client, config, tmp_path):
     main, shared = tmp_path / "main", tmp_path / "shared"
     shutil.copytree(FIXTURES / "sub", shared)
     main.mkdir()
     text = (FIXTURES / "with_sub.yaml").read_text()
     text = text.replace("sub/chain.yaml", "../shared/chain.yaml")
     (main / "top.yaml").write_text(text)
-    config.recipe_roots.append(main)
-    session = open_session_at(client, main / "top.yaml")
-    assert "../shared/chain.yaml" in [ref["path"] for ref in session["files"]]
-    url = f"/api/sessions/{session['id']}/files/..%2Fshared%2Fchain.yaml"
-    assert client.get(url).status_code == 403
-
-    config.recipe_roots.append(shared)
-    response = client.get(url)
-    assert response.status_code == 200
-    assert "client_chain" in response.json()["text"]
-
-
-def open_session_at(client, path):
+    config.recipe_roots += [main, shared]
     response = client.post(
-        "/api/sessions", json={"path": path.as_posix()}, headers=HEADERS
+        "/api/sessions", json={"path": (main / "top.yaml").as_posix()}, headers=HEADERS
     )
-    assert response.status_code == 201, response.text
-    return response.json()
+    assert response.status_code == 400
+    assert response.json()["error"] == "WorkspaceError"
+    assert "outside the recipe folder" in response.json()["message"]
+    sessions = config.state_dir / "sessions"
+    assert not sessions.exists() or not any(sessions.iterdir())
+
+
+def test_schema_1_session_is_migrated(client, config):
+    session = open_session(client, "with_sub.yaml")
+    sid = session["id"]
+    folder = config.state_dir / "sessions" / sid
+    record = session_record(config, sid)
+    record.update(
+        schema=1,
+        files=[ref["path"] for ref in session["files"]],
+        read_only=True,
+    )
+    del record["copy_root"]
+    (folder / "session.json").write_text(json.dumps(record), encoding="utf-8")
+    shutil.rmtree(folder / "files")
+    shutil.rmtree(folder / "texts")
+    (folder / "history.jsonl").unlink()
+
+    restarted = TestClient(create_app(config), base_url=BASE_URL)
+    migrated = restarted.get(f"/api/sessions/{sid}").json()
+    assert migrated["read_only"] is False
+    assert all(ref["editable"] for ref in migrated["files"])
+    assert migrated["graph"] == session["graph"]
+    assert migrated["history"]["can_undo"] is False
+    assert (folder / "files" / "sub" / "leaf.yaml").is_file()
+    saved = session_record(config, sid)
+    assert saved["schema"] == 2
+    assert saved["files"] == [{"path": ref["path"]} for ref in session["files"]]
+    assert saved["copy_root"] == "with_sub.yaml"
+
+    response = restarted.post(
+        f"/api/sessions/{sid}/edits",
+        json={
+            "operations": [
+                {"kind": "set_param", "step": "leaf_add", "name": "k", "value": 7}
+            ]
+        },
+        headers=HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["session"]["dirty"] == ["sub/leaf.yaml"]

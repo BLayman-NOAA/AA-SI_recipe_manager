@@ -55,7 +55,7 @@ function before(tip: Point, side: Position): Point {
 function labelClass(data: FlowEdge['data']): string {
   if (!data?.bus) return '';
   if (data.muted) return ' rc-edge-label-muted';
-  return data.bus === 'in' ? ' rc-edge-label-in' : ' rc-edge-label-out';
+  return ` rc-edge-label-${data.bus}`;
 }
 
 /**

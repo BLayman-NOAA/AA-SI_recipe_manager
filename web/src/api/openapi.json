@@ -86,6 +86,88 @@
         "title": "ArtifactModel",
         "type": "object"
       },
+      "ChooseConfigRequest": {
+        "additionalProperties": false,
+        "description": "The run config file to use, as ``--config``; null finds it as the CLI does.\n\nA relative ``path`` is taken from the recipe's folder.",
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "ChooseConfigRequest",
+        "type": "object"
+      },
+      "CreateConfigRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "CreateConfigRequest",
+        "type": "object"
+      },
+      "DiskConflict": {
+        "description": "A file changed on disk that the last sync did not reload.\n\n``error`` is None when the session has unsaved edits to the file, else\nwhy its disk text was not taken.",
+        "properties": {
+          "disk_sha256": {
+            "title": "Disk Sha256",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "error",
+          "disk_sha256"
+        ],
+        "title": "DiskConflict",
+        "type": "object"
+      },
       "EchogramBlock": {
         "properties": {
           "available": {
@@ -124,6 +206,77 @@
         "title": "EchogramBlock",
         "type": "object"
       },
+      "EditRequest": {
+        "additionalProperties": false,
+        "description": "Operations applied in order; ``version`` set means it must be current.",
+        "properties": {
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "operations"
+        ],
+        "title": "EditRequest",
+        "type": "object"
+      },
+      "EditResponse": {
+        "description": "The session after an edit, undo, redo or reload.\n\n``changed_hashes`` lists the steps whose hash changed, in run order, then\nthe steps removed; null when the hashes could not be computed.",
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "changed_hashes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed Hashes"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntryModel"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          }
+        },
+        "required": [
+          "session",
+          "changed",
+          "changed_hashes",
+          "entries"
+        ],
+        "title": "EditResponse",
+        "type": "object"
+      },
       "ErrorResponse": {
         "properties": {
           "details": {
@@ -158,6 +311,11 @@
       },
       "FileRef": {
         "properties": {
+          "dirty": {
+            "default": false,
+            "title": "Dirty",
+            "type": "boolean"
+          },
           "editable": {
             "title": "Editable",
             "type": "boolean"
@@ -231,7 +389,125 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HistoryBlock": {
+        "description": "The undo and redo state; ``seq`` is the newest undoable entry's, else 0.",
+        "properties": {
+          "can_redo": {
+            "title": "Can Redo",
+            "type": "boolean"
+          },
+          "can_undo": {
+            "title": "Can Undo",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "redo_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redo Kind"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "undo_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undo Kind"
+          }
+        },
+        "required": [
+          "can_undo",
+          "can_redo",
+          "undo_kind",
+          "redo_kind",
+          "seq",
+          "note"
+        ],
+        "title": "HistoryBlock",
+        "type": "object"
+      },
+      "HistoryEntryModel": {
+        "description": "One history entry.\n\nJSON has no NaN or infinity, so a non finite number in ``op`` or\n``inverse`` (a file can hold ``.nan``) is sent as its YAML spelling,\n``.nan``, ``.inf`` or ``-.inf``, as in the session's graph.",
+        "properties": {
+          "documents": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "inverse": {
+            "additionalProperties": true,
+            "title": "Inverse",
+            "type": "object"
+          },
+          "op": {
+            "additionalProperties": true,
+            "title": "Op",
+            "type": "object"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "time": {
+            "title": "Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "time",
+          "op",
+          "inverse",
+          "documents"
+        ],
+        "title": "HistoryEntryModel",
+        "type": "object"
+      },
+      "HistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "HistoryRequest",
+        "type": "object"
+      },
       "InputField": {
+        "description": "A recipe input and where its value comes from.\n\n``required`` is True for an input with no default that a run must be\ngiven: one declared ``required: true``, or one that feeds a required\ninput port or param.\n``source`` is ``missing`` for a required input with no value, or with a\nnull one, and ``unset`` for any other input with none, whose steps then\nuse their own defaults.",
         "properties": {
           "default": {
             "title": "Default"
@@ -258,6 +534,7 @@
           "source": {
             "enum": [
               "unset",
+              "missing",
               "default",
               "config",
               "session"
@@ -293,6 +570,7 @@
         "type": "object"
       },
       "InputsBlock": {
+        "description": "The declared inputs, and the values shown; NaN is sent as ``.nan``.",
         "properties": {
           "declared": {
             "items": {
@@ -643,8 +921,95 @@
         "title": "RecipesResponse",
         "type": "object"
       },
-      "RunConfigBlock": {
+      "ReloadRequest": {
+        "additionalProperties": false,
+        "description": "Files to take from disk; null means every file that changed there.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "ReloadRequest",
+        "type": "object"
+      },
+      "RewriteModel": {
+        "properties": {
+          "absolute": {
+            "title": "Absolute",
+            "type": "boolean"
+          },
+          "new": {
+            "title": "New",
+            "type": "string"
+          },
+          "old": {
+            "title": "Old",
+            "type": "string"
+          },
+          "where": {
+            "title": "Where",
+            "type": "string"
+          }
+        },
+        "required": [
+          "where",
+          "old",
+          "new",
+          "absolute"
+        ],
+        "title": "RewriteModel",
+        "type": "object"
+      },
+      "RunConfigBlock": {
+        "description": "The run settings a session's runs get, and the config file they come from.\n\nThe setting fields are the file's values with the session's\n``overrides`` over them. ``source`` is the file loaded, null when none was\nfound or it did not load. ``path`` is the file in use, also when it does\nnot load (a chosen file), and ``chosen`` the file chosen for the session,\nnull when it is found as the CLI finds it. ``candidate`` is the recipe's\nown ``<stem>.config.yaml``, which Create Config writes. ``error`` says why\nthe file did not load. ``contents`` is the file as written, null when\nthere is no file or it is not YAML. ``shared_with`` lists the other recipes\nin the folder whose runs use the same file, and ``unused_inputs`` the\nfile's inputs the recipe does not declare.",
+        "properties": {
+          "candidate": {
+            "title": "Candidate",
+            "type": "string"
+          },
+          "chosen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen"
+          },
+          "contents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunConfigContents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dask_scheduler": {
             "anyOf": [
               {
@@ -666,6 +1031,17 @@
               }
             ],
             "title": "Dask Workers"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           },
           "executor": {
             "anyOf": [
@@ -693,6 +1069,24 @@
             "additionalProperties": true,
             "title": "Overrides",
             "type": "object"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "shared_with": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shared With",
+            "type": "array"
           },
           "source": {
             "anyOf": [
@@ -739,6 +1133,13 @@
             ],
             "title": "Temp Dir"
           },
+          "unused_inputs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unused Inputs",
+            "type": "array"
+          },
           "user_cache_dir": {
             "anyOf": [
               {
@@ -761,9 +1162,37 @@
           "dask_workers",
           "storage_options",
           "source",
-          "overrides"
+          "overrides",
+          "path",
+          "chosen",
+          "candidate",
+          "error",
+          "contents",
+          "shared_with",
+          "unused_inputs"
         ],
         "title": "RunConfigBlock",
+        "type": "object"
+      },
+      "RunConfigContents": {
+        "description": "A run config file as written: its ``inputs:`` and its run settings.\n\n``settings`` lists only the settings the file has, null ones included.",
+        "properties": {
+          "inputs": {
+            "additionalProperties": true,
+            "title": "Inputs",
+            "type": "object"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          }
+        },
+        "required": [
+          "inputs",
+          "settings"
+        ],
+        "title": "RunConfigContents",
         "type": "object"
       },
       "RunResponse": {
@@ -906,6 +1335,17 @@
               }
             ],
             "title": "Pid Created"
+          },
+          "recipe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe"
           },
           "schema": {
             "default": 1,
@@ -1065,11 +1505,286 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "SaveAsRequest": {
+        "additionalProperties": false,
+        "description": "A Save As; a relative ``path`` is taken from the recipe's folder.",
+        "properties": {
+          "copy_config": {
+            "default": true,
+            "title": "Copy Config",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "keep_paths": {
+            "default": false,
+            "title": "Keep Paths",
+            "type": "boolean"
+          },
+          "overwrite": {
+            "default": false,
+            "title": "Overwrite",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "SaveAsRequest",
+        "type": "object"
+      },
+      "SaveAsResponse": {
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/SaveAsResultModel"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          }
+        },
+        "required": [
+          "session",
+          "result"
+        ],
+        "title": "SaveAsResponse",
+        "type": "object"
+      },
+      "SaveAsResultModel": {
+        "properties": {
+          "absolute": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Absolute",
+            "type": "array"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "existing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Existing",
+            "type": "array"
+          },
+          "rehashed": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rehashed"
+          },
+          "rewrites": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/RewriteModel"
+              },
+              "type": "array"
+            },
+            "title": "Rewrites",
+            "type": "object"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "written": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Written",
+            "type": "array"
+          }
+        },
+        "required": [
+          "root",
+          "written",
+          "rewrites",
+          "absolute",
+          "config",
+          "rehashed",
+          "existing",
+          "dry_run"
+        ],
+        "title": "SaveAsResultModel",
+        "type": "object"
+      },
+      "SaveConfigRequest": {
+        "additionalProperties": false,
+        "description": "Edits to the run config file in use, written keeping its comments.\n\n``inputs`` is the file's whole ``inputs:`` after the save: names left out\nare removed, and null leaves the inputs as they are. ``settings`` writes\neach run setting it names; a null one is written as null when the file\nhas it and not added when it does not. Settings left out are kept.\n\n``scope`` ``\"recipe\"`` writes the edits to a copy of the file at\n``<recipe stem>.config.yaml`` beside the recipe instead, which the\nrecipe then uses for every setting; ``\"shared\"`` edits the file in use.",
+        "properties": {
+          "inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs"
+          },
+          "scope": {
+            "default": "shared",
+            "enum": [
+              "shared",
+              "recipe"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/SetRunConfigRequest"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "SaveConfigRequest",
+        "type": "object"
+      },
+      "SaveConfigResponse": {
+        "description": "The session after a config save.\n\n``changed`` is False when the file already held the values.\n``shared_with`` lists the other recipes in the folder the file applies\nto. ``changed_hashes`` lists the steps whose hash changed, in run order,\nthen the steps removed, as for an edit; null when the hashes could not be\ncomputed. ``cache_changed`` is True when the file's ``user_cache_dir``,\n``survey_cache_dir`` or ``storage_options`` changed, which can move a step\nto another cache tier without changing its hash.",
+        "properties": {
+          "cache_changed": {
+            "title": "Cache Changed",
+            "type": "boolean"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "changed_hashes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed Hashes"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          },
+          "shared_with": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shared With",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session",
+          "changed",
+          "shared_with",
+          "changed_hashes",
+          "cache_changed"
+        ],
+        "title": "SaveConfigResponse",
+        "type": "object"
+      },
+      "SaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "overwrite": {
+            "default": false,
+            "title": "Overwrite",
+            "type": "boolean"
+          }
+        },
+        "title": "SaveRequest",
+        "type": "object"
+      },
+      "SaveResponse": {
+        "description": "The session after a save.\n\n``reloaded`` lists the files the sync before the save took from disk.",
+        "properties": {
+          "reloaded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reloaded",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          },
+          "written": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Written",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session",
+          "written",
+          "reloaded"
+        ],
+        "title": "SaveResponse",
+        "type": "object"
+      },
       "SessionResponse": {
         "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/DiskConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
           "created": {
             "title": "Created",
             "type": "string"
+          },
+          "dirty": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirty",
+            "type": "array"
           },
           "files": {
             "items": {
@@ -1082,6 +1797,9 @@
             "additionalProperties": true,
             "title": "Graph",
             "type": "object"
+          },
+          "history": {
+            "$ref": "#/components/schemas/HistoryBlock"
           },
           "id": {
             "title": "Id",
@@ -1124,7 +1842,10 @@
           "inputs",
           "run_config",
           "graph",
-          "validation"
+          "validation",
+          "dirty",
+          "conflicts",
+          "history"
         ],
         "title": "SessionResponse",
         "type": "object"
@@ -1313,6 +2034,255 @@
         "title": "StartRunRequest",
         "type": "object"
       },
+      "StartRunResponse": {
+        "description": "A run just started; ``reloaded`` lists the files taken from disk first.",
+        "properties": {
+          "cancel_requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Requested At"
+          },
+          "created": {
+            "title": "Created",
+            "type": "string"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "executor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished"
+          },
+          "force": {
+            "title": "Force",
+            "type": "boolean"
+          },
+          "force_steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Force Steps",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "killed": {
+            "title": "Killed",
+            "type": "boolean"
+          },
+          "last_seq": {
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "log": {
+            "title": "Log",
+            "type": "string"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          },
+          "mode": {
+            "enum": [
+              "all",
+              "to",
+              "only"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "outputs_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputs Dir"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "pid_created": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid Created"
+          },
+          "recipe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe"
+          },
+          "reloaded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reloaded",
+            "type": "array"
+          },
+          "schema": {
+            "default": 1,
+            "title": "Schema",
+            "type": "integer"
+          },
+          "session": {
+            "title": "Session",
+            "type": "string"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "starting",
+              "running",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stop_requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Requested At"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "session",
+          "created",
+          "started",
+          "finished",
+          "status",
+          "pid",
+          "pid_created",
+          "exit_code",
+          "mode",
+          "targets",
+          "force",
+          "force_steps",
+          "executor",
+          "cancel_requested_at",
+          "killed",
+          "summary",
+          "manifest",
+          "outputs_dir",
+          "log",
+          "last_seq",
+          "reloaded"
+        ],
+        "title": "StartRunResponse",
+        "type": "object"
+      },
       "StepArtifactsResponse": {
         "properties": {
           "artifacts": {
@@ -1490,6 +2460,42 @@
           "note"
         ],
         "title": "StepPreviewModel",
+        "type": "object"
+      },
+      "SyncResponse": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/DiskConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntryModel"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "reloaded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reloaded",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          }
+        },
+        "required": [
+          "session",
+          "reloaded",
+          "conflicts",
+          "entries"
+        ],
+        "title": "SyncResponse",
         "type": "object"
       },
       "ValidationBlock": {
@@ -2314,6 +3320,90 @@
         ]
       }
     },
+    "/api/schema/recipe": {
+      "get": {
+        "description": "The JSON Schema of a recipe file.",
+        "operationId": "recipe_schema_api_schema_recipe_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recipe Schema Api Schema Recipe Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Recipe Schema",
+        "tags": [
+          "Ops"
+        ]
+      }
+    },
     "/api/sessions": {
       "get": {
         "description": "Saved sessions, newest first.",
@@ -2770,9 +3860,419 @@
         ]
       }
     },
+    "/api/sessions/{sid}/config-file": {
+      "post": {
+        "description": "Write ``<recipe>.config.yaml`` beside the recipe from the template.",
+        "operationId": "create_config_api_sessions__sid__config_file_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Create Config",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "put": {
+        "description": "Use a run config file under a recipe root, as ``--config``; null finds one.",
+        "operationId": "choose_config_api_sessions__sid__config_file_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChooseConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Choose Config",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/config-file/save": {
+      "post": {
+        "description": "Write inputs and run settings to the run config file, keeping its comments.",
+        "operationId": "save_config_api_sessions__sid__config_file_save_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Save Config",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/edits": {
+      "post": {
+        "description": "Apply edit operations in order, all or none.",
+        "operationId": "edit_api_sessions__sid__edits_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Edit",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
     "/api/sessions/{sid}/files/{path}": {
       "get": {
-        "description": "The text of one of the session's recipe files, by its listed path.",
+        "description": "The text of one of the session's recipe files as edited, by its listed path.",
         "operationId": "file_text_api_sessions__sid__files__path__get",
         "parameters": [
           {
@@ -3114,6 +4614,315 @@
         ]
       }
     },
+    "/api/sessions/{sid}/redo": {
+      "post": {
+        "description": "Apply the newest undone edit again.",
+        "operationId": "redo_api_sessions__sid__redo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Redo",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/reload": {
+      "post": {
+        "description": "Take files' texts from disk as undoable edits; all changed files when null.",
+        "operationId": "reload_api_sessions__sid__reload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Reload",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/revert": {
+      "post": {
+        "description": "Discard every unsaved edit and the history.",
+        "operationId": "revert_api_sessions__sid__revert_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Revert",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
     "/api/sessions/{sid}/runs": {
       "get": {
         "description": "The session's runs, newest first.",
@@ -3239,7 +5048,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunResponse"
+                  "$ref": "#/components/schemas/StartRunResponse"
                 }
               }
             },
@@ -3309,6 +5118,212 @@
         "summary": "Start Run",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/save": {
+      "post": {
+        "description": "Write every edited file to its origin, after a sync with the disk.",
+        "operationId": "save_api_sessions__sid__save_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Save",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/save-as": {
+      "post": {
+        "description": "Save the recipe under a new name under a recipe root, or preview it.",
+        "operationId": "save_as_api_sessions__sid__save_as_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveAsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveAsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Save As",
+        "tags": [
+          "Sessions"
         ]
       }
     },
@@ -3483,6 +5498,202 @@
           }
         },
         "summary": "Step Artifacts",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/sync": {
+      "post": {
+        "description": "Reload files changed on disk that have no unsaved edits; report the rest.",
+        "operationId": "sync_api_sessions__sid__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Sync",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/undo": {
+      "post": {
+        "description": "Undo the newest edit.",
+        "operationId": "undo_api_sessions__sid__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Undo",
         "tags": [
           "Sessions"
         ]

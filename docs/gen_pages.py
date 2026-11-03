@@ -45,6 +45,30 @@ def page_link(page: str) -> str:
     return posixpath.relpath(page, "ops")
 
 
+def notes(text, name=None) -> list[str]:
+    """A collapsed block of developer notes, empty when there are none.
+
+    Notes come from folded YAML blocks, so each line of the text is one
+    paragraph.
+    """
+    if not text:
+        return []
+    title = "Notes for developers" + (f": `{name}`" if name else "")
+    lines = [f'??? note "{title}"', ""]
+    for paragraph in text.splitlines():
+        if paragraph.strip():
+            lines += [f"    {paragraph.strip()}", ""]
+    return lines
+
+
+def row_notes(rows: list[dict]) -> list[str]:
+    """Notes blocks for the rows of one table that carry notes."""
+    lines = []
+    for row in rows:
+        lines += notes(row.get("notes"), row["name"])
+    return lines
+
+
 def op_page(op: dict) -> str:
     lines = [f"# {op['op']}", ""]
     badges = []
@@ -58,6 +82,7 @@ def op_page(op: dict) -> str:
         lines += [" · ".join(badges), ""]
     if op["description"]:
         lines += [op["description"], ""]
+    lines += notes(op.get("notes"))
 
     if op["inputs"]:
         lines += [
@@ -73,6 +98,7 @@ def op_page(op: dict) -> str:
                 f"| {cell(port['description'])} |"
             )
         lines.append("")
+        lines += row_notes(op["inputs"])
 
     if op["outputs"]:
         lines += [
@@ -87,6 +113,7 @@ def op_page(op: dict) -> str:
                 f"| {cell(port['description'])} |"
             )
         lines.append("")
+        lines += row_notes(op["outputs"])
 
     if op["params"]:
         lines += [
@@ -105,6 +132,7 @@ def op_page(op: dict) -> str:
                 f"| {default} | {cell(param['description'])} |"
             )
         lines.append("")
+        lines += row_notes(op["params"])
 
     lines += ["## Implementation", ""]
     if not op["implementations"]:

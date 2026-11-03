@@ -1,45 +1,46 @@
 op: assign_clusters_to_all_points
 cache_key: assign_clusters_to_all_points  # pinned cache identity - keep stable across op renames
 description: >
-  Extend a subsampled clustering to every point in the dataset, so no cell is
-  left unlabelled.
+  Label every point of a subsampled clustering, so no cell is left unlabelled.
+  Points outside the fit get the cluster the fitted model predicts, or -1 for
+  noise. Place it between ``run_hdbscan`` and ``embed_clustering_results``.
+notes: >
+  ``run_hdbscan`` clusters at most ``sample_size`` points, and the rest
+  receive no label; they come back NaN once ``embed_clustering_results``
+  regrids the result, which on a survey-scale ML dataset is most of the data.
+  This step projects the fitted structure onto the unlabelled points with
+  hdbscan's ``approximate_predict``, which walks each point down the condensed
+  tree the fit produced and returns the cluster it falls into, or -1 when it
+  falls outside every cluster.
 
-  ``run_hdbscan`` clusters at most ``sample_size`` points, and above that the
-  remaining points receive no label at all - they come back NaN once
-  ``embed_clustering_results`` regrids the result. On a survey-scale ML dataset
-  that is most of the data. This step projects the fitted structure onto the
-  unlabelled points with hdbscan's ``approximate_predict``, which walks each
-  point down the condensed tree the fit produced and returns the cluster it
-  falls into, or -1 when it falls outside every cluster.
+  Points the fit did see keep their fitted label rather than a predicted one,
+  since the fit is the more authoritative answer where it exists.
 
-  Points the fit did see keep their fitted label rather than a predicted one:
-  the fit is the more authoritative answer where it exists, and only the
-  remainder is being filled in.
+  The output has the same shape ``run_hdbscan`` produces, so
+  ``embed_clustering_results``, ``plot_clustering_report`` and
+  ``merge_clustering_passes`` consume it unchanged.
 
-  Place it between ``run_hdbscan`` and ``embed_clustering_results``. The output
-  is the same shape ``run_hdbscan`` produces, so everything downstream
-  (``embed_clustering_results``, ``plot_clustering_report``,
-  ``merge_clustering_passes``) consumes it unchanged.
-
-  CHECKPOINTING. This step needs the fitted model, and a checkpointed
-  clustering_results Dataset does not carry one: converting a result for Zarr
-  drops the model and records only model_type and model_available. The
-  clustering_model port is a plain object, so it falls back to pickle format,
+  Checkpointing: this step needs the fitted model, and a checkpointed
+  clustering_results Dataset does not carry one, because converting a result
+  for Zarr drops the model and records only model_type and model_available.
+  The clustering_model port is a plain object, so it falls back to pickle,
   which the tiered store refuses to write to the shared survey tier. To
-  checkpoint this step without pickle, set keep_model: false: the model port
-  is then null, every output is Zarr or JSON, and a downstream
-  plot_clustering_report simply skips the hierarchy panel. Otherwise keep this
-  step adjacent to the run_hdbscan that feeds it, in the user tier, or set
+  checkpoint this step without pickle, set keep_model to false: the model
+  port is then null, every output is Zarr or JSON, and a downstream
+  plot_clustering_report skips the hierarchy panel. Otherwise keep this step
+  next to the run_hdbscan that feeds it, in the user tier, or set
   checkpoint: never and let it recompute.
 category: ml_clustering
 inputs:
   ds_normalized:
     type: Dataset
     description: >
-      The normalized ML Dataset the clustering was run against, supplying the
-      full feature matrix. Must be the same Dataset that fed run_hdbscan, or
-      the sample indices will not line up and the step fails rather than
-      silently mislabelling.
+      The normalized ML Dataset the clustering was run against. Must be the
+      same Dataset that fed run_hdbscan.
+    notes: >
+      It supplies the full feature matrix. A different Dataset would not line
+      up with the sample indices, so the step fails rather than silently
+      mislabelling.
   clustering_results:
     type: Dataset
     description: >
@@ -48,17 +49,20 @@ inputs:
   clustering_model:
     type: object
     description: >
-      The fitted model from the same run_hdbscan step, fitted with
-      prediction_data=True (run_hdbscan always does). Required: the step fails
-      with a pointed message when it is null, since a checkpointed
-      clustering_results cannot supply it.
+      The fitted model from the same run_hdbscan step. Required.
+    notes: >
+      The model must be fitted with prediction_data=True, which run_hdbscan
+      always does. The step fails with a pointed message when it is null,
+      since a checkpointed clustering_results cannot supply it.
 outputs:
   clustering_results:
     type: Dataset
     description: >
       Clustering result covering every sample index in ds_normalized, in the
-      same shape run_hdbscan produces. Carries n_fitted, n_predicted and
-      label_source attrs recording how much of it was predicted rather than fit.
+      same shape run_hdbscan produces.
+    notes: >
+      Carries n_fitted, n_predicted and label_source attrs recording how much
+      of it was predicted rather than fit.
   clustering_model:
     type: object
     description: The input model, passed through so a later plotting step can take it.
@@ -85,28 +89,29 @@ params:
   ml_result_name:
     type: str
     description: >
-      Name the extended result is stored under. Leave unset to keep the name
-      already on the incoming result, which is what keeps a downstream
-      embed_clustering_results / plot_clustering_report pair pointing at it
-      without changes.
+      Name the extended result is stored under. Unset keeps the name already on
+      the incoming result, so downstream embedding and plotting steps need no
+      change.
     required: false
     default: null
   batch_size:
     type: int
     description: >
-      Rows predicted per approximate_predict call. The prediction materialises
-      intermediate arrays proportional to the batch, so this is the memory knob;
-      lower it if a survey-scale run runs out of memory. Batching does not
-      change the labels.
+      Rows predicted per batch. Lower it if a survey-scale run runs out of
+      memory; batching does not change the labels.
+    notes: >
+      Each approximate_predict call materialises intermediate arrays
+      proportional to the batch, so this is the memory knob.
     required: false
     default: 200000
   keep_model:
     type: bool
     description: >
       Pass the fitted model through on the clustering_model output. Set false
-      when this step is checkpointed and pickle is unwanted; the model is only
-      used by the hierarchy panel of plot_clustering_report, which is skipped
-      when no model reaches it.
+      when this step is checkpointed and pickle is unwanted.
+    notes: >
+      The model is only used by the hierarchy panel of plot_clustering_report,
+      which is skipped when no model reaches it.
     required: false
     default: true
 implementations:

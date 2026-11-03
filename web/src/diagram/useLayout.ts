@@ -6,6 +6,7 @@ import type { Direction } from '../state/view';
 import { placeBuses } from './buses';
 import { canUseWorker, runLayout } from './elk';
 import { layoutRequest, setTextScale, type Positions, type Route } from './layout';
+import { showValue } from '../text';
 import { CONTAINER_KINDS, rowValue, type View, type ViewEdge, type ViewNode } from './buildView';
 
 /** React Flow node carrying its view node. */
@@ -17,7 +18,7 @@ export interface RouteEdgeData extends Record<string, unknown> {
   label: string;
   names: string[];
   tooltip: string;
-  bus: 'in' | 'out' | null;
+  bus: ViewEdge['bus'];
   kind: GraphEdgeKind;
   dimmed: boolean;
   /** A line into an outputs box none of whose outputs is used later. */
@@ -71,11 +72,24 @@ export function toFlowNodes(view: View, positions: Positions, measured: Map<stri
 }
 
 /**
- * The hover text of an edge: `name = value` per input on an inputs box line,
- * the outside step outputs on a ghost line, otherwise every name.
+ * The hover text of an edge: `name = value` per input on an inputs box or run
+ * config line (with the session's value when it overrides the config's), the
+ * outside step outputs on a ghost line, otherwise every name.
  */
 export function edgeTooltip(view: View, edge: ViewEdge): string {
   const source = view.nodes.find((node) => node.id === edge.source);
+  if (source?.kind === 'runConfig') {
+    return edge.names
+      .map((name) => {
+        const row = source.data.inputs.find((candidate) => candidate.name === name);
+        if (!row) return name;
+        const text = `${name} = ${showValue(row.value) || 'null'}`;
+        return row.state === 'overridden'
+          ? `${text}, overridden in session by ${showValue(row.sessionValue) || 'null'}`
+          : text;
+      })
+      .join('\n');
+  }
   if (source?.kind === 'inputsBox') {
     return edge.names
       .map((name) => {

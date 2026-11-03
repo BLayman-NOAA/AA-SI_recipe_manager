@@ -2,13 +2,12 @@ op: build_echogram_pyramid
 cache_key: build_echogram_pyramid  # pinned cache identity - keep stable across op renames
 description: >
   Build a level-of-detail pyramid from an Sv Dataset for the WebGPU echogram
-  viewer.
-
-  The output is a DataTree with one node per level, level 0 being the data as
-  given and level k merging 2**k pings into one by averaging in linear space.
-  Checkpoint the step and the store lands in the recipe or survey cache under
-  the step's content address, where `aa-echogram serve --store <path>` can read
-  it directly. Nothing has to be published for a pyramid to be looked at.
+  viewer, where level k merges 2**k pings. `aa-echogram serve --store <path>`
+  reads a checkpointed pyramid straight from the cache.
+notes: >
+  The output is a DataTree with one node per level. A checkpointed store lands
+  in the recipe or survey cache under the step's content address, so nothing
+  has to be published for a pyramid to be looked at.
 
   `ping_range` is what makes this parallel. Passing one builds a single segment
   of the survey, so the op can be mapped over the ranges from
@@ -38,18 +37,19 @@ params:
     default: 8
     description: >
       Levels to build, halving the ping axis each time. Eight levels reduce the
-      ping axis by 128 at the coarsest, which is what lets an overview of a
-      survey read a small array.
+      ping axis by 128 at the coarsest.
   range_var:
     type: str
     required: false
     default: echo_range
     description: >
-      Vertical coordinate to build the geometry from. echo_range rather than
-      depth: depth carries heave, and averaging sample index i across pings
-      that heaved averages different depths, which the pyramid's alignment
-      check refuses. The surface reference is not lost, because the sidecar
-      keeps depth minus echo_range as the per ping transducer depth.
+      Vertical coordinate to build the geometry from. Use echo_range, not
+      depth; the surface reference is kept as a per ping transducer depth.
+    notes: >
+      Depth carries heave, and averaging sample index i across pings that
+      heaved averages different depths, which the pyramid's alignment check
+      refuses. The surface reference is not lost, because the sidecar keeps
+      depth minus echo_range as the per ping transducer depth.
   ping_range:
     type: list
     required: false
@@ -63,8 +63,8 @@ params:
     default: linear_mean
     description: >
       How pings are merged: 'linear_mean' averages in linear space and reports
-      decibels, 'max' keeps the loudest sample. Mean is right for biomass, max
-      preserves a single strong target that a mean would dilute.
+      decibels (right for biomass); 'max' keeps the loudest sample, preserving
+      a single strong target.
 implementations:
   - key: default
     callable_path: aa_si_echogram_gl.ops.build_echogram_pyramid

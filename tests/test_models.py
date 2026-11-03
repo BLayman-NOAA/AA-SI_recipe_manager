@@ -165,6 +165,49 @@ def test_custom_spec_with_extends():
     assert "extra_param" in spec.params
 
 
+def test_notes_are_accepted_and_kept_out_of_dumps():
+    param = ParamDeclaration(type="float", notes="Why the default is 2.")
+    port = PortDeclaration(type="Dataset", notes="Expects Sv.")
+    spec = make_spec(notes="Op notes.", inputs={"ds": port}, params={"x": param})
+    custom = CustomSpec(
+        description="Custom step",
+        notes="Custom notes.",
+        callable_path="my.module.func",
+        params={"x": param},
+    )
+
+    assert (spec.notes, param.notes, port.notes, custom.notes) == (
+        "Op notes.",
+        "Why the default is 2.",
+        "Expects Sv.",
+        "Custom notes.",
+    )
+    assert "notes" not in str(spec.model_dump())
+    assert "notes" not in str(custom.model_dump())
+    assert make_spec().notes is None
+
+
+def test_custom_spec_notes_leave_the_step_fingerprint_unchanged():
+    from aa_recipe_manager.executor.checkpoint import compute_step_fingerprints
+    from aa_recipe_manager.parser.dag_builder import build_dag
+    from aa_recipe_manager.registry.registry import Registry
+
+    def fingerprint(notes):
+        custom = CustomSpec(
+            description="Custom step",
+            notes=notes,
+            callable_path="my.module.func",
+            params={"x": ParamDeclaration(type="float", notes=notes)},
+        )
+        recipe = make_recipe(
+            steps=[make_step(id="c", op="custom", custom_spec=custom, params={"x": 1})]
+        )
+        dag = build_dag(recipe, Registry(), check_versions=False)
+        return compute_step_fingerprints(dag, {}).hashes["c"]
+
+    assert fingerprint(None) == fingerprint("Developer notes.")
+
+
 def test_custom_spec_missing_callable():
     with pytest.raises(ValidationError):
         CustomSpec(description="missing callable")
@@ -577,6 +620,28 @@ def test_schema_validates_valid_recipe():
     }
     # Should not raise.
     jsonschema.validate(instance=valid_recipe, schema=schema)
+
+
+def test_schema_accepts_notes_in_a_custom_spec():
+    import jsonschema
+
+    import aa_recipe_manager
+
+    schema = aa_recipe_manager.export_schema()
+    custom_spec = {
+        "description": "Plan dives.",
+        "notes": "Developer notes.",
+        "callable_path": "pkg.mod.plan",
+        "inputs": {"ds": {"type": "Dataset", "notes": "Port notes."}},
+        "params": {"gap": {"type": "float", "notes": "Param notes."}},
+    }
+    recipe = {
+        "name": "test",
+        "version": "1.0.0",
+        "schema_version": "1",
+        "steps": [{"id": "plan", "op": "custom", "custom_spec": custom_spec}],
+    }
+    jsonschema.validate(instance=recipe, schema=schema)
 
 
 def test_schema_rejects_missing_required_fields():

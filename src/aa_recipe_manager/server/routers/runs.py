@@ -16,6 +16,7 @@ from aa_recipe_manager.server.models import (
     PreviewResponse,
     RunResponse,
     StartRunRequest,
+    StartRunResponse,
 )
 from aa_recipe_manager.server.routers import ERROR_RESPONSES
 from aa_recipe_manager.server.runs import ACTIVE_STATUSES, RunManager
@@ -30,7 +31,7 @@ def runs(request: Request) -> RunManager:
     return request.app.state.runs
 
 
-@router.post("/sessions/{sid}/runs", response_model=RunResponse, status_code=201)
+@router.post("/sessions/{sid}/runs", response_model=StartRunResponse, status_code=201)
 def start_run(sid: str, body: StartRunRequest, request: Request):
     """Start a run of the session in a new process."""
     return runs(request).start(

@@ -5,15 +5,30 @@
 #   reshape -> add cell_cv -> normalize -> HDBSCAN -> label every point
 #           -> embed -> clustering report
 #
-# Clusters any MVBS on a shared grid with its per-cell statistics. The dive
-# windows only feed the report's line overlays.
+# Takes any MVBS on a shared grid plus matching per-cell statistics. It knows
+# nothing about dives except the optional window list the report draws line
+# overlays from. embed_results holds the labels the report and the SVCode
+# tables read; run_hdbscan is checkpointed, as a pickle, so the report gets the
+# fitted model without refitting.
 #
-# The labels are read from the embed_results checkpoint, and run_hdbscan is
-# checkpointed too, so redrawing the report or the tables never refits.
-# Plots use x_axis_units "bins": the dives span 38 days, so a clock-time axis
-# draws each dive as a hairline.
-# Cluster ids change between runs, so read the codes against their per-code
-# Sv in the level 5 CSVs, not against an earlier analysis's numbering.
+# THE PLOTS MUST USE x_axis_units: bins
+#
+#   The 13 dives hold 214 minutes of data across 38 days, so a clock-time axis
+#   ("datetime" or "seconds") draws each dive as a hairline. "bins" plots
+#   against MVBS bin index, so the dives sit side by side.
+#
+# SIZING HDBSCAN FOR THE POOLED SET
+#
+#   sample_size 1200000 is not expected to bind: the pooled grid is about
+#   1.16 M cells, so HDBSCAN fits every point. min_cluster_size_fraction is a
+#   fraction of the points fitted; 0.01 of the pooled set is a large enough
+#   floor that one dive's local structure does not become a survey-wide code.
+#
+# CLUSTER IDS ARE RUN SCOPED
+#
+#   HDBSCAN ids are not stable across runs, so an SVCode integer does not carry
+#   the fixed meaning codes 1, 2 and 3 had in the previous analysis. Read the
+#   tables against the per-code Sv statistics in the SVCode CSVs.
 
 recipe:
   name: "hb1603_processing_lvl_4"
@@ -23,31 +38,31 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # Wire it to rechunk_dive_mvbs.ds_Sv.
   mvbs:
     type: Dataset
-    description: "MVBS on one shared grid. Wire it to rechunk_dive_mvbs.ds_Sv."
+    description: "Gridded MVBS to cluster, one ML sample per cell, and the report backdrop."
+  # Wire it to merge_dive_files_cell_stats.merged.
   cell_stats_sv:
     type: Dataset
-    description: "Per-cell statistics on the same grid. Wire it to merge_dive_files_cell_stats.merged."
+    description: "Per-cell statistics, such as the coefficient of variation, on the MVBS grid. Needed when the cell_cv feature is listed."
+  # Wire it to plan_dives.windows.
   dive_windows:
     type: list
-    description: >
-      Windows whose dive lines the report overlays. Wire it to
-      plan_dives.windows, or pass an empty list for no overlay.
+    description: "Windows whose dive lines the cluster report draws on the echogram, a list of dicts with start and end. An empty list draws none."
+  # Read SIZING HDBSCAN in the header before lowering it.
   sample_size:
     type: int
     default: 1200000
-    description: >
-      Cap on the points HDBSCAN is fitted on, set above the pooled grid's
-      roughly 1.16 M cells so every point is fitted.
+    description: "Cap on the points HDBSCAN is fitted on; points over the cap are dropped at random and get no label. Set it above the valid cell count."
   min_cluster_size_fraction:
     type: float
     default: 0.01
-    description: "Minimum cluster size as a fraction of the points HDBSCAN is fitted on."
+    description: "Smallest cluster HDBSCAN keeps, as a fraction of the points it is fitted on."
   min_samples:
     type: int
     default: 4
-    description: "HDBSCAN min_samples: how conservative the density estimate is. Larger means more points called noise."
+    description: "Neighbourhood size HDBSCAN uses to judge density; higher values leave more points unclustered as noise."
 
 steps:
 
@@ -82,8 +97,10 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       shift_positive: false
 
-  # The fitted model is cached as a pickle, tied to this environment's hdbscan
-  # and scikit-learn. If it fails to load, delete this step's cache entry.
+  # Checkpointed so the report gets the fitted model without refitting. The
+  # model saves as pickle, tied to this environment's hdbscan and scikit-learn
+  # versions and refused by the shared survey tier. If it fails to load,
+  # delete this step's cache entry and the fit reruns once.
   - id: run_hdbscan
     op: run_hdbscan
     checkpoint: always
@@ -100,8 +117,9 @@ steps:
       use_hdbscan: true
       soft_membership_threshold: .1
 
-  # Labels any points past sample_size, which would otherwise come back NaN.
-  # Not checkpointed, since embed_results holds its labels.
+  # The guard for sample_size binding: cells past the cap would otherwise come
+  # back unlabelled. checkpoint: never because embed_results holds the labels,
+  # and a rerun gets the model from run_hdbscan's checkpoint.
   - id: label_all_points
     op: assign_clusters_to_all_points
     checkpoint: never
@@ -123,8 +141,9 @@ steps:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
 
-  # Labels come from embed_results. The run_hdbscan outputs feed the hierarchy
-  # panel only.
+  # Labels come from the embed_results checkpoint. clustering_results and
+  # clustering_model feed the HDBSCAN hierarchy panel, loaded from
+  # run_hdbscan's checkpoint, so redrawing the report does not refit.
   - id: plot_clustering_report
     op: plot_clustering_report
     regenerate: if-missing
@@ -136,16 +155,19 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # Plots against bin index so the dives sit side by side; see the header.
+      # The op defaults to "datetime"; see THE PLOTS MUST USE x_axis_units: bins.
       x_axis_units: "bins"
-      # Pins a 16:9 panel so the figure fits a screen.
+      # Pin a 16:9 panel; the data aspect, about 1300 bins by 2400 m, would
+      # otherwise give a panel taller than it is wide.
       y_to_x_aspect_ratio_override: 1.78
-      # Down to 2400 m, below the deepest seabed on these dives.
+      # The dives use the water column down to the seabed, 2343 m at deepest.
       plot_window: [0, 2400]
       cluster_stats_sv_data_var: "Sv"
-      # Each dive's profile and 99% bounds, as its own segment.
+      # Per-dive profile and 99% bounds, each dive its own segment; see THE
+      # POOLED GRID IS THE ANALYSIS SET in processing_lvl_3_user.yaml.
       overlay_windows: ${inputs.dive_windows}
-      # Each style merges over the op's default. linestyle takes matplotlib's
+      # Each style dict is merged over the op's default, so naming just one
+      # key restyles that and leaves the others. linestyle takes matplotlib's
       # spellings: ":" dotted, "--" dashed, "-." dash-dot, "-" solid.
       overlay_fit_style: {color: "#23FFFF", linewidth: 3.0}
       overlay_bound_style: {color: "#D08BFF", linewidth: 1.8, linestyle: ":"}

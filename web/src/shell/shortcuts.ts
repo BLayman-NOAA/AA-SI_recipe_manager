@@ -1,4 +1,5 @@
 /** Global keyboard shortcuts. */
+import { onPopoutWindows } from './dock';
 
 export type ShortcutId =
   | 'fit'
@@ -27,10 +28,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'escape', keys: 'Escape', action: 'Clear the selection, or drill out' },
   { id: 'runToSelected', keys: 'Ctrl+Enter', action: 'Run to selected' },
   { id: 'runSelectedOnly', keys: 'Ctrl+Shift+Enter', action: 'Run selected only' },
-  { id: 'undo', keys: 'Ctrl+Z', action: 'Undo', milestone: 5 },
-  { id: 'redo', keys: 'Ctrl+Y', action: 'Redo', milestone: 5 },
-  { id: 'save', keys: 'Ctrl+S', action: 'Save', milestone: 5 },
-  { id: 'saveAs', keys: 'Ctrl+Shift+S', action: 'Save As', milestone: 5 },
+  { id: 'undo', keys: 'Ctrl+Z', action: 'Undo' },
+  { id: 'redo', keys: 'Ctrl+Y', action: 'Redo' },
+  { id: 'save', keys: 'Ctrl+S', action: 'Save' },
+  { id: 'saveAs', keys: 'Ctrl+Shift+S', action: 'Save As' },
   { id: 'delete', keys: 'Delete', action: 'Delete the selection', milestone: 9 },
 ];
 
@@ -45,7 +46,7 @@ export interface KeyInput {
   typing: boolean;
 }
 
-/** The shortcut a key press means, or null. */
+/** The shortcut a key press means, or null. Undo and redo in a text field are the field's own. */
 export function matchShortcut(input: KeyInput): ShortcutId | null {
   const ctrl = input.ctrlKey || input.metaKey;
   const key = input.key.length === 1 ? input.key.toLowerCase() : input.key;
@@ -53,8 +54,8 @@ export function matchShortcut(input: KeyInput): ShortcutId | null {
   if (ctrl) {
     if (key === 'f' && !input.shiftKey) return 'find';
     if (key === 'Enter') return input.shiftKey ? 'runSelectedOnly' : 'runToSelected';
-    if (key === 'z' && !input.shiftKey) return 'undo';
-    if (key === 'y' && !input.shiftKey) return 'redo';
+    if (key === 'z' && !input.shiftKey) return input.typing ? null : 'undo';
+    if (key === 'y' && !input.shiftKey) return input.typing ? null : 'redo';
     if (key === 's') return input.shiftKey ? 'saveAs' : 'save';
     return null;
   }
@@ -67,9 +68,11 @@ export function matchShortcut(input: KeyInput): ShortcutId | null {
 }
 
 function isTyping(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+  // Not instanceof: an element in a popout window has that window's HTMLElement.
+  const element = target as HTMLElement | null;
+  if (typeof element?.tagName !== 'string') return false;
+  const tag = element.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable;
 }
 
 export type ShortcutHandlers = Partial<Record<ShortcutId, () => void>>;
@@ -77,7 +80,10 @@ export type ShortcutHandlers = Partial<Record<ShortcutId, () => void>>;
 /** Shortcuts that keep the browser's own meaning unless a handler takes them. */
 const BROWSER_DEFAULTS = new Set<ShortcutId>(['undo', 'redo', 'delete', 'escape']);
 
-/** Listen for shortcuts on the window; returns the function that stops listening. */
+/**
+ * Listen for shortcuts on the window and on every popout window while it is
+ * open; returns the function that stops listening.
+ */
 export function installShortcuts(handlers: ShortcutHandlers): () => void {
   const listener = (event: KeyboardEvent) => {
     const id = matchShortcut({
@@ -97,6 +103,14 @@ export function installShortcuts(handlers: ShortcutHandlers): () => void {
       event.preventDefault();
     }
   };
-  window.addEventListener('keydown', listener);
-  return () => window.removeEventListener('keydown', listener);
+  const listen = (target: Window) => {
+    target.addEventListener('keydown', listener);
+    return () => target.removeEventListener('keydown', listener);
+  };
+  const stopMain = listen(window);
+  const stopPopouts = onPopoutWindows(listen);
+  return () => {
+    stopMain();
+    stopPopouts();
+  };
 }

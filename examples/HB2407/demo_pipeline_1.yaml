@@ -1,8 +1,9 @@
-# NOTE: this hasn't been refactored to combine after calibrating sv yet
+# HB2407 demo over 2024-10-12: combined raw ingest, then Sv, masking, MVBS and
+# clustering. Still combines the raw files before Sv.
 
 recipe:
   name: "processing_levels_pipeline_gcs"
-  description: "HB2407 processing levels pipeline reading all inputs from a GCS bucket."
+  description: "HB2407 demo pipeline over 2024-10-12: one combined EchoData, Sv with EVL seabed and surface masks, MVBS and HDBSCAN clustering."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -11,42 +12,52 @@ inputs:
   raw_input_folder:
     type: path
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   seabed_line_folder:
     type: path
     default: "./seabed_lines"
+    description: "Folder of Echoview .evl seabed line exports, a local path or a gs:// URL. The files covering the time window are combined into the seafloor; a single .evl file is read whole."
 
-  # Data time range. Selects the raw files to process AND the Echoview seabed
-  # line exports to read, so the line always spans the pings.
+  # Data time range
   file_time_start:
     type: str
     default: "2024-10-12T00:15"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are processed and scanned for calibration. Unset takes every file. It also selects the seabed line files to read."
   file_time_end:
     type: str
     default: "2024-10-12T11:15"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are processed and scanned for calibration. Unset takes every file. It also selects the seabed line files to read."
 
-  # Default display window shared by every plotting step in this pipeline
-  # You can override these by hardcoding values for a specific step or sub-recipe
+  # Default display window shared by every plotting step; a step or sub-recipe
+  # can override it with its own values.
   min_depth:
     type: float
     default: 0
+    description: "Shallowest depth shown on the echograms, in metres."
   max_depth:
     type: float
     default: 100
+    description: "Deepest depth shown on the echograms, in metres. Unset uses the deepest depth in the data."
   ping_min:
     type: int
     default: 0
+    description: "First ping index shown on the echograms."
   ping_max:
     type: int
     default: 515
+    description: "Last ping index shown on the echograms. Unset shows through the last ping."
   x_axis_units:
     type: str
     default: "seconds"
+    description: "Echogram x axis: \"datetime\" (UTC clock time), \"seconds\" from the first ping shown, \"pings\", \"meters\" travelled, or \"bins\" (MVBS only)."
   y_axis_units:
     type: str
     default: "meters"
+    description: "Echogram y axis: \"meters\", \"range_sample\", or \"bins\" (MVBS only)."
 
 
 steps:
@@ -66,8 +77,8 @@ steps:
       echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
-      # Transducer depth is derived per file from the raw file's drop keel offset (e.g. 7.5 m), heave and 
-      # and manually derived datum_correction_m which assumes the recorded offset is waterline referenced.
+      # Transducer depth is each raw file's drop keel offset (e.g. 7.5 m) plus
+      # datum_correction_m and heave.
       datum_correction_m: -1.0
       use_heave: true
       heave_sign: 1.0

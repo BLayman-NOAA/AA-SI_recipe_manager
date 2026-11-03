@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
+from aa_recipe_manager import api
 from aa_recipe_manager.exceptions import SpecNotFoundError
 from aa_recipe_manager.graph import build_recipe_graph
 from aa_recipe_manager.model.types import (
@@ -20,6 +22,7 @@ from aa_recipe_manager.model.types import (
     ParamDeclaration,
     PortDeclaration,
 )
+from aa_recipe_manager.parser.yaml_reader import load_recipe
 from aa_recipe_manager.registry.registry import Registry
 from conftest import make_recipe, make_spec, make_step
 
@@ -312,6 +315,60 @@ def test_step_node_lists_ports_and_params_as_written(registry):
     assert [o["name"] for o in node["outputs"]] == ["ds_Sv", "log"]
 
 
+def test_step_params_carry_required_constraints_and_fingerprint_mode(registry):
+    folder = ParamDeclaration(
+        type="path", constraints={"must_exist": True}, fingerprint_mode="names"
+    )
+    registry.register_spec(make_spec(op="scan", params={"folder": folder}))
+    custom = CustomSpec(
+        description="Plan dives.",
+        callable_path="pkg.mod.plan",
+        params={"gap": ParamDeclaration(type="float", required=False)},
+    )
+    recipe = make_recipe(
+        steps=[
+            make_step(id="scan", op="scan", params={"folder": "./raw", "extra": 1}),
+            make_step(id="plan", op="custom", custom_spec=custom),
+        ]
+    )
+
+    found = nodes(graph(recipe, registry))
+    scan = {p["name"]: p for p in found["scan"]["params"]}
+    [gap] = found["plan"]["params"]
+
+    fields = ("required", "constraints", "fingerprint_mode")
+    assert [scan["folder"][f] for f in fields] == [True, {"must_exist": True}, "names"]
+    assert [scan["extra"][f] for f in fields] == [False, {}, None]
+    assert [gap[f] for f in fields] == [False, {}, "off"]
+
+
+def test_a_param_with_a_default_is_not_required(registry):
+    params = {"level": ParamDeclaration(type="float", default=2.0)}
+    registry.register_spec(make_spec(op="scan", params=params))
+    recipe = make_recipe(steps=[make_step(id="scan", op="scan")])
+    [level] = nodes(graph(recipe, registry))["scan"]["params"]
+    assert (level["default"], level["required"]) == (2.0, False)
+
+
+def test_step_params_carry_exclusive_with_as_a_list(registry):
+    size = ParamDeclaration(
+        type="int", required=False, constraints={"exclusive_with": ["fraction"]}
+    )
+    fraction = ParamDeclaration(
+        type="float", required=False, constraints={"exclusive_with": ["size"]}
+    )
+    registry.register_spec(
+        make_spec(op="cluster", params={"size": size, "fraction": fraction})
+    )
+    recipe = make_recipe(
+        steps=[make_step(id="cluster", op="cluster", params={"size": 10})]
+    )
+
+    params = {p["name"]: p for p in nodes(graph(recipe, registry))["cluster"]["params"]}
+    assert params["size"]["constraints"] == {"exclusive_with": ["fraction"]}
+    assert params["fraction"]["constraints"] == {"exclusive_with": ["size"]}
+
+
 def test_custom_step_types_come_from_its_inline_spec(registry):
     custom = CustomSpec(
         description="Plan dives.",
@@ -325,6 +382,36 @@ def test_custom_step_types_come_from_its_inline_spec(registry):
     assert node["op_url"] is None
     assert node["callable_path"] == "pkg.mod.plan"
     assert nodes(g, "output")["out:plan.windows"]["type"] == "list"
+
+
+def test_spec_notes_stay_out_of_the_graph(registry):
+    registry.register_spec(
+        make_spec(
+            op="noted",
+            notes="Op notes for developers.",
+            inputs={"ds": port("Dataset", notes="Port notes.")},
+            params={
+                "gap": ParamDeclaration(
+                    type="float", required=False, notes="Param notes."
+                )
+            },
+        )
+    )
+    custom = CustomSpec(
+        description="Plan dives.",
+        notes="Custom notes.",
+        callable_path="pkg.mod.plan",
+        params={"gap": ParamDeclaration(type="float", notes="Custom param notes.")},
+    )
+    recipe = make_recipe(
+        steps=[
+            make_step(id="n", op="noted", inputs={"ds": "${inputs.ds}"}),
+            make_step(id="plan", op="custom", custom_spec=custom),
+        ]
+    )
+
+    text = json.dumps(graph(recipe, registry))
+    assert "notes" not in text
 
 
 def test_custom_step_extending_an_op_links_to_it(registry):
@@ -500,36 +587,50 @@ def test_input_nodes_follow_declaration_order(registry):
     assert list(inputs) == ["in:unread", "in:late", "in:early", "in:extra"]
 
 
-def test_explicit_null_default_is_not_required(registry):
+def test_inputs_are_required_as_dry_run_reports_them(registry):
     recipe = make_recipe(
         inputs={
             "nullable": InputDeclaration.model_validate(
                 {"type": "str", "default": None}
             ),
-            "needed": InputDeclaration(type="str"),
+            "unread": InputDeclaration(type="str"),
+            "fed": InputDeclaration(type="list"),
+            "optional": InputDeclaration(type="path"),
             "forced": InputDeclaration(type="str", default=None, required=True),
         },
-        steps=[make_step(id="x", op="read")],
+        steps=[
+            make_step(
+                id="x",
+                op="read",
+                params={"paths": "${inputs.fed}", "folder": "${inputs.optional}"},
+            )
+        ],
         include_blocks=[
             IncludeBlock(
                 source="a.yaml",
                 step_ids=["x"],
                 inputs={
                     "nullable": {"type": "str", "default": None},
-                    "needed": {"type": "str"},
+                    "unread": {"type": "str"},
                     "forced": {"type": "str", "default": None, "required": True},
                 },
             ),
         ],
     )
     g = graph(recipe, registry)
-    inputs = nodes(g, "input")
-    assert inputs["in:nullable"]["required"] is False
-    assert inputs["in:needed"]["required"] is True
-    assert inputs["in:forced"]["required"] is True
+    required = {
+        node_id: node["required"] for node_id, node in nodes(g, "input").items()
+    }
+    assert required == {
+        "in:nullable": False,
+        "in:unread": False,
+        "in:fed": True,
+        "in:optional": False,
+        "in:forced": True,
+    }
     [include] = g["includes"]
     required = {entry["name"]: entry["required"] for entry in include["inputs"]}
-    assert required == {"nullable": False, "needed": True, "forced": True}
+    assert required == {"nullable": False, "unread": False, "forced": True}
 
 
 def test_declaration_the_model_would_reject_still_lists(registry):
@@ -548,14 +649,14 @@ def test_declaration_the_model_would_reject_still_lists(registry):
         {
             "name": "bad",
             "type": "int",
-            "required": True,
+            "required": False,
             "default": None,
             "description": None,
         },
         {
             "name": "odd",
             "type": None,
-            "required": True,
+            "required": False,
             "default": None,
             "description": None,
         },
@@ -664,3 +765,18 @@ def test_step_node_carries_category_and_implementation(registry):
     }
     assert by_id["r"]["implementation"] is None
     assert by_id["c"]["implementation"] is None
+
+
+def test_recipe_graph_of_a_loaded_recipe_names_the_root_file():
+    path = Path(__file__).parent / "fixtures" / "client_recipes" / "with_sub.yaml"
+    loaded = load_recipe(path)
+
+    named = api.recipe_graph(loaded, source=path.name)
+    steps = nodes(named, "step")
+    assert steps["seed"]["document"] == path.name
+    assert steps["leaf_add"]["document"] == "sub/leaf.yaml"
+    assert nodes(named, "input")["in:n"]["declared_in"] == path.name
+    assert named == api.recipe_graph(path)
+
+    unnamed = api.recipe_graph(loaded)
+    assert nodes(unnamed, "step")["seed"]["document"] == loaded.name

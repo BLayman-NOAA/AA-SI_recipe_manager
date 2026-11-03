@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
-"""Sessions: open a recipe, read its files, set inputs and run settings.
+"""Sessions: open a recipe, read and edit its files, set inputs and run settings.
 
-Also where a session's step outputs are saved, for the echogram pane.
+Also the run config file a session uses (choose, create, save), and where a
+session's step outputs are saved, for the echogram pane.
 """
 
 from __future__ import annotations
@@ -12,13 +13,26 @@ from fastapi import APIRouter, Request, Response
 from aa_recipe_manager import api
 from aa_recipe_manager.server.errors import ActiveRunExists, StepNotFound
 from aa_recipe_manager.server.models import (
+    ChooseConfigRequest,
+    CreateConfigRequest,
+    EditRequest,
+    EditResponse,
     FileTextResponse,
+    HistoryRequest,
     OpenSessionRequest,
+    ReloadRequest,
+    SaveAsRequest,
+    SaveAsResponse,
+    SaveConfigRequest,
+    SaveConfigResponse,
+    SaveRequest,
+    SaveResponse,
     SessionResponse,
     SessionSummary,
     SetInputsRequest,
     SetRunConfigRequest,
     StepArtifactsResponse,
+    SyncResponse,
 )
 from aa_recipe_manager.server.routers import ERROR_RESPONSES
 from aa_recipe_manager.server.sessions import SessionStore
@@ -66,8 +80,63 @@ def close_session(sid: str, request: Request):
 
 @router.get("/{sid}/files/{path:path}", response_model=FileTextResponse)
 def file_text(sid: str, path: str, request: Request):
-    """The text of one of the session's recipe files, by its listed path."""
+    """The text of one of the session's recipe files as edited, by its listed path."""
     return {"path": path, "text": store(request).file_text(sid, path)}
+
+
+@router.post("/{sid}/edits", response_model=EditResponse)
+def edit(sid: str, body: EditRequest, request: Request):
+    """Apply edit operations in order, all or none."""
+    return store(request).edit(sid, body.operations, body.version)
+
+
+@router.post("/{sid}/undo", response_model=EditResponse)
+def undo(sid: str, body: HistoryRequest, request: Request):
+    """Undo the newest edit."""
+    return store(request).undo(sid, body.version)
+
+
+@router.post("/{sid}/redo", response_model=EditResponse)
+def redo(sid: str, body: HistoryRequest, request: Request):
+    """Apply the newest undone edit again."""
+    return store(request).redo(sid, body.version)
+
+
+@router.post("/{sid}/revert", response_model=SessionResponse)
+def revert(sid: str, body: HistoryRequest, request: Request):
+    """Discard every unsaved edit and the history."""
+    return store(request).revert(sid, body.version)
+
+
+@router.post("/{sid}/reload", response_model=EditResponse)
+def reload(sid: str, body: ReloadRequest, request: Request):
+    """Take files' texts from disk as undoable edits; all changed files when null."""
+    return store(request).reload(sid, body.files, body.version)
+
+
+@router.post("/{sid}/sync", response_model=SyncResponse)
+def sync(sid: str, request: Request):
+    """Reload files changed on disk that have no unsaved edits; report the rest."""
+    return store(request).sync(sid)
+
+
+@router.post("/{sid}/save", response_model=SaveResponse)
+def save(sid: str, body: SaveRequest, request: Request):
+    """Write every edited file to its origin, after a sync with the disk."""
+    return store(request).save(sid, body.overwrite)
+
+
+@router.post("/{sid}/save-as", response_model=SaveAsResponse)
+def save_as(sid: str, body: SaveAsRequest, request: Request):
+    """Save the recipe under a new name under a recipe root, or preview it."""
+    return store(request).save_as(
+        sid,
+        body.path,
+        keep_paths=body.keep_paths,
+        copy_config=body.copy_config,
+        overwrite=body.overwrite,
+        dry_run=body.dry_run,
+    )
 
 
 @router.put("/{sid}/inputs", response_model=SessionResponse)
@@ -80,6 +149,30 @@ def set_inputs(sid: str, body: SetInputsRequest, request: Request):
 def set_run_config(sid: str, body: SetRunConfigRequest, request: Request):
     """Replace the run settings the session overrides."""
     return store(request).set_run_config(sid, body.model_dump())
+
+
+@router.put("/{sid}/config-file", response_model=SessionResponse)
+def choose_config(sid: str, body: ChooseConfigRequest, request: Request):
+    """Use a run config file under a recipe root, as ``--config``; null finds one."""
+    return store(request).choose_config(sid, body.path, body.version)
+
+
+@router.post("/{sid}/config-file", response_model=SessionResponse, status_code=201)
+def create_config(sid: str, body: CreateConfigRequest, request: Request):
+    """Write ``<recipe>.config.yaml`` beside the recipe from the template."""
+    return store(request).create_config(sid, body.version)
+
+
+@router.post("/{sid}/config-file/save", response_model=SaveConfigResponse)
+def save_config(sid: str, body: SaveConfigRequest, request: Request):
+    """Write inputs and run settings to the run config file, keeping its comments."""
+    return store(request).save_config(
+        sid,
+        body.inputs,
+        body.settings.model_dump(exclude_unset=True),
+        body.version,
+        body.scope,
+    )
 
 
 @router.get("/{sid}/steps/{step}/artifacts", response_model=StepArtifactsResponse)

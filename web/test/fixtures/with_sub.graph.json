@@ -54,7 +54,10 @@
           "description": null,
           "default": 3,
           "set": true,
-          "value": "${inputs.n}"
+          "value": "${inputs.n}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -154,7 +157,10 @@
           "description": null,
           "default": 0,
           "set": true,
-          "value": 5
+          "value": 5,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -324,14 +330,14 @@
         {
           "name": "value",
           "type": "int",
-          "required": true,
+          "required": false,
           "default": null,
           "description": "The value to add to."
         },
         {
           "name": "k",
           "type": "int",
-          "required": true,
+          "required": false,
           "default": null,
           "description": "The constant to add."
         }
@@ -385,14 +391,14 @@
         {
           "name": "source",
           "type": "list",
-          "required": true,
+          "required": false,
           "default": null,
           "description": "Items to work through."
         },
         {
           "name": "k",
           "type": "int",
-          "required": true,
+          "required": false,
           "default": null,
           "description": "Constant the leaf adds."
         }

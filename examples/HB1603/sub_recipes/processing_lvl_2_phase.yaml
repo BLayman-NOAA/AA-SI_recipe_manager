@@ -1,23 +1,14 @@
-# Processing Level 2 - Sv Computation and Noise Removal, phase-aware seabed
+# Processing level 2 with the seafloor from phase_detect_seafloor, a line
+# picker scoring Sv and split-beam phase stability, instead of the .bot pick.
+# Everything after detect_seafloor matches processing_lvl_2.yaml.
 #
-# processing_lvl_2.yaml with the seafloor step swapped from the .bot pick to
-# phase_detect_seafloor, the dynamic-programming line picker that scores Sv
-# and split-beam phase stability. Everything downstream of detect_seafloor is
-# unchanged. Swap it in from processing_levels_pipeline.yaml by pointing the
-# level 2 include at this file.
+# ep_add_splitbeam_angle is enabled because the detector reads the angles;
+# without them it falls back to amplitude only, with a warning. The mask steps
+# read the split-beam dataset so line, mask and Sv share one depth axis.
 #
-# ep_add_splitbeam_angle is enabled here because the detector reads
-# angle_alongship / angle_athwartship off ds_Sv; without them it falls back to
-# amplitude-only with a warning. create_seafloor_mask and apply_mask read the
-# split-beam dataset so the line, the mask and the masked Sv share one
-# surface-referenced depth axis (see the header of processing_lvl_2.yaml).
-#
-# The detector returns the seabed echo's leading edge, so the dead-zone
-# offset belongs in seafloor_buffer_m. No search window or .bot line is
-# given: the op first estimates the seabed from a few dozen slabs of pings
-# across the whole recorded range and searches only around that estimate,
-# so the same step works on any depth without survey-specific bounds.
-# Set r_min / r_max, or wire z_prior, only to override that.
+# The detector returns the seabed echo's leading edge, so the dead-zone offset
+# belongs in seafloor_buffer_m. It estimates the seabed from the whole recorded
+# range first; set r_min / r_max, or wire z_prior, only to override that.
 
 recipe:
   name: "processing_lvl_2_phase"
@@ -29,19 +20,20 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Combined EchoData object from the raw ingest stage."
+    description: "Combined raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters extracted from the standardized mapping."
+    description: "Calibration values for each channel, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters extracted from the standardized mapping."
+    description: "Environmental values for each channel, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
   noise_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size to apply before remove_noise, so it can run in dask-parallel chunks instead of one
-      in-memory block.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      the noise ping_num.
 
 steps:
 

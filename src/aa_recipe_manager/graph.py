@@ -30,11 +30,11 @@ from aa_recipe_manager.resolver.params import (
     parse_input_ref,
     parse_ref,
 )
+from aa_recipe_manager.validation import required_input_names
 
 if TYPE_CHECKING:
     from aa_recipe_manager.model.types import (
         IncludeBlock,
-        InputDeclaration,
         Recipe,
         Step,
     )
@@ -129,20 +129,18 @@ def _declared_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     """Input declarations of one file as the graph lists them, in file order.
 
     Tolerant of a declaration the model would reject: an input the parent
-    overrides is never validated, so the graph must not fail on it.
+    overrides is never validated, so the graph must not fail on it. An input
+    is required here only when its declaration says ``required: true``.
     """
     entries = []
     for name, decl in inputs.items():
         if not isinstance(decl, dict):
             decl = {}
-            required = True
-        else:
-            required = decl.get("required", "default" not in decl)
         entries.append(
             {
                 "name": name,
                 "type": decl.get("type"),
-                "required": required,
+                "required": decl.get("required") is True,
                 "default": json_safe(decl.get("default")),
                 "description": clean_text(decl.get("description")),
             }
@@ -150,11 +148,24 @@ def _declared_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     return entries
 
 
-def _required(decl: InputDeclaration) -> bool:
-    """Whether an input must be set; an explicit ``default: null`` is optional."""
-    if "required" not in decl.model_fields_set and "default" in decl.model_fields_set:
-        return False
-    return decl.required
+def required_inputs(recipe: Recipe, registry: Registry) -> list[str]:
+    """The recipe inputs a run must be given, as dry-run reports them.
+
+    A step whose op the registry does not have counts as one whose op
+    declares no slots.
+    """
+    steps = [(step, _spec_or_stand_in(step, registry, True)) for step in recipe.steps]
+    return required_input_names(recipe.inputs, steps)
+
+
+def _spec_or_stand_in(step: Step, registry: Registry, allow_unknown: bool) -> Spec:
+    """The step's spec, or an empty stand in for an op that cannot be found."""
+    try:
+        return step_spec(step, registry)
+    except SpecNotFoundError:
+        if not allow_unknown:
+            raise
+        return Spec(op=step.op, description=f"Unknown op '{step.op}'.")
 
 
 def _custom_spec(step: Step):
@@ -179,8 +190,15 @@ class _GraphBuilder:
         self.ops_base = ops_base
         self.root_document = Path(source).name
         self.hashes = hashes
-        self.allow_unknown_ops = allow_unknown_ops
-        self.specs = {step.id: self._spec(step) for step in recipe.steps}
+        self.specs = {
+            step.id: _spec_or_stand_in(step, registry, allow_unknown_ops)
+            for step in recipe.steps
+        }
+        self.required_inputs = set(
+            required_input_names(
+                recipe.inputs, [(step, self.specs[step.id]) for step in recipe.steps]
+            )
+        )
         self.step_ids = {step.id for step in recipe.steps}
         self.entries: dict[str, dict[str, Any]] = {}
         self.edges: list[dict[str, Any]] = []
@@ -192,15 +210,6 @@ class _GraphBuilder:
         self.includes = self._include_tree()
         self.include_of = self._innermost_includes()
         self.input_origins = self._input_origins()
-
-    def _spec(self, step: Step) -> Spec:
-        """The step's spec, or an empty stand in for an op that cannot be found."""
-        try:
-            return step_spec(step, self.registry)
-        except SpecNotFoundError:
-            if not self.allow_unknown_ops:
-                raise
-            return Spec(op=step.op, description=f"Unknown op '{step.op}'.")
 
     def build(
         self, recipe_info: dict[str, Any], *, slug: str, title: str
@@ -416,6 +425,9 @@ class _GraphBuilder:
                 "default": json_safe(decl.default),
                 "set": name in step.params,
                 "value": json_safe(step.params.get(name)),
+                "required": decl.needs_value,
+                "constraints": json_safe(decl.constraints or {}),
+                "fingerprint_mode": decl.fingerprint_mode,
             }
             for name, decl in spec.params.items()
         ]
@@ -428,6 +440,9 @@ class _GraphBuilder:
                 "default": None,
                 "set": True,
                 "value": json_safe(value),
+                "required": False,
+                "constraints": {},
+                "fingerprint_mode": None,
             }
             for name, value in step.params.items()
             if name not in spec.params
@@ -591,7 +606,7 @@ class _GraphBuilder:
                 "label": f"inputs.{name}",
                 "type": decl.type if decl else self._slot_type(step, slot),
                 "declared": decl is not None,
-                "required": _required(decl) if decl else None,
+                "required": name in self.required_inputs if decl else None,
                 "default": json_safe(decl.default) if decl else None,
                 "description": clean_text(decl.description) if decl else None,
                 "declared_in": (

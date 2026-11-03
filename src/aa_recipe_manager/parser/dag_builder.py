@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 import re
 
+from pydantic import ValidationError
+
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
     DependencyVersionError,
@@ -246,7 +248,8 @@ def resolve_custom_spec(step: Step, registry: Registry) -> Spec:
         The merged Spec.
 
     Raises:
-        SpecNotFoundError: ``extends`` names an op the registry does not have.
+        SpecNotFoundError: ``extends`` names an op the registry does not have,
+            or the declaration is not a valid spec.
     """
     errors: list[str] = []
     spec = _resolve_custom_spec(step, registry, errors)
@@ -260,14 +263,21 @@ def _resolve_custom_spec(
     registry: Registry,
     errors: list[str],
 ) -> Spec | None:
-    """Build a Spec from a step's custom_spec declaration, merging extends if set."""
+    """Build a Spec from a step's custom_spec declaration, merging extends if set.
+
+    A declaration the Spec model rejects, such as an ``exclusive_with`` naming
+    a param it does not declare, is reported in ``errors``.
+    """
     cs = step.custom_spec
     assert cs is not None
 
     if cs.extends is None:
-        return Spec(
+        return _custom_spec(
+            step,
+            errors,
             op="custom",
             description=cs.description,
+            notes=cs.notes,
             inputs=cs.inputs or {},
             outputs=cs.outputs or {},
             params=cs.params or {},
@@ -293,13 +303,28 @@ def _resolve_custom_spec(
     if cs.params:
         merged_params.update(cs.params)
 
-    return Spec(
+    return _custom_spec(
+        step,
+        errors,
         op=cs.extends,
         description=cs.description,
+        notes=cs.notes,
         inputs=merged_inputs,
         outputs=merged_outputs,
         params=merged_params,
     )
+
+
+def _custom_spec(step: Step, errors: list[str], **fields: Any) -> Spec | None:
+    """A Spec from custom_spec fields, or None with an error when it is invalid."""
+    try:
+        return Spec(**fields)
+    except ValidationError as exc:
+        reasons = "; ".join(
+            str(error["msg"]).removeprefix("Value error, ") for error in exc.errors()
+        )
+        errors.append(f"Step '{step.id}': custom_spec is not valid: {reasons}.")
+        return None
 
 
 def _resolve_custom_implementation(step: Step) -> Implementation:
@@ -336,7 +361,7 @@ def _validate_params(
         if value is None and param_name not in resolved_params:
             value = param_decl.default
 
-        if param_decl.required and param_decl.default is None and value is None:
+        if param_decl.needs_value and value is None:
             errors.append(
                 f"Step '{step.id}': required param '{param_name}' is not provided."
             )

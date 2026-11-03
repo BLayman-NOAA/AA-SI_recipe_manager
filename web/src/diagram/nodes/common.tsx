@@ -1,6 +1,6 @@
 /** Pieces shared by the diagram node components. */
-import { Handle, Position } from '@xyflow/react';
-import { createContext, useContext, type MouseEvent, type ReactNode } from 'react';
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { createContext, useContext, useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import type { Direction, Selection } from '../../state/view';
 import { BUS_IN_HANDLE, BUS_OUT_HANDLE, IN_HANDLE, OUT_HANDLE, type Port, type ViewNode } from '../buildView';
 
@@ -17,6 +17,10 @@ export interface DiagramActions {
   canRun: boolean;
   /** Draw a step's output in the echogram pane (the eye icon); absent hides the icon. */
   showEchogram?: (stepId: string) => void;
+  /** Set (`on`) or remove a step's `checkpoint: always` (the save icon); absent hides the icon. */
+  toggleCheckpoint?: (stepId: string, on: boolean) => void;
+  /** Whether the session may edit a file, which enables the save icon of its steps. */
+  canEdit?: (document: string) => boolean;
 }
 
 export const DiagramContext = createContext<DiagramActions>({
@@ -111,6 +115,39 @@ export function Handles({ inPorts = [], outPorts = [], input = false, output = f
   );
 }
 
+/**
+ * Have React Flow measure a node's handles again when the set of them changes
+ * after the node is first drawn. It measures them when the node's size
+ * changes, and a row handle can come or go without that (a run config file
+ * chosen while the inputs box is open).
+ */
+export function useHandleRefresh(nodeId: string, handles: string): void {
+  const update = useUpdateNodeInternals();
+  const drawn = useRef(handles);
+  useEffect(() => {
+    if (drawn.current === handles) return;
+    drawn.current = handles;
+    update(nodeId);
+  }, [update, nodeId, handles]);
+}
+
+/**
+ * A hidden handle of a run config line. The run config box is left of the
+ * inputs box in both directions, so its lines leave a right side and enter a
+ * left one; in a row the handle sits level with the row.
+ */
+export function ConfigHandle({ id, type, row = false }: { id: string; type: 'source' | 'target'; row?: boolean }) {
+  return (
+    <Handle
+      id={id}
+      type={type}
+      position={type === 'source' ? Position.Right : Position.Left}
+      className={`rc-handle rc-handle-generic${row ? ' rc-handle-row' : ''}`}
+      isConnectable={false}
+    />
+  );
+}
+
 /** The handles of an inputs or outputs box, both named `bus`. */
 export function BoxHandles({ source = false, target = false }: { source?: boolean; target?: boolean }) {
   const { direction } = useDiagram();
@@ -131,6 +168,8 @@ const ICONS = {
   play: 'M8 5v14l11-7z',
   eye: 'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   disk: 'M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z',
+  diskOutline:
+    'M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 6h9v4H6z',
 };
 
 export type IconName = keyof typeof ICONS;

@@ -1,7 +1,8 @@
-
+# HB2407 processing levels over 2024-10-12, with raw reads fanned out per file
+# and combined before Sv (processing_lvl_1_parallel.yaml).
 recipe:
   name: "processing_levels_pipeline_gcs"
-  description: "HB2407 processing levels pipeline reading all inputs from a GCS bucket."
+  description: "HB2407 processing levels pipeline over 2024-10-12: per-file raw reads combined into one EchoData, then Sv, masking, MVBS and clustering."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -10,48 +11,59 @@ inputs:
   raw_input_folder:
     type: path
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   seabed_line_folder:
     type: path
     default: "./seabed_lines"
+    description: "Folder of Echoview .evl seabed line exports, a local path or a gs:// URL. The files covering the time window are combined into the seafloor; a single .evl file is read whole."
 
-  # Data time range. Selects the raw files to process AND the Echoview seabed
-  # line exports to read, so the line always spans the pings. Leave both unset
-  # to process the whole folder and read every line file.
+  # Data time range
   file_time_start:
     type: str
     default: "2024-10-12T00:15"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are processed and scanned for calibration. Unset takes every file. It also selects the seabed line files to read."
   file_time_end:
     type: str
     default: "2024-10-12T11:15"
+    description: "Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are processed and scanned for calibration. Unset takes every file. It also selects the seabed line files to read."
   range_bin:
     type: str
     default: "5m"
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "5s"
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
   # Default display window shared by every plotting step in this pipeline.
   min_depth:
     type: float
     default: 0
+    description: "Shallowest depth shown on the echograms, in metres."
   max_depth:
     type: float
     default: 100
+    description: "Deepest depth shown on the echograms, in metres. Unset uses the deepest depth in the data."
   ping_min:
     type: int
     default: 0
+    description: "First ping index shown on the echograms."
   ping_max:
     type: int
     default: 515
+    description: "Last ping index shown on the echograms. Unset shows through the last ping."
   x_axis_units:
     type: str
     default: "seconds"
+    description: "Echogram x axis: \"datetime\" (UTC clock time), \"seconds\" from the first ping shown, \"pings\", \"meters\" travelled, or \"bins\" (MVBS only)."
   y_axis_units:
     type: str
     default: "meters"
+    description: "Echogram y axis: \"meters\", \"range_sample\", or \"bins\" (MVBS only)."
 
 steps:
 

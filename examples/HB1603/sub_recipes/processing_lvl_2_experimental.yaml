@@ -1,40 +1,23 @@
-# Processing Level 2 (experimental seafloor detection)
+# Processing level 2 with the seafloor line from HDBSCAN clustering instead of
+# the .bot pick. Masking and noise removal match processing_lvl_2.yaml.
 #
-# Identical to processing_lvl_2.yaml except that the seafloor line comes from
-# HDBSCAN clustering rather than the algorithmic detector. Everything else,
-# including the masking stack and noise removal, is unchanged.
+# Needs its own environment: two steps come from specs/experimental/, and
+# ep_resample_to_geometry needs an echopype build pinned to a commit, not on PyPI:
 #
-# This recipe needs its own environment. Two of its steps come from
-# specs/experimental/, and ep_resample_to_geometry requires a build of echopype
-# that is not on PyPI, pinned to a commit. One environment holds one build of a
-# package, so this cannot share an env with a stable recipe:
+#   aa-recipe env create processing_levels_pipeline_experimental.yaml --path ./hb1603_experimental_env
 #
-#   aa-recipe env create processing_levels_pipeline_experimental.yaml #       --path ./hb1603_experimental_env
+# Clustering the native 1548 x 15207 grid runs out of memory on 16 GB, so
+# build_range_grid and ep_resample_to_geometry coarsen it to 5 m, capped at
+# 2100 m (about 652 thousand points, under two minutes to cluster).
 #
-# How the seafloor branch works. Clustering cost grows with pings times range
-# samples, and HB1603 is 1548 x 15207, so the native grid means 23.5 million
-# points, which exhausts memory after about 26 minutes on a 16 GB machine.
-# build_range_grid plus ep_resample_to_geometry coarsen the vertical axis to
-# 5 m and cap it at 2100 m, leaving 421 samples per ping and 652 thousand
-# points: about 6 s to resample and under two minutes to cluster, with a line
-# that tracks log_seafloor_stats within roughly 30 m at every decile.
+# The seafloor steps branch off compute_sv because the resampler keeps only Sv,
+# echo_range, frequency_nominal and water_level. ep_add_depth runs again on the
+# branch with the main chain's parameters so the line keeps the same vertical
+# reference; only the 1-D line rejoins. On EK80 data the resample also aligns
+# channels recorded at different sample intervals.
 #
-# It is a branch off compute_sv rather than an edit to the main chain because
-# the resampler returns only Sv, echo_range, frequency_nominal and water_level,
-# dropping the beam and calibration variables the rest of the pipeline needs.
-# ep_add_depth runs again on the branch with the same parameters the main chain
-# uses, so the seafloor line keeps the vertical reference create_seafloor_mask
-# compares it against. Only the 1-D line rejoins.
-#
-# On HB1603 the resampling is purely a size reduction: its five channels are
-# already on identical geometry (0.1949 m spacing, zero spread). On an EK80
-# survey it is also a correctness fix, since channels recorded at different
-# sample intervals put the same range_sample index at different depths, and the
-# detector differences channels against each other.
-#
-# The clustering sizes are not tuned. Smaller values have been seen to select a
-# bottom multiple, at roughly twice the real depth, since the deepest cluster
-# always wins. Check the line against log_seafloor_stats before trusting a run.
+# The clustering sizes are not tuned. Smaller values have picked a bottom
+# multiple at about twice the real depth; check the line before trusting a run.
 
 recipe:
   name: "processing_lvl_2_experimental"
@@ -46,23 +29,20 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Combined EchoData object from the raw ingest stage."
+    description: "Combined raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters extracted from the standardized mapping."
+    description: "Calibration values for each channel, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters extracted from the standardized mapping."
+    description: "Environmental values for each channel, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
   noise_chunk_ping_time:
     type: int
     default: 100
     description: >
-      Ping-time chunk size to apply before remove_noise, so its coarsen()-based
-      noise estimate can run in dask-parallel chunks instead of as one
-      in-memory block. Confirmed via isolated benchmark (2026-07-31, real
-      compute_sv checkpoint, 1548-ping window) to be a genuine ~40% win here,
-      despite echopype's add_remove_background_noise_attrs redundant-recompute
-      inefficiency. Kept a multiple of noise_ping_num so coarsen() dispatches across chunks cleanly.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      the noise ping_num.
 
 steps:
 
@@ -92,6 +72,7 @@ steps:
       encode_mode: "power"
       to_disk: false
 
+  # Uncomment to log the .bot seafloor statistics to check the clustered line.
   # - id: log_seafloor_stats
   #   op: log_seafloor_detection_stats
   #   inputs:

@@ -16,10 +16,13 @@
     # HB1603 dive plan: turn the NEFSC dive configs into recipe windows.
     #
     # Reads no acoustic data. It picks the dives, finds each dive's line files and
-    # gives the ping_time window each one spans, which drives the analysis levels.
+    # emits one ping_time window per dive, which drives everything user-level.
     #
-    # Include it first. It isn't per-file, so it must not sit between the level 1
-    # to 3 includes, which form one per-file chain.
+    # INCLUDE THIS FIRST
+    #
+    #   Levels 1 to 3 are one per-file chain, and a non-mapped step declared
+    #   between two of them splits it. Declared ahead of level 0, plan_dives is out
+    #   of the way.
 
     recipe:
       name: "hb1603_dive_plan"
@@ -32,15 +35,18 @@
       json_dir:
         type: path
         default: "./Auxiliary/JSON_Files"
-        description: "Folder of SWD_*.json dive configs."
+        description: "Folder of the SWD_*.json dive configs."
       evl_root:
         type: path
         default: "./Auxiliary"
-        description: "Searched recursively for the .evl files the configs name."
+        description: "Folder searched recursively for the .evl line files the dive configs name."
       pad_minutes:
         type: float
         default: 0.0
         description: "Minutes added either side of each dive's line span."
+      # SWD_20160707-OE20-OE29-OE32 is a combined view of three listed dives with
+      # no 99% confidence lines, so it is not a dive of its own. Listing the
+      # included set states the population and makes a missing config fail loudly.
       dive_labels:
         type: list
         default:
@@ -58,13 +64,13 @@
           - "SWD_20160814-OE09"
           - "SWD_20160814-OE44"
         description: >
-          The 13 dives analysed: every localized HB1603 dive except
-          SWD_20160703-OE20, whose dive data is incorrect. A label with no matching
-          config stops the run. SWD_20160707-OE20-OE29-OE32 is a combined view of
-          three dives listed here, not a dive of its own.
+          Labels of the dives to analyse, one per dive config. The default is every
+          localized HB1603 dive except SWD_20160703-OE20, whose dive data is
+          incorrect. A label with no matching config stops the run.
 
     steps:
 
+      # Declared first; see INCLUDE THIS FIRST in the header.
       - id: plan_dives
         op: custom
         checkpoint: always
@@ -96,33 +102,19 @@
             url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     ```
 
-=== "Notebook"
+=== "Python"
 
-    These are the cells that run this level, taken from the [HB1603 dive analysis notebook](../data/notebooks/hb1603-dive-analysis.ipynb). They use variables earlier levels define, so run them from the full notebook.
-
-    #### Step: `plan_dives`
-    **Op:** `custom` (custom / unregistered)
-
-    Turn the NEFSC dive configs into recipe windows.
-
-    **Parameters:**
-    - `json_dir` path
-    - `evl_root` path
-    - `pad_minutes` float
-    - `include_labels` list
+    The function calls this part of the [HB1603 dive analysis notebook](../data/notebooks/hb1603-dive-analysis.ipynb) makes. They use variables earlier steps define, so run them from the full notebook.
 
     ```python
-    # --- Parameters ---
-    _plan_dives__json_dir = './Auxiliary/JSON_Files'
-    _plan_dives__evl_root = './Auxiliary'
-    _plan_dives__pad_minutes = 0.0
-    _plan_dives__include_labels = ['SWD_20160707-OE20', 'SWD_20160707-OE29', 'SWD_20160707-OE32', 'SWD_20160719-OE07', 'SWD_20160725-OE50', 'SWD_20160725-OE54', 'SWD_20160725-OE61', 'SWD_20160725-OE62', 'SWD_20160725-OE64', 'SWD_20160802-OE16', 'SWD_20160814-OE03', 'SWD_20160814-OE09', 'SWD_20160814-OE44']
+    from aa_si_utils.dive_profiles import plan_dive_datasets
 
+    # plan_dives: Turn the NEFSC dive configs into recipe windows.
     _result = plan_dive_datasets(
-        json_dir=_plan_dives__json_dir,
-        evl_root=_plan_dives__evl_root,
-        pad_minutes=_plan_dives__pad_minutes,
-        include_labels=_plan_dives__include_labels,
+        json_dir='./Auxiliary/JSON_Files',
+        evl_root='./Auxiliary',
+        pad_minutes=0.0,
+        include_labels=['SWD_20160707-OE20', 'SWD_20160707-OE29', 'SWD_20160707-OE32', 'SWD_20160719-OE07', 'SWD_20160725-OE50', 'SWD_20160725-OE54', 'SWD_20160725-OE61', 'SWD_20160725-OE62', 'SWD_20160725-OE64', 'SWD_20160802-OE16', 'SWD_20160814-OE03', 'SWD_20160814-OE09', 'SWD_20160814-OE44'],
     )
     windows = _result['windows']
     raw_files = _result['raw_files']

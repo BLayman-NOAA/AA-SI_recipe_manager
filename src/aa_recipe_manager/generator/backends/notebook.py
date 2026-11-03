@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -182,11 +183,17 @@ def _build_callable_aliases(dag: PipelineDAG) -> dict[str, str]:
     return aliases
 
 
-def _collect_imports(dag: PipelineDAG, callable_aliases: dict[str, str]) -> list[str]:
-    """Collect unique import lines for all callable_paths using safe aliases."""
+def _collect_imports(
+    dag: PipelineDAG,
+    callable_aliases: dict[str, str],
+    step_ids: set[str] | None = None,
+) -> list[str]:
+    """Collect unique import lines for the callables of ``step_ids``, or of every step."""
     seen: set[str] = set()
     imports: list[str] = []
     for step_id in dag.topological_order:
+        if step_ids is not None and step_id not in step_ids:
+            continue
         node = dag.nodes[step_id]
         if node.implementation is None:
             continue
@@ -265,7 +272,12 @@ def _build_inputs_cell(
 
 
 def _indent_lines(lines: list[str], prefix: str = "    ") -> list[str]:
-    return [f"{prefix}{line}" if line else prefix for line in lines]
+    """Indent every line, including each line of a multi-line entry."""
+    return [
+        f"{prefix}{line}" if line else ""
+        for entry in lines
+        for line in entry.split("\n")
+    ]
 
 
 def _json_safe(value: Any) -> Any:
@@ -743,27 +755,57 @@ def _build_cache_aware_step_lines(
     return code_lines
 
 
+@dataclass
+class ChainCode:
+    """A fan-out chain's loop code, split so callers can show part of it."""
+
+    accumulators: dict[str, list[str]]
+    """Each member's ``name = []`` lines, written before the loop."""
+    header: list[str]
+    """The ``for`` lines."""
+    indent: str
+    """The indent of the loop body."""
+    bodies: dict[str, list[str]]
+    """Each member's unindented loop body, ending with its appends."""
+
+
 def _mapped_chain_code_lines(
     chain: MappedChain,
     members: list[DAGNode],
     var_name_map: dict[tuple[str, str], str],
     callable_aliases: dict[str, str],
 ) -> list[str]:
-    """Render a mapped/swept chain as a ``for`` loop that accumulates outputs.
+    """Render a mapped/swept chain as a ``for`` loop that accumulates outputs."""
+    code = mapped_chain_code(chain, members, var_name_map, callable_aliases)
+    lines = [line for mid in code.accumulators for line in code.accumulators[mid]]
+    lines.extend(code.header)
+    body = [line for mid in code.bodies for line in code.bodies[mid]]
+    lines.extend(_indent_lines(body, prefix=code.indent))
+    return lines
+
+
+def mapped_chain_code(
+    chain: MappedChain,
+    members: list[DAGNode],
+    var_name_map: dict[tuple[str, str], str],
+    callable_aliases: dict[str, str],
+) -> ChainCode:
+    """The pieces of a mapped/swept chain's ``for`` loop.
 
     Each member output gets a list accumulator (the name a downstream
     ``collect`` step reads); inside the loop, references to a chain member
     resolve to that iteration's local value, and ``${_item}`` becomes the loop
     variable. Swept params render as ``_sweep['<param>']``.
     """
-    lines: list[str] = []
+    accumulators: dict[str, list[str]] = {}
     accum: dict[tuple[str, str], str] = {}
     for member in members:
         mid = member.step.id
+        accumulators[mid] = []
         for out in member.spec.outputs:
             av = var_name_map.get((mid, out), f"{mid}_{out}")
             accum[(mid, out)] = av
-            lines.append(f"{av} = []")
+            accumulators[mid].append(f"{av} = []")
 
     # Within the loop, a chain member's output is a per-iteration local, not the
     # accumulated list a collector reads.
@@ -789,7 +831,7 @@ def _mapped_chain_code_lines(
         header_lines.append(f"{indent}for _sweep in {combos!r}:")
         indent += "    "
 
-    body: list[str] = []
+    bodies: dict[str, list[str]] = {}
     for member in members:
         mid = member.step.id
         extra: list[tuple[str, str]] | None = None
@@ -799,17 +841,14 @@ def _mapped_chain_code_lines(
                 (pmap.get(p, p), f"_sweep[{p!r}]")
                 for p in member.sweep_declaration.param_lists
             ]
-        body.extend(
-            _build_step_body_lines(
-                mid, member, local_map, callable_aliases, extra_kwargs=extra
-            )
+        body = _build_step_body_lines(
+            mid, member, local_map, callable_aliases, extra_kwargs=extra
         )
         for out in member.spec.outputs:
             body.append(f"{accum[(mid, out)]}.append({local_map[(mid, out)]})")
+        bodies[mid] = body
 
-    lines.extend(header_lines)
-    lines.extend(_indent_lines(body, prefix=indent))
-    return lines
+    return ChainCode(accumulators, header_lines, indent, bodies)
 
 
 def _build_mapped_chain_cells(

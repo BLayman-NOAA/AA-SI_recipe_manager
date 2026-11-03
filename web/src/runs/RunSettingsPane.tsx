@@ -204,7 +204,9 @@ export function RunSettingsView({ config, problems = [], saving, error, onSet }:
           </ul>
         </section>
       )}
-      <p className="rc-field-help">The cache, outputs and temp folders become editable in a later milestone.</p>
+      <p className="rc-field-help">
+        The cache, outputs and temp folders are edited in the Run Config pane, for this session or in the file.
+      </p>
     </div>
   );
 }

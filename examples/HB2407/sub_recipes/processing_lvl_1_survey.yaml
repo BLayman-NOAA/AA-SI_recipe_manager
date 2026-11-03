@@ -1,29 +1,15 @@
-# Processing Level 1 (Survey) - Raw Ingest and Per-File Calibration
+# Processing level 1, survey: raw ingest and per-file calibration
 #
-# Same steps as processing_lvl_1_per_file.yaml, with one difference that is the
-# whole point of the survey/user split: the time window here is a SURVEY-WIDE
-# constant, defaulted in this file, not the window a user asks for.
+# Same steps as processing_lvl_1_per_file.yaml, but the time window is a fixed
+# survey-wide constant, not the window a user asks for. initial_setup and
+# gen_cal_mapping take the window as params, so a user window wired in here
+# would change every hash below them and two users' segments would share no
+# cached work. User recipes narrow to their segment later, with
+# select_ping_time_range in processing_lvl_2_user.yaml.
 #
-# WHY THAT MATTERS
-#
-#   Step hashes are a Merkle chain -- each step folds in its parents' hashes.
-#   initial_setup and gen_cal_mapping take file_time_start / file_time_end as
-#   params, so a user's window wired in here changes their hashes and every
-#   hash below them. Two users asking for different segments would then share
-#   no cached work at all, even for byte-identical per-file processing of the
-#   same raw files. Verified: changing only the window changed initial_setup,
-#   read_raw, combine_raw, compute_sv and ep_add_depth hashes.
-#
-#   Leaving the window fixed here means every user recipe that includes this
-#   file with the same overrides computes the same hashes, hits the shared
-#   survey cache, and narrows to its own segment later via
-#   select_ping_time_range in processing_lvl_2_user.yaml.
-#
-# So: do not wire ${inputs.file_time_start} into this include from a user
-# recipe. Override survey_time_start / survey_time_end only when the survey
-# itself changes.
-#
-# Included by survey_preprocess.yaml and by every user recipe built on it.
+# Do not wire a user's file_time_start into this include. Override
+# survey_time_start / survey_time_end only when the survey itself changes.
+# Included by survey_preprocess.yaml and every user recipe built on it.
 
 recipe:
   name: "processing_lvl_1_survey"
@@ -33,53 +19,56 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # Declare it with fingerprint_mode: auto in the parent recipe so the folder's
+  # contents, not its location, enter the hash; a local copy and the bucket
+  # then give the same survey hash.
   raw_input_folder:
     type: path
-    description: >
-      Folder containing the raw acoustic files (local path or gs:// URL).
-      Declare it with fingerprint_mode: auto in the parent recipe so the
-      folder's contents, not its location, enter the hash -- that way a local
-      copy and the bucket produce the same survey hash.
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
-    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+    description: "Name of the subfolder of the run's outputs folder that calibration artifacts are written to."
   cruise_id:
     type: str
-    description: "Cruise identifier used in calibration mapping."
+    description: "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey."
   record_author:
     type: str
     default: "<Your Name>"
+    description: "Name recorded as the author of every generated single-channel calibration file."
   sonar_model:
     type: str
     default: "EK80"
+    description: "Echosounder model as echopype names it, such as \"EK60\" or \"EK80\"."
   raw_file_names:
     type: list
     default: []
     description: >
-      Optional subset of filenames within raw_input_folder to use. Empty list
-      means "use every .raw file in the folder".
+      Optional list of file names within raw_input_folder to process. An empty
+      list uses every .raw file in the folder.
+  # Changing it re-keys every downstream checkpoint. It bounds the survey, not
+  # a user's segment.
   survey_time_start:
     type: str
     required: false
     description: >
-      Inclusive ISO datetime bounding the SURVEY, not a user's segment. Leave
-      unset to ingest every raw file in the folder, which is the usual choice
-      for a survey-level run. Changing it re-keys every downstream checkpoint.
+      Optional inclusive ISO datetime bounding the start of the survey, matched
+      to the time in each raw file name. Unset ingests every file.
   survey_time_end:
     type: str
     required: false
-    description: "Inclusive ISO datetime upper bound; see survey_time_start."
+    description: "Optional inclusive ISO datetime upper bound of the survey, matched to the time in each raw file name. Unset ingests through the last file."
   ping_time_chunk:
     type: int
     default: 10000
     description: >
-      Chunk length along ping_time for each file's EchoData. A single raw file
-      holds far fewer pings than this, so the default writes each file's
-      checkpoint as one chunk.
+      Chunk length along ping_time of each file's EchoData and its checkpoint.
+      Larger chunks mean fewer, faster remote writes but more memory per chunk.
+      The default keeps each file in one chunk; lower it if a file does not fit
+      in memory.
 
 steps:
 
@@ -107,13 +96,12 @@ steps:
       file_time_start: ${inputs.survey_time_start}
       file_time_end: ${inputs.survey_time_end}
 
-  # --- Per-file fan-out starts here --------------------------------------
-  # One mapped instance per raw file in the survey, each checkpointed under its
-  # own content-addressed instance hash. Adding a file to the survey later runs
-  # the chain for that file only.
+  # Per-file fan-out
+  # One mapped instance per raw file, each checkpointed under its own
+  # content-addressed hash, so adding a file runs the chain for that file only.
 
-  # checkpoint: never -- the output is an exe_temp store path deleted at the end
-  # of the run, so it must not be cached under any checkpoint mode.
+  # checkpoint: never: the output is an exe_temp store path deleted at the end
+  # of the run.
   - id: read_raw
     op: read_raw_files
     map_over: ${initial_setup.raw_file_paths}

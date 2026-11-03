@@ -1,9 +1,7 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/HB2407/sub_recipes/processing_lvl_3.yaml
 
 # Processing level 3: sparse masking, MVBS, and per-cell statistics.
-#
-# Masks sparse bins in the clean Sv dataset and computes MVBS from the result.
-# Per-cell statistics come from the pre-mask Sv dataset, for ML use.
+# The per-cell statistics come from the pre-mask Sv, for ML use.
 
 recipe:
   name: "processing_lvl_3"
@@ -15,25 +13,31 @@ recipe:
 inputs:
   sv_clean_unmasked:
     type: dataset
-    description: "Clean Sv dataset after noise removal and before sparse-bin masking."
+    description: >
+      Noise-removed Sv before sparse-bin masking; the sparse mask and the
+      per-cell statistics are computed from it.
   range_bin:
     type: str
     default: "20m"
-    description: "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: >
+      Depth bin height of the MVBS grid, as a length string such as "2m". The
+      sparse-bin mask and the cell statistics use the same bin.
   ping_time_bin:
     type: str
     default: "20s"
-    description: "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: >
+      Ping-time bin width of the MVBS grid, as a duration string such as "10s".
+      The sparse-bin mask and the cell statistics use the same bin.
   nan_threshold:
     type: float
     default: 0.6
-    description: "Fraction of NaN samples in a bin above which the sparse-bin mask excludes it."
+    description: "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
   mvbs_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size before compute_mvbs, so it runs in dask chunks. A
-      separate rechunk step sets it, since mask_sparse_bins loads Sv into memory.
+      Ping-time chunk size set before the MVBS step, so it runs in dask chunks
+      rather than as one in-memory block.
 
 steps:
 
@@ -47,6 +51,8 @@ steps:
       ping_time_bin: ${inputs.ping_time_bin}
       nan_threshold: ${inputs.nan_threshold}
 
+  # A separate rechunk step because mask_sparse_bins loads Sv into memory;
+  # standalone, it survives that step being removed or reordered.
   - id: rechunk_before_mvbs
     op: rechunk_dataset
     inputs:

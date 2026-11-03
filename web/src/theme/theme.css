@@ -16,6 +16,7 @@
   --rc-input: #81c784;
   --rc-external: #ce93d8;
   --rc-output: #ffb74d;
+  --rc-config: #4db6ac;
   --rc-context: #f48fb1;
   --rc-group: color-mix(in srgb, var(--rc-accent) 9%, transparent);
   --rc-error: #ef6f6c;
@@ -60,6 +61,7 @@
   --rc-input: #2e7d32;
   --rc-external: #7b1fa2;
   --rc-output: #c75b00;
+  --rc-config: #00796b;
   --rc-context: #c2185b;
   --rc-group: color-mix(in srgb, var(--rc-accent) 7%, transparent);
   --rc-error: #c62828;
@@ -163,6 +165,17 @@
 .rc-menu-list .rc-menu-list {
   top: -5px;
   left: 100%;
+}
+
+/* A pane tab's right click menu, placed at the pointer. */
+.rc-tab-menu {
+  position: fixed;
+  z-index: 1000;
+}
+
+.rc-tab-menu > .rc-menu-list {
+  top: 0;
+  min-width: 200px;
 }
 
 .rc-menu-item {

@@ -2,10 +2,10 @@
 # Herring_10-15_per_file.yaml, regrouped into the HB1603 levels. Every step is
 # wired as in the original, in the same order.
 
-# HB2407 Herring 10-15, processed one raw file at a time.
+# HB2407 Herring 10-15, per-raw-file pipeline.
 #
-# Each raw file is calibrated, converted to Sv and masked on its own, then
-# merge_sv joins the survey back together before noise removal.
+# Each raw file is calibrated and masked on its own; merge_sv reassembles the
+# survey before noise removal.
 #
 #   level 0   select the raw files and build the calibration mapping
 #   level 1   per file: raw ingest
@@ -13,6 +13,7 @@
 #   level 3   sparse mask, MVBS and per-cell statistics
 #   level 4   HDBSCAN clustering and its report
 #
+# Usage:
 #   aa-recipe run Herring_10-15_per_file.yaml
 #   aa-recipe run Herring_10-15_per_file.yaml --executor dask
 
@@ -27,39 +28,74 @@ inputs:
   raw_input_folder:
     type: path
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   seabed_line_folder:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
+    description: >
+      Folder of Echoview .evl seabed line exports, a local path or a gs://
+      URL. The files covering the time window are combined into the seafloor;
+      a single .evl file is read whole.
 
-  # Time window. Selects the raw files and seabed line files, and each selected
-  # raw file runs as its own chain instance.
+  # Data time range.
   file_time_start:
     type: str
     default: "2024-10-15T13:38:52"
+    description: >
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS}
+      time in each raw file name; files at or after it are processed and
+      scanned for calibration. Unset takes every file. It also selects the
+      seabed line files to read.
   file_time_end:
     type: str
     default: "2024-10-15T23:43:36"
+    description: >
+      Optional inclusive ISO datetime matched to the D{YYYYMMDD}-T{HHMMSS}
+      time in each raw file name; files at or before it are processed and
+      scanned for calibration. Unset takes every file. It also selects the
+      seabed line files to read.
 
-  # Display window shared by every plot.
+  # Display window shared by every plotting step; hardcode a value in a step
+  # or sub-recipe to override it there.
   min_depth:
     type: float
     default: 0
+    description: "Shallowest depth shown on the echograms, in metres."
   max_depth:
     type: float
-  # Unset shows the whole time range. Set a UTC timestamp to window the plots.
+    # default: 50
+    description: >
+      Deepest depth shown on the echograms, in metres. Unset uses the deepest
+      depth in the data.
   time_min:
     type: str
+    # default: "2024-10-15T00:00"
+    description: >
+      Start of the echogram window, as a UTC timestamp such as
+      "2024-10-15T12:30". Unset starts at the first ping.
   time_max:
     type: str
+    # default: "2024-10-15T01:00"
+    description: >
+      End of the echogram window, as a UTC timestamp such as
+      "2024-10-15T12:30". Unset runs to the last ping.
   x_axis_units:
     type: str
     default: "datetime"
+    description: >
+      Echogram x axis: "datetime" (UTC clock time), "seconds" from the first
+      ping shown, "pings", "meters" travelled, or "bins" (MVBS only).
   y_axis_units:
     type: str
     default: "meters"
+    description: >
+      Echogram y axis: "meters", "range_sample", or "bins" (MVBS only).
 
 
 steps:
@@ -83,18 +119,17 @@ steps:
       echodata: ${combine_raw.echodata}
       calibration_dict: ${gen_cal_mapping.calibration_dict}
       mapping_dict: ${gen_cal_mapping.mapping_dict}
-      # Transducer depth is each file's drop keel offset plus heave, shifted by
-      # datum_correction_m to the waterline.
       datum_correction_m: -1.0
       use_heave: true
       heave_sign: 1.0
+      # Masks
       surface_mask_depth: 5.0
       seafloor_buffer_m: 1
-      # Crop the range by outlier rejection, so one very deep ping does not hold
-      # it open. Add crop_max_range_m for a hard ceiling.
+      # Range crop by outlier rejection, so one anomalously deep ping does not
+      # hold the range axis open. Add crop_max_range_m for a hard ceiling.
       crop_outlier_sigma: 3.0
       crop_outlier_margin: 1.5
-      # Parameters for echopype's remove_background_noise.
+      # Background noise removal
       noise_ping_num: 5
       noise_range_sample_num: 10
       seabed_line_folder: ${inputs.seabed_line_folder}
@@ -118,10 +153,10 @@ steps:
   - include: sub_recipes/processing_lvl_3.yaml
     input_overrides:
       sv_clean_unmasked: ${remove_noise.ds_Sv}
-      # MVBS bin size.
+      # MVBS bin size:
       range_bin: "4m"
       ping_time_bin: "4s"
-      nan_threshold: 0.95 # mask a bin when more than this fraction is NaN
+      nan_threshold: 0.95
 
   - id: plot_mvbs
     op: plot_sv_echogram
@@ -138,8 +173,8 @@ steps:
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
 
-  # echodata and seafloor_depth stay unwired. They only feed the seafloor_depth
-  # and altitude features, which this recipe does not use.
+  # echodata and seafloor_depth stay unwired: features: [cell_cv] needs neither.
+  # To use them, collect the per-file lines with a merge_datasets step.
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
       mvbs: ${compute_mvbs.ds_MVBS}

@@ -94,6 +94,23 @@ def scan_recipes(
     return sorted(entries.values(), key=lambda entry: (entry.relative, entry.path))
 
 
+def folder_recipes(folder: Path, cache: ScanCache | None = None) -> list[Path]:
+    """The readable recipe files directly in one folder, sorted by name.
+
+    Args:
+        folder: The folder; its subfolders are not searched.
+        cache: Parses kept between calls, as for :func:`scan_recipes`.
+    """
+    cache = {} if cache is None else cache
+    found = []
+    for path in sorted(Path(folder).iterdir()):
+        if path.is_file() and _recipe_name(path.name):
+            raw, _ = _read(path, cache)
+            if raw is not None:
+                found.append(path)
+    return found
+
+
 def _yaml_files(root: Path):
     for folder, subfolders, files in os.walk(root):
         subfolders[:] = sorted(
@@ -102,11 +119,16 @@ def _yaml_files(root: Path):
             if not name.startswith(".") and name not in SKIPPED_FOLDERS
         )
         for name in sorted(files):
-            lower = name.lower()
-            if lower.endswith((".yaml", ".yml")) and not lower.endswith(
-                (".config.yaml", ".config.yml")
-            ):
+            if _recipe_name(name):
                 yield Path(folder) / name
+
+
+def _recipe_name(name: str) -> bool:
+    """Whether a file name can be a recipe's: YAML, and not a run config."""
+    lower = name.lower()
+    return lower.endswith((".yaml", ".yml")) and not lower.endswith(
+        (".config.yaml", ".config.yml")
+    )
 
 
 def _read(path: Path, cache: ScanCache) -> tuple[dict[str, Any] | None, str | None]:

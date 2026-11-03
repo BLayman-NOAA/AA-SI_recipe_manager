@@ -7,18 +7,19 @@
  * in step.
  */
 import type { RunEvent } from './events';
+import { LOADED_SURVEY, LOADED_USER, NOT_NEEDED, SKIPPED_CACHED } from './wording';
 
 /** The Logs pane stream of progress lines. */
 export const PROGRESS_STREAM = 'progress';
 
 const FINISHED_LABEL: Record<string, string> = {
   computed: 'computed',
-  'hit-user-cache': 'loaded from your cache',
-  'hit-survey-cache': 'loaded from the survey cache',
+  'hit-user-cache': LOADED_USER,
+  'hit-survey-cache': LOADED_SURVEY,
   marker: 'already done',
-  skipped: 'not needed',
-  pruned: 'not needed',
-  untargeted: 'outside the run target',
+  skipped: SKIPPED_CACHED,
+  pruned: SKIPPED_CACHED,
+  untargeted: NOT_NEEDED,
 };
 
 /** Dispositions whose time is worth showing. */
@@ -77,8 +78,8 @@ function stepFinished(data: Data): string {
   if (instances) {
     const counts = [
       instances.computed && `${instances.computed} computed`,
-      instances.cached && `${instances.cached} cached`,
-      instances.skipped && `${instances.skipped} not needed`,
+      instances.cached && `${instances.cached} loaded`,
+      instances.skipped && `${instances.skipped} skipped`,
     ].filter(Boolean);
     const many = count(instances.count, 'instance');
     parts.push(counts.length ? `${many}: ${counts.join(', ')}` : many);

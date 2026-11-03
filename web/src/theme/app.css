@@ -36,3 +36,267 @@ pre {
   font-family: var(--rc-font-mono);
   font-size: 12px;
 }
+
+/* Editing: status bar slots, the disk banner and the save dialogs. App only,
+   so they are here rather than in theme.css. */
+
+.rc-status-muted {
+  color: var(--rc-faint);
+}
+
+.rc-notice {
+  color: var(--rc-accent);
+}
+
+.rc-editing-error {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rc-disk-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rc-disk-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rc-dialog-body p {
+  margin: 0 0 8px;
+}
+
+.rc-dialog-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.rc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.rc-saveas-section {
+  margin-bottom: 8px;
+}
+
+.rc-saveas-report {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rc-line);
+}
+
+/* Inspector edit forms. */
+
+.rc-survey-banner {
+  margin-bottom: 8px;
+  border: 1px solid var(--rc-warning);
+  border-radius: 4px;
+}
+
+.rc-inspector form .rc-field-head {
+  flex-wrap: wrap;
+}
+
+.rc-inspector form select.rc-input {
+  margin: 2px 0;
+}
+
+/* A field's description behind an "i" icon: the card spans the field's head,
+   so it stays within the inspector's width. */
+.rc-inspector .rc-field-head {
+  position: relative;
+}
+
+details.rc-info {
+  flex: none;
+}
+
+details.rc-info > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--rc-muted);
+  border-radius: 50%;
+  color: var(--rc-muted);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: visible;
+  list-style: none;
+  cursor: pointer;
+}
+
+details.rc-info > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.rc-info > summary:hover,
+details.rc-info[open] > summary {
+  border-color: var(--rc-accent);
+  color: var(--rc-accent);
+}
+
+.rc-info-card {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--rc-line);
+  border-radius: 4px;
+  background: var(--rc-panel);
+  box-shadow: var(--rc-shadow);
+  color: var(--rc-fg);
+  font-weight: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* YAML editor: the gutter, the highlight band, the coloured layer and the
+   textarea share one font size and line height, so line N of each sits at the
+   same height. The textarea's text is transparent over the coloured layer. */
+.rc-yaml.rc-yaml-editor {
+  --rc-yaml-line: 18px;
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+  line-height: var(--rc-yaml-line);
+}
+
+.rc-yaml-gutter {
+  flex: none;
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+.rc-yaml-gutter-lines {
+  transform: translateY(var(--rc-yaml-scroll, 0px));
+}
+
+.rc-yaml-editor .rc-yaml-number {
+  height: var(--rc-yaml-line);
+  line-height: var(--rc-yaml-line);
+}
+
+.rc-yaml-editor-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rc-yaml-editor-band {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  left: 0;
+  height: var(--rc-yaml-line);
+  transform: translateY(calc(var(--rc-yaml-line) * var(--rc-yaml-band) + var(--rc-yaml-scroll, 0px)));
+  pointer-events: none;
+}
+
+.rc-yaml-textarea,
+.rc-yaml-editor-colors {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 12px 4px 0;
+  border: none;
+  font-family: var(--rc-font-mono);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: normal;
+  font-variant-ligatures: none;
+  font-kerning: none;
+  font-feature-settings: normal;
+  text-rendering: optimizeSpeed;
+  letter-spacing: normal;
+  word-spacing: normal;
+  line-height: var(--rc-yaml-line);
+  text-indent: 0;
+  text-transform: none;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+.rc-yaml-editor-colors {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+  min-height: 100%;
+  background: transparent;
+  color: var(--rc-yaml-fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+.rc-yaml-textarea {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--rc-yaml-fg);
+}
+
+.rc-yaml-textarea::selection {
+  background: color-mix(in srgb, var(--rc-yaml-ref) 22%, transparent);
+  color: transparent;
+}
+
+/* An IME draws its underline in the text colour, so the text shows while composing. */
+.rc-yaml-textarea.rc-yaml-composing {
+  color: var(--rc-yaml-fg);
+}
+
+.rc-yaml-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rc-line);
+  background: color-mix(in srgb, var(--rc-accent) 12%, var(--rc-bg));
+  font-size: 12px;
+}
+
+.rc-yaml-bar.rc-yaml-error {
+  background: color-mix(in srgb, var(--rc-error) 14%, var(--rc-bg));
+  white-space: pre-wrap;
+}
+
+.rc-badge.rc-badge-error {
+  border-color: var(--rc-error);
+  color: var(--rc-error);
+}
+
+.rc-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}

@@ -3,7 +3,9 @@
 """Runs: one recipe run per process, recorded under the session's folder.
 
 Each run has a folder ``<state_dir>/sessions/<sid>/runs/<rid>/`` holding
-``job.json`` (what the run process reads), ``run.json`` (the server's record),
+``recipe/`` (the session's recipe files as they were when the run started,
+which the run reads, so later edits do not reach it), ``job.json`` (what the
+run process reads), ``run.json`` (the server's record),
 ``events.jsonl`` (written by the run process), ``cancel`` (touched to cancel),
 ``run.log`` (the process's own output), ``outputs/`` (the outputs folder when
 the run config sets none) and ``manifest.json`` (copied when the run ends).
@@ -16,6 +18,7 @@ reports, or interrupted when it reports none.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -84,6 +87,7 @@ class RunRecord:
     outputs_dir: str | None
     log: str
     cwd: str | None = None
+    recipe: str | None = None
     schema: int = RUN_SCHEMA
     started: str | None = None
     finished: str | None = None
@@ -178,6 +182,14 @@ class RunManager:
     ) -> dict[str, Any]:
         """Start a run of a session in a new process.
 
+        The session syncs with the disk, is validated and has its recipe
+        written to the run's folder under one lock, so the run reads the
+        recipe that was checked.
+
+        Returns:
+            The run's record, with ``reloaded``: the labels of the files the
+            sync reloaded from disk.
+
         Raises:
             SessionNotFound: No such session.
             ActiveRunExists: The session has a run that has not finished.
@@ -187,33 +199,30 @@ class RunManager:
             UpstreamNotCachedError: ``only`` mode, and a parent of a target is
                 not cached.
         """
-        job = self.sessions.run_job(sid)
+        runs_dir = self.sessions.runs_dir(sid)
         self._refuse_second_run(sid, self.active_run(sid))
         if mode != "all" and not targets:
             raise ValueError(f"Mode {mode!r} needs at least one target.")
         if mode == "all" and targets:
             raise ValueError("Mode 'all' runs every step; use mode 'to' for targets.")
-        unknown = sorted((set(targets) | set(force_steps)) - set(job["step_ids"]))
-        if unknown:
-            raise ValueError(
-                f"No step named {', '.join(unknown)}. "
-                f"Steps: {', '.join(job['step_ids'])}."
-            )
-        if not job["validation"]["valid"]:
-            problems = job["validation"]["problems"]
-            raise InvalidRecipe("The recipe has errors; fix them to run it.", problems)
-        if mode == "only":
-            arguments = self.sessions.preview_args(
-                sid, targets=targets, only=True, force=force, force_steps=force_steps
-            )
-            api.plan_preview(**arguments)
-
-        runs_dir = self.sessions.runs_dir(sid)
         with self._lock:
-            self._refuse_second_run(sid, self._active_in(sid))
             rid = self._new_id(runs_dir)
             run_dir = runs_dir / rid
             run_dir.mkdir(parents=True)
+        try:
+            job = self.sessions.run_job(sid, run_dir / "recipe")
+            self._check_job(sid, job, targets, mode, force, force_steps)
+        except BaseException:
+            with self._lock:
+                _discard(run_dir)
+            raise
+
+        with self._lock:
+            running = self._active_in(sid)
+            if running is not None:
+                _discard(run_dir)
+            self._refuse_second_run(sid, running)
+            recipe = job["recipe"]
             config = job["run_config"]
             outputs_dir = config["outputs_dir"] or (run_dir / "outputs").as_posix()
             write_json(
@@ -222,7 +231,7 @@ class RunManager:
                     "schema": JOB_SCHEMA,
                     "run_id": rid,
                     "session_id": sid,
-                    "recipe": job["origin"],
+                    "recipe": recipe,
                     "cwd": job["cwd"],
                     "inputs": job["inputs"],
                     "run_config": config,
@@ -249,6 +258,7 @@ class RunManager:
                 outputs_dir=outputs_dir,
                 log=(run_dir / "run.log").as_posix(),
                 cwd=job["cwd"],
+                recipe=recipe,
             )
             self._records[rid] = record
             self._save(record)
@@ -265,7 +275,32 @@ class RunManager:
             record.status = "starting"
             self._save(record)
             self._watch(rid, partial(_exit_code, process))
-            return record.to_dict()
+            return {**record.to_dict(), "reloaded": job["reloaded"]}
+
+    def _check_job(
+        self,
+        sid: str,
+        job: dict[str, Any],
+        targets: list[str],
+        mode: str,
+        force: bool,
+        force_steps: list[str],
+    ) -> None:
+        """Refuse unknown steps, a recipe with errors, or uncached ``only`` parents."""
+        unknown = sorted((set(targets) | set(force_steps)) - set(job["step_ids"]))
+        if unknown:
+            raise ValueError(
+                f"No step named {', '.join(unknown)}. "
+                f"Steps: {', '.join(job['step_ids'])}."
+            )
+        if not job["validation"]["valid"]:
+            problems = job["validation"]["problems"]
+            raise InvalidRecipe("The recipe has errors; fix them to run it.", problems)
+        if mode == "only":
+            arguments = self.sessions.preview_args(
+                sid, targets=targets, only=True, force=force, force_steps=force_steps
+            )
+            api.plan_preview(**arguments)
 
     def get(self, rid: str) -> dict[str, Any]:
         """A run's record.
@@ -731,6 +766,13 @@ class RunManager:
             rid = f"{stamp}-{secrets.token_hex(3)}"
             if rid not in self._records and not (runs_dir / rid).exists():
                 return rid
+
+
+def _discard(run_dir: Path) -> None:
+    """Remove a run folder that never started, and the runs folder if now empty."""
+    shutil.rmtree(run_dir, ignore_errors=True)
+    with contextlib.suppress(OSError):
+        run_dir.parent.rmdir()
 
 
 def _exit_code(process: subprocess.Popen) -> tuple[bool, int | None]:

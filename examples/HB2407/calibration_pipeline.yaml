@@ -1,51 +1,37 @@
-# HB2407 Calibration Only - Standardize Calibration Files and Build the Mapping File
+# HB2407 calibration only: standardize calibration files and build the mapping
 #
-#   initial_setup           resolve the raw file set and the calibration
-#                           output directory under outputs/
-#   gen_cal_mapping         parse the .cal / .xml files, write one standardized
-#                           single-channel file per channel, match each raw
-#                           channel to its calibration data, write the mapping
+#   initial_setup     resolve the raw file set and the calibration output folder
+#   gen_cal_mapping   parse the .cal / .xml files, write one standardized
+#                     single-channel file per channel, match each raw channel
+#                     to its calibration, write the mapping
 #
 # Artifacts land under <outputs_dir>/<calibration_outputs>/:
 #
 #   raw_file_configs/                  raw_file_configs.yaml (channel config
 #                                      scanned out of the raw files)
-#   single_channel_calibration_files/  one standardized .yaml per channel <- REQUIRED BY NCEI
-#   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
+#   single_channel_calibration_files/  one standardized .yaml per channel (required by NCEI)
+#   mapping_files/                     channel_mapping.yaml (required by NCEI),
 #                                      calibration_configurations.yaml
 #   unused_calibration_files/          cal files no raw channel matched
 #   logs/                              calibration_flags.json
 #
-# outputs_dir comes from the run config (aa-recipe.config.yaml) and must stay
-# local. The input folders may be local paths or gs:// URLs.
+# outputs_dir comes from the run config and stays local. The input folders may
+# be gs:// URLs, which needs the gcs extra: pip install aa-si-calibration[gcs].
+# The raw folder is scanned one file at a time; the calibration folder is
+# downloaded whole.
 #
-# gen_cal_mapping is marked regenerate: always. Its real product is the files
-# on disk, not the two dicts it returns, and a cache hit would hand back the
-# dicts without rewriting anything. Re-running this recipe always rewrites the
-# calibration outputs.
+# gen_cal_mapping is regenerate: always because its product is the files on
+# disk; a cache hit would return the dicts without rewriting them.
 #
-# The defaults process the WHOLE raw folder: both time bounds are unset, so no
-# window is applied. They are here for debugging - narrowing to one day turns a
-# survey-length scan into a couple of seconds. Every calibration file in
-# cal_input_folder is parsed either way, and any that no scanned channel
-# matches is moved to unused_calibration_files/.
-#
-# The op reuses the saved raw_file_configs.yaml only while the raw folder's contents and the window
-# still match what produced it, and re-parses the manufacturer files only when
-# single_channel_calibration_files/ is empty. Change raw_input_folder or a
-# bound and the scan re-runs; leave them alone and it does not.
-#
-# Both input folders may be gs:// URLs. The raw folder is scanned one file at
-# a time (download, read the channel config, delete the local copy) and the
-# calibration folder is small enough to download whole. Remote input needs the
-# gcs extra: pip install aa-si-calibration[gcs]. Outputs always stay local,
-# wherever the inputs came from.
+# The saved raw_file_configs.yaml is reused while the raw folder's contents and
+# the window still match what produced it, and the manufacturer files are
+# re-parsed only when single_channel_calibration_files/ is empty.
 #
 # Usage:
-#   aa-recipe run calibration_pipeline.yaml 
+#   aa-recipe run calibration_pipeline.yaml
 #
-# It's recommended that you use aa-calibration_pipeline.config.yaml to set
-# the raw_file_folder and cal_input_folder locations, which override the recipe input defaults
+# Set raw_input_folder and cal_input_folder in calibration_pipeline.config.yaml
+# beside this recipe; it overrides the input defaults.
 
 
 recipe:
@@ -60,45 +46,47 @@ inputs:
     type: path
     default: "./raw"
     fingerprint_mode: auto
-    description: "Folder of .raw files, read for channel configuration only."
+    description: "Folder of raw .raw files, a local path or a gs:// URL, read for channel configuration only."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
-    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+    description: "Name of the subfolder of the run's outputs folder that calibration artifacts are written to."
   cruise_id:
     type: str
     default: "HB2407"
-    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+    description: "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey."
   record_author:
     type: str
     default: "Brett Layman"
+    description: "Name recorded as the author of every generated single-channel calibration file."
   file_time_start:
     type: str
-    # Unset (the default) means no lower bound.
     required: false
     description: >
-      Debugging knob: inclusive ISO datetime restricting the scan to raw files
-      whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this
-      bound. Leave unset to scan from the start of the folder. On a gs:// raw
-      folder the filter runs before any file is downloaded.
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it
+      are processed and scanned for calibration. Unset takes every file.
   file_time_end:
     type: str
-    # Unset (the default) means no upper bound.
     required: false
     description: >
-      Debugging knob: inclusive ISO datetime upper bound. Leave unset to scan
-      to the end of the folder. See file_time_start.
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it
+      are processed and scanned for calibration. Unset takes every file.
+  # The local workflow for "error": delete the unwanted single-channel file and
+  # re-run. "interactive" fails before moving any file when the run has no
+  # interactive input.
   conflict_resolution:
     type: str
     default: "error"
     description: >
-      What to do when one raw channel matches several calibration files.
-      "error" lists the conflicts and stops; "interactive" prompts for a
-      choice, which needs a terminal and so cannot run unattended.
+      What to do when one raw channel matches several calibration files:
+      "error" lists the conflicts and stops; "interactive" prompts on the
+      terminal, so it cannot run unattended.
 
 steps:
 

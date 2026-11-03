@@ -2,13 +2,23 @@
 
 # Processing level 0 (user): the survey's catalogue and calibration, loaded.
 #
-# The same steps as processing_lvl_0_survey.yaml without the regenerate
-# settings, so the hashes match and the survey's cached mapping is loaded.
-# processing_lvl_0_survey.yaml explains the steps and their settings.
+# processing_lvl_0_survey.yaml's five steps, wired identically, without the
+# regenerate attributes. regenerate is not fingerprinted, so every hash equals
+# the survey variant's: build_cal_mapping loads from the survey cache, the
+# three steps between it and query_ncei are pruned, and no calibration file is
+# read or written.
 #
-# This file cannot build the calibration. If build_cal_mapping fails with
-# "Calibration files directory not found", run survey_sv.yaml first.
-# Keep the two files in step: a change to a step belongs in both or neither.
+# It cannot build the calibration. If the survey has not been run, or a step
+# here no longer matches the survey variant, build_cal_mapping fails with
+# "Calibration files directory not found": run survey_sv.yaml rather than
+# editing this file. processing_lvl_0_survey.yaml explains the steps, the scan
+# cap and the widened power tolerance.
+#
+# KEEP THE TWO VARIANTS IN STEP
+#
+#   A change to a step's wiring or params belongs in both files or neither.
+#   Every step hash in dive_analysis.yaml must equal the same step's hash in
+#   survey_sv.yaml.
 
 recipe:
   name: "hb1603_processing_lvl_0_user"
@@ -21,20 +31,25 @@ inputs:
   cruise_name:
     type: str
     default: "HB1603"
-    description: "CRUISE_NAME filter for the NCEI catalogue query."
+    description: >
+      Cruise name searched for in the NCEI catalogue, such as "HB1603".
   file_time_start:
     type: str
     default: "2016-06-01T00:00:00"
     description: >
-      Lower bound of the catalogue query, set wider than the cruise. Moving it
-      reruns every per-file step.
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
   file_time_end:
     type: str
     default: "2016-09-01T00:00:00"
-    description: "Upper bound of the catalogue query. See file_time_start."
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
   cal_input_folder:
     type: path
-    description: "Folder of manufacturer calibration files (.cal for EK60), local or gs://."
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   calibration_output_dir:
     type: path
     default: "./outputs/calibration"
@@ -42,22 +57,28 @@ inputs:
   cruise_id:
     type: str
     default: "HB1603"
-    description: "Recorded in every generated single-channel file."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
-    description: "Recorded as the author of every generated single-channel file."
+    description: "Name recorded as the author of every generated single-channel calibration file."
   max_scan_bytes:
     type: int
     default: 1048576
-    description: "Leading bytes read per raw file. Read the survey variant before lowering it."
+    description: >
+      Most leading bytes read from each raw file to find its channel
+      configuration. The default, 1 MiB, settles every HB1603 file in one
+      small read.
   match_tolerances:
     type: dict
     default:
       transmit_power: 1001.0
     description: >
-      Per-field tolerances for matching a raw channel to a calibration file.
-      transmit_power is widened for HB1603's leg 1; see processing_lvl_0_survey.yaml.
+      Per-field tolerances for matching a raw channel to a calibration file
+      (Hz, W, or s), merged over exact defaults. The default widens
+      transmit_power to 1001 W.
 
 steps:
 
@@ -70,7 +91,9 @@ steps:
       filters:
         CRUISE_NAME: ${inputs.cruise_name}
 
-  # One instance per file, so an interrupted scan resumes where it stopped.
+  # One instance per file, content-addressed by its URL, so an interrupted
+  # scan resumes from what it already read rather than starting over.
+  # verbose is off because one banner per file buries the rest of the log.
   - id: scan_raw_config
     op: read_raw_file_config
     map_over: ${query_ncei.raw_urls}
@@ -101,8 +124,9 @@ steps:
       record_author: ${inputs.record_author}
       short_filenames: true
 
-  # Loads the mapping the survey run cached, so the scan and the two steps
-  # after it are skipped and no calibration file is read from disk.
+  # No regenerate, unlike the survey variant, so this loads the checkpointed
+  # mapping and nothing below reads a calibration file: calibration_output_dir
+  # need not exist on this machine.
   - id: build_cal_mapping
     op: build_calibration_mapping
     checkpoint: always
@@ -114,6 +138,7 @@ steps:
       raw_configs_path: ${record_raw_configs.raw_configs_path}
       short_filenames: true
       tolerances: ${inputs.match_tolerances}
-      # Keeps unmatched calibration files, to help when a channel is unmapped.
+      # Keep unmatched calibration files rather than deleting them: they are
+      # the evidence when a channel comes out unmapped.
       keep_unused: true
       conflict_resolution: "error"

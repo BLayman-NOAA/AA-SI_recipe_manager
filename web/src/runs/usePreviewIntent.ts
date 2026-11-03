@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useCurrentSession, usePreview } from '../api/queries';
 import { useView, type Selection } from '../state/view';
-import { previewIntent, type RunIntent } from './intent';
+import { previewIntent, RUN_ALL, type RunIntent } from './intent';
 
 /** How long the selection must settle before the preview follows it. */
 export const PREVIEW_DEBOUNCE_MS = 300;
@@ -38,4 +38,10 @@ export function useCurrentPreview() {
   const session = useCurrentSession().data;
   const intent = usePreviewIntent();
   return usePreview(session?.id ?? null, intent, Boolean(session?.validation.valid));
+}
+
+/** The run all preview of the open session, whatever is selected; off while the recipe is invalid. */
+export function useRunAllPreview() {
+  const session = useCurrentSession().data;
+  return usePreview(session?.id ?? null, RUN_ALL, Boolean(session?.validation.valid));
 }

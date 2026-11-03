@@ -1,8 +1,4 @@
-# Processing Level 1 - Raw Ingest and Calibration Extraction
-#
-# Takes a folder of raw files and standardized calibration files, builds the
-# calibration mapping, reads the raw files, combines them, and extracts the
-# calibration/environment parameters needed for Sv computation.
+# Processing level 1: raw ingest and calibration extraction.
 
 recipe:
   name: "processing_lvl_1"
@@ -14,31 +10,32 @@ recipe:
 inputs:
   raw_input_folder:
     type: path
-    description: "Folder containing the raw acoustic files."
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
-    description: "Folder containing standardized calibration files."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+    description: "Name of the subfolder of the run's outputs folder that calibration artifacts are written to."
   cruise_id:
     type: str
-    description: "Cruise identifier used in calibration mapping."
+    description: "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey."
   record_author:
     type: str
     default: "<Your Name>"
+    description: "Name recorded as the author of every generated single-channel calibration file."
   sonar_model:
     type: str
     default: "EK60"
+    description: "Echosounder model as echopype names it, such as \"EK60\" or \"EK80\"."
+  # The calibration scan still covers the whole folder.
   raw_file_names:
     type: list
     default: []
     description: >
-      Optional subset of filenames within raw_input_folder to use. Empty list
-      means "use every .raw file in the folder". Note that
-      generate_standardized_cal_mapping always scans the full folder; this
-      input only constrains the set of files that get opened and processed.
+      Optional list of file names within raw_input_folder to process. An empty
+      list uses every .raw file in the folder.
 
 steps:
 

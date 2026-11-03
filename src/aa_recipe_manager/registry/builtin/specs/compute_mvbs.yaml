@@ -3,7 +3,7 @@ cache_key: compute_mvbs  # pinned cache identity - keep stable across op renames
 description: >
   Compute Mean Volume Backscattering Strength by averaging Sv over range and
   time bins. Returns a gridded MVBS Dataset.
-
+notes: >
   This step is echopype.commongrid.compute_MVBS called directly, so the bin
   edges and the averaging (in the linear domain, converted back to dB) are
   echopype's.
@@ -20,9 +20,8 @@ inputs:
   ds_Sv:
     type: Dataset
     description: >
-      Cleaned Sv Dataset to average. Normally the output of mask_sparse_bins,
-      so bins that failed the sparsity check are already NaN and do not pull
-      the bin means toward the noise floor.
+      Cleaned Sv Dataset to average, normally from mask_sparse_bins so sparse
+      bins are already NaN and do not pull the means toward the noise floor.
     expected_variables:
       - Sv
 outputs:
@@ -49,19 +48,22 @@ params:
   range_var:
     type: str
     description: >
-      Variable to bin along: 'echo_range' for range from the transducer face,
-      or 'depth' for depth below the surface. 'depth' requires the dataset to
-      carry a depth variable, which ep_add_depth adds; binning by it is what
-      puts channels mounted at different depths on one vertical reference.
+      Meter-valued variable to bin along: 'echo_range' (from the transducer
+      face) or 'depth' (from the surface; the dataset must carry depth, which
+      ep_add_depth adds).
+    notes: >
+      Binning by depth is what puts channels mounted at different depths on one
+      vertical reference.
     required: false
     default: "echo_range"
   range_var_max:
     type: str
     units: m
     description: >
-      Deepest value the bins cover, as a unit string (e.g. '2100m'). When
-      unset, echopype reads the maximum from the data, which forces a compute
-      on a lazy dataset. Supplying it keeps the step lazy.
+      Deepest value the bins cover, as a unit string (e.g. '2100m'). Unset reads
+      the maximum from the data; supplying it keeps the step lazy.
+    notes: >
+      Reading the maximum from the data forces a compute on a lazy dataset.
     required: false
     default: null
   closed:
@@ -79,16 +81,19 @@ params:
   fill_value:
     type: float
     description: >
-      Value for bins holding no data to aggregate. echopype defaults to NaN,
-      which YAML cannot express here, so leaving this unset keeps that default.
+      Value for bins holding no data. Unset keeps echopype's default, NaN.
+    notes: >
+      echopype defaults to NaN, which YAML cannot express here, so the param
+      is left unset to keep it.
     required: false
     default: null
   method:
     type: str
     description: >
       Flox reduction strategy for dask arrays, normally 'map-reduce'. Any other
-      value requires reindex to be set to null in the same params block, since
-      echopype rejects a non-null reindex outside map-reduce and its own
+      value needs reindex set to null in the same params block.
+    notes: >
+      echopype rejects a non-null reindex outside map-reduce, and its own
       default for reindex is false rather than null.
     required: false
     default: "map-reduce"

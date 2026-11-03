@@ -1,6 +1,6 @@
 // The docs site viewer draws the application's diagram: for the same graph and
-// view, every node's markup is the same in both hosts, the play and eye icons
-// aside (the site cannot run or draw echograms). Both render with the
+// view, every node's markup is the same in both hosts, the play, eye and save icons
+// aside (the site cannot run, draw echograms or edit). Both render with the
 // flowStubs stand-ins and the grid layout fallback.
 import { act, cleanup, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -19,12 +19,12 @@ const LEAF = 'inc:sub/leaf.yaml';
 
 installFlowStubs();
 
-/** The rendered nodes' markup, without the play and eye icons. */
+/** The rendered nodes' markup, without the play, eye and save icons. */
 async function nodeMarkup(): Promise<string[]> {
   await laidOut();
   return [...document.querySelectorAll('.react-flow__node')].map((node) => {
     const copy = node.cloneNode(true) as HTMLElement;
-    copy.querySelectorAll('.rc-play, .rc-eye').forEach((tool) => tool.remove());
+    copy.querySelectorAll('.rc-play, .rc-eye, .rc-save').forEach((tool) => tool.remove());
     return copy.outerHTML;
   });
 }
@@ -78,6 +78,7 @@ describe('the site viewer and the application draw the same nodes', () => {
     renderWithClient(<Diagram />);
     const app = await nodeMarkup();
     const plays = document.querySelectorAll('.react-flow__node .rc-play').length;
+    const saves = document.querySelectorAll('.react-flow__node .rc-save').length;
     const parts = document.querySelectorAll('.react-flow__node li, .react-flow__node div');
     const shown = [...parts].map((item) => item.textContent);
     for (const text of texts) expect(shown).toContain(text);
@@ -95,8 +96,10 @@ describe('the site viewer and the application draw the same nodes', () => {
 
     expect(app.length).toBeGreaterThan(3);
     expect(plays).toBeGreaterThan(0);
+    expect(saves).toBe(plays);
     expect(document.querySelector('.rc-play')).toBeNull();
     expect(document.querySelector('.rc-eye')).toBeNull();
+    expect(document.querySelector('.rc-save')).toBeNull();
     expect(site).toEqual(app);
   });
 });

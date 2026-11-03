@@ -6,5 +6,5 @@ import { useEchogramStore } from './store';
 /** Open the echogram pane and draw a step's saved output there. */
 export function showEchogram(sid: string, step: StepNode): void {
   showPane('echogram');
-  void useEchogramStore.getState().show(sid, step.id, { neverSaved: step.checkpoint === 'never' });
+  void useEchogramStore.getState().show(sid, step.id, { checkpoint: step.checkpoint });
 }

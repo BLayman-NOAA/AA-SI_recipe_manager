@@ -1,11 +1,9 @@
 op: embed_clustering_results
 cache_key: embed_clustering_results  # pinned cache identity - keep stable across op renames
 description: >
-  Embed HDBSCAN clustering results into the normalized ML Dataset. Accepts a
-  single result dict from run_hdbscan, or a collected list of result dicts
-  when used with the collect pattern for ensemble runs. For a list, one
-  cluster-label variable is embedded per collected result using deterministic
-  names derived from ml_result_name.
+  Embed clustering results into the normalized ML Dataset as cluster-label
+  variables. A collected list of results embeds one variable per result,
+  named from ml_result_name.
 category: ml_clustering
 inputs:
   ds_normalized:
@@ -37,10 +35,9 @@ params:
   ml_result_name:
     type: str
     description: >
-      Name the embedded cluster labels are stored under. Normally the
-      ml_result_name from run_hdbscan, so plot_clustering_report finds the
-      same result. For a collected list of results this is the stem the
-      per-result variable names are derived from.
+      Name the embedded cluster labels are stored under, normally the
+      ml_result_name from run_hdbscan so plot_clustering_report finds it. For
+      a collected list, the stem of the per-result variable names.
     required: true
 implementations:
   - key: default

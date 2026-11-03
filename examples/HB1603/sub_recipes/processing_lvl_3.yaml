@@ -1,7 +1,4 @@
-# Processing Level 3 - Sparse Masking, MVBS, and Per-Cell Statistics
-#
-# Applies sparse-bin masking to the clean Sv dataset, computes MVBS, and also
-# computes per-cell statistics from the pre-sparse-mask Sv dataset for ML use.
+# Processing level 3: sparse-bin masking, MVBS and per-cell statistics.
 
 recipe:
   name: "processing_lvl_3"
@@ -13,29 +10,24 @@ recipe:
 inputs:
   sv_clean_unmasked:
     type: dataset
-    description: "Clean Sv dataset after noise removal and before sparse-bin masking."
+    description: "Noise-removed Sv before sparse-bin masking; the sparse mask and the per-cell statistics are computed from it."
   range_bin:
     type: str
     default: "20m"
-    description: "Range bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
-    description: "Ping-time bin size shared by sparse-bin masking, MVBS generation, and per-cell statistics."
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
+  # "depth" needs level 2 to route its masking chain through ep_add_depth. All
+  # three binning steps take the same value, and compute_mvbs names its range
+  # coordinate after it.
   range_var:
     type: str
     default: "echo_range"
     description: >
-      Meter-valued variable the three binning steps group along. "echo_range"
-      measures from the transducer face and is what compute_sv provides.
-      "depth" measures from the surface and requires the incoming dataset to
-      carry a depth variable, which means level 2 has to route its masking
-      chain through ep_add_depth rather than straight off compute_sv. All
-      three steps take the same value, since a mismatch between them puts the
-      sparse mask and the cell statistics on a different grid than the MVBS
-      cells they belong to. Note that compute_mvbs names its range coordinate
-      after this variable, so "depth" produces a ds_MVBS keyed on depth rather
-      than echo_range.
+      Variable the bins are built on: "depth" (below the surface, shared across
+      files and channels) or "echo_range" (from the transducer face).
 
 steps:
 

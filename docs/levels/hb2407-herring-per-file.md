@@ -37,8 +37,8 @@ plots the parent declares itself, with the outputs each passes to the next.
 Double click a box to list the values this file sets on it and the inputs
 the level declares itself, and again to drill in and see its steps; the
 inspector links each box to its level's page.
-**Notebook** is the complete generated notebook, and can be downloaded as an
-`.ipynb` file. See [Reading a level page](index.md#reading-a-level-page) for
+**Python** shows every step as the function call it makes, and links the
+generated notebook as an `.ipynb` file. See [Reading a level page](index.md#reading-a-level-page) for
 the diagram's controls.
 
 --8<-- "data/partials/hb2407-herring-per-file.md"

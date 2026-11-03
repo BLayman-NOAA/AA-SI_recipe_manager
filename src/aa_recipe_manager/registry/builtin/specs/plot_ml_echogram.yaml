@@ -9,15 +9,15 @@ inputs:
   ds_normalized:
     type: Dataset
     description: >
-      Normalized ML Dataset from normalize_ml_data. Its flattened features
-      are folded back onto the ping and range grid for display, which is the
-      quickest way to see what the clustering will actually be given.
+      Normalized ML Dataset from normalize_ml_data. Its features are folded
+      back onto the ping and range grid, showing what the clustering will be
+      given.
   ds_Sv:
     type: Dataset
     description: >
-      Original Sv Dataset supplying the depth and ping coordinates the axes
-      are drawn against. Use the same Sv the MVBS grid was built from, so
-      this plot lines up with the Sv echograms next to it.
+      Sv Dataset supplying the depth and ping coordinates for the axes. Use
+      the Sv the MVBS grid was built from, so the plot lines up with the Sv
+      echograms.
 outputs: {}
 params:
   dataset_name:

@@ -231,7 +231,7 @@ def test_log_entries_keep_a_steps_progress_lines():
     entries = tail.log_entries(events, step="dive_sv", stream=None)
     assert [entry["text"] for entry in entries] == [
         "[6/7] dive_sv ... start (3 instances)",
-        "[6/7] dive_sv ... not needed (3 instances: 3 not needed)",
+        "[6/7] dive_sv ... skipped: cached (3 instances: 3 skipped)",
     ]
 
 

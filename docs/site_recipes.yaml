@@ -1,5 +1,5 @@
 # Recipes the documentation site shows. `aa-recipe site-data` reads this and
-# writes each one's Flow diagram / YAML / Notebook tabs under docs/data, plus
+# writes each one's Flow diagram / YAML / Python tabs under docs/data, plus
 # the graph of every full recipe, which the site's diagram viewer draws. Paths
 # are relative to this folder.
 #
@@ -8,8 +8,8 @@
 #   page     the page that embeds it, used for relative links and for the
 #            links the viewer shows to that page
 #   parent   the full recipe that includes this file. Its diagram is the
-#            parent's graph drilled into this file's include, and its notebook
-#            tab is cut from the parent's generated notebook. Without a parent,
+#            parent's graph drilled into this file's include, and its Python
+#            tab shows its steps from the parent's generated code. Without a parent,
 #            the recipe is a full recipe, drawn and generated on its own.
 #   level    the processing level it documents
 

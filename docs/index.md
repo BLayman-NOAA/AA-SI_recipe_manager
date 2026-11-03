@@ -54,8 +54,8 @@ wired together, sub-recipes, per-file fan-out and caching.
 [AA-SI data road map](https://github.com/nmfs-ost/AA-SI_DataRoadMap). Each level
 has a page showing the sub-recipe that implements it for two example surveys,
 HB1603 and HB2407, as an interactive diagram you can drill into, search and
-inspect step by step, as YAML, and as the notebook the recipe manager
-generates from it.
+inspect step by step, as YAML, and as the Python function calls the recipe
+manager generates from it.
 
 [Op reference](ops/index.md) documents every built-in step, with links to its
 source code.

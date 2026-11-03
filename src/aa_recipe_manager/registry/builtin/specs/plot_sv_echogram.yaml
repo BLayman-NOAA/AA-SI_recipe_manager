@@ -1,10 +1,9 @@
 op: plot_sv_echogram
 cache_key: plot_sv_echogram  # pinned cache identity - keep stable across op renames
 description: >
-  Render an Sv echogram. Supports two call patterns: (1) single dataset,
-  plots ds_Sv directly; (2) dual dataset, plots ds_Sv using coordinate axes
-  from ds_Sv_source (useful for MVBS overlaid on the original Sv grid).
-  This is a sink step: it produces a side-effect (figure) with no data output.
+  Render an Sv echogram of ds_Sv, optionally on the coordinate axes of
+  ds_Sv_source (for example MVBS on the original Sv grid). A sink step: it
+  makes a figure and has no data output.
 category: visualization
 sink: true
 inputs:

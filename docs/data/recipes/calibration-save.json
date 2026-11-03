@@ -20,7 +20,7 @@
       "declared": true,
       "required": true,
       "default": null,
-      "description": "Directory to archive the calibration into, a local path or a gs:// URL.",
+      "description": "Folder the calibration archive is written to, a local path or a gs:// URL.",
       "declared_in": "save_calibration.yaml"
     },
     {
@@ -31,7 +31,7 @@
       "declared": true,
       "required": false,
       "default": "calibration",
-      "description": "Subdirectory under the outputs folder the earlier phases wrote to. Keep it the same as in the other two phase recipes.",
+      "description": "Subfolder of the outputs folder the earlier calibration phases wrote to. Keep it the same as in those phase recipes.",
       "declared_in": "save_calibration.yaml"
     },
     {
@@ -53,7 +53,7 @@
       "declared": true,
       "required": false,
       "default": false,
-      "description": "Replace an archive already in archive_dir, clearing Standardized_Reports/ first.",
+      "description": "Replace an archive already in archive_dir, clearing Standardized_Reports/ first. False stops the run when the destination is not empty.",
       "declared_in": "save_calibration.yaml"
     },
     {
@@ -64,7 +64,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Phase 2's single_channel_data output. Read from the outputs folder when unset.",
+      "description": "Phase 2's single_channel_data output, the standardized channels the mapping was built from. Read from the outputs folder when unset.",
       "declared_in": "save_calibration.yaml"
     },
     {
@@ -75,7 +75,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Phase 2's mapping_dict output. Read from the outputs folder when unset.",
+      "description": "Phase 2's mapping_dict output: each raw file's channels mapped to their calibration key. Read from the outputs folder when unset.",
       "declared_in": "save_calibration.yaml"
     },
     {
@@ -107,7 +107,7 @@
       "document": "save_calibration.yaml",
       "hash": null,
       "editable": false,
-      "description": "Write the finished calibration outputs to a directory the survey keeps.\nWrites channel_mapping.yaml and calibration_provenance.yaml at the top of archive_dir, and one file per standardized channel under Standardized_Reports/ - the same files a local run writes to single_channel_calibration_files/. The channel files are named by each channel's calibration file key, which is what the mapping refers to, so the archive resolves against itself.\nEverything is rendered from the data the standardization and mapping steps return, so a caller that never sees the run's outputs folder can archive what those steps handed it. Omit an input and it is read from the outputs folder of the run in progress instead, which is how a local run archives with nothing but a directory.\narchive_dir may be a remote fsspec URL, which is the point for a client whose run directory disappears when the container does.\nMark it regenerate: always in a recipe. Its product is files outside the run's outputs directory, where the executor cannot verify them, so a cache hit would return the paths without writing anything.",
+      "description": "Write the finished calibration outputs (channel mapping, provenance and one file per standardized channel) to a directory the survey keeps, local or remote. Mark the step regenerate: always in a recipe.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -129,7 +129,7 @@
           "name": "mapping_dict",
           "type": "dict",
           "required": false,
-          "description": "Each raw file's channels mapped to their calibration key, from build_calibration_mapping. Read from mapping_files/channel_mapping.yaml under output_base when omitted. An empty mapping is an error: that is what the mapping step returns while conflicts are unresolved, and an archive that looks complete and is not is worse than a failed run.",
+          "description": "Each raw file's channels mapped to their calibration key, from build_calibration_mapping. Read from mapping_files/channel_mapping.yaml under output_base when omitted. An empty mapping is an error.",
           "value": "${inputs.mapping_dict}",
           "many": false,
           "semantic": null
@@ -149,19 +149,29 @@
           "name": "archive_dir",
           "type": "path",
           "units": null,
-          "description": "Directory to write the archive into. May be a local path or a remote fsspec URL (e.g. gs://bucket/surveys/RL2307/calibration). Not fingerprinted: it is where this step writes, not something it reads.",
+          "description": "Directory to write the archive into, as a local path or a remote URL such as gs://bucket/surveys/RL2307/calibration.",
           "default": null,
           "set": true,
-          "value": "${inputs.archive_dir}"
+          "value": "${inputs.archive_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "output_base",
           "type": "path",
           "units": null,
-          "description": "Calibration outputs folder to read anything omitted from. Defaults to the folder the run in progress is writing, resolved the way initial_setup resolves it, so a local run after the mapping phase finds the files it just wrote.",
+          "description": "Calibration outputs folder to read omitted inputs from. Defaults to the calibration folder of the run in progress.",
           "default": null,
           "set": true,
-          "value": "${inputs.output_base}"
+          "value": "${inputs.output_base}",
+          "required": false,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "calibration_outputs",
@@ -170,16 +180,22 @@
           "description": "Subdirectory name under the run's outputs folder, used only to build the default output_base. Match the value the earlier phases ran with.",
           "default": "calibration",
           "set": true,
-          "value": "${inputs.calibration_outputs}"
+          "value": "${inputs.calibration_outputs}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "overwrite",
           "type": "bool",
           "units": null,
-          "description": "Replace an archive already in archive_dir. Off by default: an archive directory is written once and kept, so a non-empty destination stops the run rather than overwriting it. When on, Standardized_Reports/ is cleared first, so a channel dropped during review leaves no orphan file behind.",
+          "description": "Replace an archive already in archive_dir. Off by default, so a non-empty destination stops the run.",
           "default": false,
           "set": true,
-          "value": "${inputs.overwrite}"
+          "value": "${inputs.overwrite}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -188,7 +204,10 @@
           "description": "Print what was written.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [

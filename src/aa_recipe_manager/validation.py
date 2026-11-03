@@ -14,7 +14,17 @@ from packaging.specifiers import SpecifierSet
 from aa_recipe_manager.resolver.params import resolve_input_refs
 
 if TYPE_CHECKING:
-    from aa_recipe_manager.model.types import Dependency, Implementation, ParamDeclaration, PipelineDAG
+    from collections.abc import Iterable
+
+    from aa_recipe_manager.model.types import (
+        Dependency,
+        Implementation,
+        InputDeclaration,
+        ParamDeclaration,
+        PipelineDAG,
+        Spec,
+        Step,
+    )
 
 _WHOLE_INPUT_REF = re.compile(r"\$\{inputs\.(\w+)\}")
 
@@ -36,7 +46,12 @@ class DryRunStepInfo:
 
 @dataclass
 class DryRunReport:
-    """Result of a dry-run validation pass."""
+    """Result of a dry-run validation pass.
+
+    ``required_inputs`` names the recipe inputs with no default that a run
+    must be given, as :func:`required_inputs` finds them, whether these
+    inputs were given or not.
+    """
 
     is_valid: bool
     errors: list[str] = field(default_factory=list)
@@ -44,6 +59,7 @@ class DryRunReport:
     resolved_steps: list[DryRunStepInfo] = field(default_factory=list)
     dag_diagram: str | None = None
     recipe_label: str = "Recipe"
+    required_inputs: list[str] = field(default_factory=list)
 
     def format_text(self) -> str:
         """Return a human-readable summary of the dry-run report."""
@@ -140,6 +156,8 @@ class DryRunEngine:
         }
         if inputs:
             input_values.update(inputs)
+        self._check_required_inputs(dag, inputs or {}, errors)
+        needed = required_inputs(dag)
 
         for step_id in dag.topological_order:
             node = dag.nodes[step_id]
@@ -149,6 +167,7 @@ class DryRunEngine:
 
             self._check_sweep_purity(step_id, node, report_warnings)
             self._check_unset_inputs(dag, step_id, input_values, errors)
+            self._check_exclusive_params(step_id, node, params, errors)
 
             if impl is None:
                 step_info = DryRunStepInfo(
@@ -194,6 +213,7 @@ class DryRunEngine:
             warnings=report_warnings,
             resolved_steps=resolved_steps,
             dag_diagram=dag_diagram,
+            required_inputs=needed,
         )
         recipe = dag.recipe
         report.recipe_label = f"Recipe: {recipe.name} (v{recipe.version})"
@@ -240,6 +260,28 @@ class DryRunEngine:
 
         return "ok", installed
 
+    def _check_required_inputs(
+        self, dag: PipelineDAG, inputs: dict[str, Any], errors: list[str]
+    ) -> None:
+        """Report inputs declared ``required: true`` that have no value.
+
+        Other inputs with no value are reported by :meth:`_check_unset_inputs`
+        only where they feed a required slot.
+        """
+        for name, decl in dag.recipe.inputs.items():
+            if not explicitly_required(decl) or inputs.get(name) is not None:
+                continue
+            if name in inputs:
+                errors.append(
+                    f"Recipe input '{name}' is required, and the inputs given set "
+                    "it to null: give it a value."
+                )
+            else:
+                errors.append(
+                    f"Recipe input '{name}' is required and has no value: set it "
+                    "in the run config's inputs, with --input, or give it a default."
+                )
+
     def _check_unset_inputs(
         self,
         dag: PipelineDAG,
@@ -247,31 +289,48 @@ class DryRunEngine:
         input_values: dict[str, Any],
         errors: list[str],
     ) -> None:
-        """Report required inputs and params fed by a recipe input with no value.
-
-        Mirrors ``build_kwargs``: such a reference is skipped when the op
-        declares the input or param optional, and fails the step otherwise.
-        """
+        """Report required inputs and params fed by a recipe input with no value."""
         node = dag.nodes[step_id]
-        params = {**node.step.params, **node.resolved_params}
-        slots = [
-            ("input", node.step.inputs, node.spec.inputs or {}),
-            ("param", params, node.spec.params or {}),
-        ]
-        for kind, values, decls in slots:
-            for name, value in values.items():
-                if not isinstance(value, str):
-                    continue
-                match = _WHOLE_INPUT_REF.fullmatch(value)
-                if match is None or match.group(1) in input_values:
-                    continue
-                decl = decls.get(name)
-                if decl is not None and not decl.required:
-                    continue
+        for kind, name, input_name in _required_slot_refs(node.step, node.spec):
+            if input_values.get(input_name) is not None:
+                continue
+            errors.append(
+                f"step {step_id!r} {kind} {name!r} needs recipe input "
+                f"{input_name!r}, which has no value: set it in the run "
+                "config's inputs, with --input, or give it a default"
+            )
+
+    def _check_exclusive_params(
+        self,
+        step_id: str,
+        node: Any,
+        params: dict[str, Any],
+        errors: list[str],
+    ) -> None:
+        """Report a step that gives two params its op declares exclusive.
+
+        A param counts as given when its value is not null and is not a whole
+        ``${inputs.x}`` reference left unresolved, which ``build_kwargs``
+        skips. A swept param counts when any of its sweep values is given.
+        Spec defaults are not passed to the callable, so they do not count.
+        """
+        sweep = node.step.sweep.param_lists if node.step.sweep else {}
+        given = {name for name, value in params.items() if _is_given(value)}
+        given |= {
+            name
+            for name, values in sweep.items()
+            if any(_is_given(value) for value in values)
+        }
+        pairs: set[tuple[str, ...]] = set()
+        for name, decl in (node.spec.params or {}).items():
+            for other in (decl.constraints or {}).get("exclusive_with") or []:
+                pairs.add(tuple(sorted((name, other))))
+        for first, second in sorted(pairs):
+            if first in given and second in given:
                 errors.append(
-                    f"step {step_id!r} {kind} {name!r} needs recipe input "
-                    f"{match.group(1)!r}, which has no value: set it in the run "
-                    "config's inputs, with --input, or give it a default"
+                    f"step {step_id!r} sets both {first!r} and {second!r}, which "
+                    f"op {node.spec.op!r} declares mutually exclusive: unset one "
+                    "of them"
                 )
 
     def _check_sweep_purity(
@@ -381,9 +440,70 @@ class DryRunEngine:
         return "\n".join(lines)
 
 
+def explicitly_required(decl: InputDeclaration) -> bool:
+    """Whether a recipe input's declaration sets ``required: true`` itself."""
+    return "required" in decl.model_fields_set and decl.required
+
+
+def required_inputs(dag: PipelineDAG) -> list[str]:
+    """The recipe inputs with no default a run must be given, in declaration order.
+
+    Such an input is required when it is declared ``required: true``, or when
+    a whole ``${inputs.x}`` reference to it feeds a required input port or
+    param. One that feeds only optional slots may stay unset.
+    """
+    steps = [(node.step, node.spec) for node in dag.nodes.values()]
+    return required_input_names(dag.recipe.inputs, steps)
+
+
+def required_input_names(
+    inputs: dict[str, InputDeclaration], steps: Iterable[tuple[Step, Spec]]
+) -> list[str]:
+    """:func:`required_inputs` from the declarations and each step with its spec."""
+    fed = {ref[2] for step, spec in steps for ref in _required_slot_refs(step, spec)}
+    return [
+        name
+        for name, decl in inputs.items()
+        if decl.default is None and (explicitly_required(decl) or name in fed)
+    ]
+
+
+def _required_slot_refs(step: Step, spec: Spec) -> list[tuple[str, str, str]]:
+    """``(kind, slot, input)`` for each required slot a whole input reference feeds.
+
+    Mirrors ``build_kwargs``: a reference to an input with no value is skipped
+    when the op declares the input port or param optional, and fails the step
+    otherwise, as it does for a slot the op does not declare.
+    """
+    slots = [
+        ("input", step.inputs, spec.inputs or {}),
+        ("param", step.params, spec.params or {}),
+    ]
+    found = []
+    for kind, values, decls in slots:
+        for name, value in values.items():
+            if not isinstance(value, str):
+                continue
+            match = _WHOLE_INPUT_REF.fullmatch(value)
+            if match is None:
+                continue
+            decl = decls.get(name)
+            if decl is not None and not decl.required:
+                continue
+            found.append((kind, name, match.group(1)))
+    return found
+
+
 def _ref_text(ref: str) -> str:
     """``${step.output}`` as ``step.output``."""
     return ref.strip()[2:-1] if ref.strip().startswith("${") else ref.strip()
+
+
+def _is_given(value: Any) -> bool:
+    """True when a resolved param value reaches the callable as a value."""
+    if value is None:
+        return False
+    return not (isinstance(value, str) and _WHOLE_INPUT_REF.fullmatch(value))
 
 
 def _uses_item(value: Any) -> bool:
@@ -397,4 +517,11 @@ def _uses_item(value: Any) -> bool:
     return False
 
 
-__all__ = ["DryRunEngine", "DryRunReport", "DryRunStepInfo"]
+__all__ = [
+    "DryRunEngine",
+    "DryRunReport",
+    "DryRunStepInfo",
+    "explicitly_required",
+    "required_input_names",
+    "required_inputs",
+]

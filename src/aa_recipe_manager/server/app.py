@@ -77,6 +77,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
 
     for module in (recipes, ops, sessions, runs):
         app.include_router(module.router, prefix="/api")
+    app.include_router(ops.schema_router, prefix="/api")
 
     echogram = app.state.echogram.router()
     if echogram is not None:

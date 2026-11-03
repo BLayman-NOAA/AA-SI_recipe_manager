@@ -1,10 +1,12 @@
 op: rechunk_dataset
 cache_key: rechunk_dataset  # pinned cache identity - keep stable across op renames
 description: >
-  Rechunk a Dataset along ping_time. A standalone step rather than a
-  parameter on any particular masking or reduction op, so a recipe can
-  insert (or remove) chunking wherever a downstream op should run
-  dask-parallel, independent of which step happens to run immediately
+  Rechunk a Dataset along ping_time so the steps after it can run
+  dask-parallel.
+notes: >
+  A standalone step rather than a parameter on any particular masking or
+  reduction op, so a recipe can insert or remove chunking wherever a downstream
+  op should run dask-parallel, independent of which step runs immediately
   before it.
 category: preprocessing
 inputs:

@@ -1,17 +1,13 @@
-# Machine Learning Sub-Recipe
-#
-# Dataset-agnostic ML pipeline: reshape MVBS for ML, normalize, plot,
-# run HDBSCAN clustering, embed results back, and produce a clustering
-# report. Upstream datasets are supplied by the parent recipe via
+# ML sub-recipe with two HDBSCAN passes: pass 2 re-clusters the pass 1 noise
+# points and the passes are merged. The parent supplies the datasets through
 # input_overrides.
 
 recipe:
   name: "machine_learning_multi_pass"
   description: >-
-    ML reshape, normalization, and two-pass HDBSCAN clustering.
-    Pass 1 clusters all samples. Pass 2 re-clusters the pass-1 noise samples
-    with tighter parameters to recover finer structure. The two passes are
-    merged so downstream ops see a single consolidated result.
+    ML reshape, normalization and two-pass HDBSCAN clustering. Pass 2
+    re-clusters the pass 1 noise points with tighter settings to recover finer
+    structure, and the passes are merged into one result.
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -19,27 +15,28 @@ recipe:
 inputs:
   mvbs_with_lines:
     type: dataset
-    description: "MVBS dataset with line overlay variables added."
+    description: "Gridded MVBS with the line overlay variables added, flattened into one ML sample per cell."
   echodata:
     type: echodata
-    description: "EchoData object used for auxiliary ML features."
+    description: "Raw EchoData supplying the echosounder's own bottom pick for the 'seafloor_depth' and 'altitude' features. Used only when seafloor_depth is not wired."
   overlay_line_var:
     type: str
     default: "overlay_line"
-    description: "Line variable to overlay on the clustering report plot."
+    description: "Name of the line variable drawn over the clustering report plots."
   sv_clean_unmasked:
     type: dataset
     description: >
-      Pre-sparse-mask Sv used for per-cell statistics and as the backdrop /
-      ping-index reference for ML and cluster echogram plots.
+      Noise-removed Sv before sparse-bin masking, used for the per-cell
+      statistics and as the backdrop and ping reference for the ML and cluster
+      echograms.
   range_bin:
     type: str
     default: "20m"
-    description: "Range bin size shared with sparse masking and MVBS generation."
+    description: "Depth bin height of the MVBS grid, as a length string such as \"2m\". The sparse-bin mask and the cell statistics use the same bin."
   ping_time_bin:
     type: str
     default: "20s"
-    description: "Ping-time bin size shared with sparse masking and MVBS generation."
+    description: "Ping-time bin width of the MVBS grid, as a duration string such as \"10s\". The sparse-bin mask and the cell statistics use the same bin."
 
 steps:
 
@@ -116,7 +113,7 @@ steps:
       use_hdbscan: true
       # soft_membership_threshold: .6
 
-  # --- Pass 2: re-cluster noise samples ---
+  # Pass 2: re-cluster the noise points.
 
   - id: filter_noise
     op: filter_normalized_by_cluster
@@ -142,7 +139,7 @@ steps:
       cluster_selection_method: "eom"
       use_hdbscan: true
 
-  # --- Merge pass 1 and pass 2 results ---
+  # Merge pass 1 and pass 2.
 
   - id: merge_passes
     op: merge_clustering_passes

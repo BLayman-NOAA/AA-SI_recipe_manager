@@ -1,4 +1,8 @@
-import { useCancelRun } from '../api/queries';
+import { useQueryClient } from '@tanstack/react-query';
+import { findStep } from '../api/graph';
+import { fileEditable } from '../api/models';
+import { applyEdit, useCancelRun, useCurrentSession } from '../api/queries';
+import { setCheckpoint } from '../editing/operations';
 import { writeStored } from '../state/storage';
 import { plural } from '../text';
 import { RUN_ALL } from './intent';
@@ -12,9 +16,13 @@ import { isRunActive, useRunStore } from './store';
 export function RunHint() {
   const hint = useRunStore((state) => state.hint);
   const { mutate: cancel } = useCancelRun();
+  const client = useQueryClient();
+  const session = useCurrentSession().data;
   if (!hint) return null;
   const { setHint, setQueued, setCancelling } = useRunStore.getState();
   const alternative = hint.alternative;
+  const step = session && findStep(session.graph, hint.step);
+  const editable = Boolean(session && step && fileEditable(session, step.document));
 
   const runInstead = () => {
     if (!alternative) return;
@@ -25,6 +33,13 @@ export function RunHint() {
       setCancelling(store.current.runId);
       cancel(store.current.runId);
     }
+  };
+
+  // A failure stays in the status bar and leaves the hint up.
+  const makeCheckpoint = async () => {
+    if (!session) return;
+    const response = await applyEdit(client, session.id, [setCheckpoint(hint.step, 'always')]);
+    if (response && useRunStore.getState().hint?.step === hint.step) setHint(null);
   };
 
   return (
@@ -38,6 +53,16 @@ export function RunHint() {
       {alternative && (
         <button type="button" className="rc-button rc-small" onClick={runInstead}>
           Run to <span className="rc-mono">{alternative.step}</span> instead ({plural(alternative.extra, 'more step')})
+        </button>
+      )}
+      {editable && (
+        <button
+          type="button"
+          className="rc-button rc-small"
+          title="Add checkpoint: always to the step in the recipe"
+          onClick={() => void makeCheckpoint()}
+        >
+          Make this a checkpoint
         </button>
       )}
       <button

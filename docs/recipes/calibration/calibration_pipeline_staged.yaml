@@ -1,38 +1,50 @@
 # Documentation copy of AA-SI_Full_Pipeline_Example/example_recipes/RL2307/calibration_pipeline_staged.yaml.
 # Its title and recipe name said HB2407; they are corrected to RL2307, which its defaults point at.
 
-# RL2307 calibration, staged: the same outputs as calibration_pipeline_fused.yaml,
+# RL2307 calibration only, staged: the outputs of the fused
+# generate_standardized_cal_mapping step (see HB2407/calibration_pipeline.yaml)
 # as separately cached steps.
 #
-#   aa-recipe run calibration_pipeline_staged.yaml
-#
 #   initial_setup        resolve the raw file set and the output directory
-#   scan_raw_config      read each raw file's channel configuration
-#   record_raw_configs   collect the scans into raw_file_configs.yaml
-#   standardize_cal      write one standardized file per channel
-#   build_cal_mapping    map each raw channel to its calibration
+#   scan_raw_config      one instance per raw file, reading its channel config
+#   record_raw_configs   fan the per-file results in, write raw_file_configs.yaml
+#   standardize_cal      parse the manufacturer files, one file per channel
+#   build_cal_mapping    match each raw channel to its calibration data
 #
-# On a re-run:
-#
-#   nothing changed          only build_cal_mapping runs
-#   scan interrupted         only the unscanned files are read
-#   a cal file changed       standardize_cal and build_cal_mapping run again
-#   the channel folder gone  rebuilt in full
-#   one channel file gone    not put back, which is the conflict workflow
-#   a raw file added         every raw file is scanned again
-#
-# outputs_dir must stay local. The input folders may be gs:// URLs, which needs
-# pip install aa-si-calibration[gcs].
-#
-# Outputs under <outputs_dir>/<calibration_outputs>/:
-#
+# Artifacts land under <outputs_dir>/<calibration_outputs>/:
 #   raw_file_configs/                  raw_file_configs.yaml
-#   single_channel_calibration_files/  one .yaml per channel, required by NCEI
+#   single_channel_calibration_files/  one standardized .yaml per channel (required by NCEI)
 #   mapping_files/                     channel_mapping.yaml (required by NCEI),
 #                                      calibration_configurations.yaml
-#   unused_calibration_files/          cal files no raw channel matched
+#   unused_calibration_files/          calibration files no raw channel matched
 #   logs/                              calibration_flags.json
-#   standardization.fingerprint.json   which manufacturer files were used
+#   standardization.fingerprint.json   which manufacturer files produced the
+#                                      single-channel files above
+#
+# Split, each stage answers to its own inputs. On a re-run:
+#   nothing changed          everything cached except build_cal_mapping
+#   scan interrupted         only the unscanned files are read
+#   a calibration file       standardize_cal and build_cal_mapping re-run, the
+#     corrected or replaced  raw scan does not
+#   raw_file_configs.yaml    rebuilt from the cached per-file scans
+#     deleted
+#   the single-channel       rebuilt in full
+#     folder deleted
+#   one single-channel       not put back (the conflict workflow);
+#     file deleted by hand   build_cal_mapping re-runs against what is left
+#
+# Adding a raw file re-scans every file: initial_setup fingerprints the raw
+# folder, and every scan_raw_config instance descends from it.
+#
+# The default checkpoint mode is "explicit", so the cached steps say
+# checkpoint: always. Steps record the files they write, which is what lets
+# regenerate: if-missing tell that an output was deleted.
+#
+# outputs_dir comes from the run config and must stay local. Remote input
+# folders need the gcs extra: pip install aa-si-calibration[gcs].
+#
+# Usage:
+#   aa-recipe run calibration_pipeline_staged.yaml
 
 recipe:
   name: "rl2307_calibration_staged"
@@ -46,39 +58,54 @@ inputs:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw"
     fingerprint_mode: auto
-    description: "Folder of .raw files, read for channel configuration only."
+    description: >
+      Folder of raw .raw files, a local path or a gs:// URL, read for channel
+      configuration only.
   cal_input_folder:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS"
-    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+    description: >
+      Name of the subfolder of the run's outputs folder that calibration
+      artifacts are written to.
   cruise_id:
     type: str
     default: "RL2307"
-    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
-    description: "Recorded as the author of every generated single-channel file."
+    description: "Name recorded as the author of every generated single-channel calibration file."
   file_time_start:
     type: str
     required: false
     default: "2023-07-17T16:30:46"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it
+      are scanned for calibration. Unset takes every file.
   file_time_end:
     type: str
     required: false
     default: "2023-07-18T19:50:19"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it
+      are scanned for calibration. Unset takes every file.
   conflict_resolution:
     type: str
     default: "interactive"
     description: >
-      When a raw channel matches several calibration files: "error" lists them
-      and stops, and "interactive" prompts, which needs a terminal.
+      What to do when one raw channel matches several calibration files:
+      "error" lists the conflicts and stops; "interactive" prompts on the
+      terminal, so it cannot run unattended.
 
 steps:
 
@@ -91,7 +118,8 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # One cached instance per raw file, so an interrupted scan resumes.
+  # One instance per raw file, so an interrupted scan resumes from what it
+  # already read. verbose is off: one banner per file buries the log.
   - id: scan_raw_config
     op: read_raw_file_config
     map_over: ${initial_setup.raw_file_paths}
@@ -99,8 +127,9 @@ steps:
     params:
       raw_file_path: ${_item}
       verbose: false
-      # Reads a prefix that doubles from 8 MiB up to this cap, not the whole
-      # file. A file that needs more is read whole.
+      # Reads a growing prefix, 8 MiB doubling to this cap, until every
+      # channel's Parameter datagram is in hand. RL2307's FM files climb past
+      # the first rung; a file that never settles is read whole.
       max_scan_bytes: 134217728  # 128 MiB
 
   - id: record_raw_configs
@@ -113,8 +142,9 @@ steps:
     params:
       output_base: ${initial_setup.calibration_output_dir}
 
-  # Deleting the whole folder rebuilds it; deleting one file inside it does not,
-  # which is how the conflict workflow drops a channel.
+  # regenerate: if-missing is safe only because this step records its output
+  # directory: wiping the folder rebuilds it, deleting one file inside does
+  # not, which the conflict workflow relies on.
   - id: standardize_cal
     op: standardize_calibration_files
     checkpoint: always
@@ -128,7 +158,8 @@ steps:
       record_author: ${inputs.record_author}
       short_filenames: true
 
-  # single_channel_dir and raw_configs_path are wired only to order the steps.
+  # single_channel_dir and raw_configs_path are wired for the ordering edges;
+  # both would otherwise default to the same locations under output_base.
   - id: build_cal_mapping
     op: build_calibration_mapping
     checkpoint: always
@@ -140,6 +171,7 @@ steps:
       single_channel_dir: ${standardize_cal.single_channel_dir}
       raw_configs_path: ${record_raw_configs.raw_configs_path}
       short_filenames: true
-      # Keep unmatched calibration files, to explain any unmapped channel.
+      # Keep unmatched calibration files rather than deleting them: they are
+      # the evidence when a channel comes out unmapped.
       keep_unused: true
       conflict_resolution: ${inputs.conflict_resolution}

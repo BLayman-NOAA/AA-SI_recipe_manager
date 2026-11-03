@@ -1728,6 +1728,786 @@ def preview_cmd(
         click.echo(preview.format_text())
 
 
+def _read_text_source(source: str, option: str) -> str:
+    """Read a file, or standard input for ``-``."""
+    if source == "-":
+        return click.get_text_stream("stdin").read()
+    try:
+        return Path(source).read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        _fail(f"{option}: cannot read {source!r}: {exc}")
+
+
+def _edit_operations(
+    workspace: Any,
+    ops_file: str | None,
+    sets: tuple[str, ...],
+    unsets: tuple[str, ...],
+    checkpoints: tuple[str, ...],
+    overrides: tuple[str, ...],
+    unset_overrides: tuple[str, ...],
+    input_defaults: tuple[str, ...],
+    replace_texts: tuple[str, ...],
+) -> list[Any]:
+    """Build the operations the options ask for, in the order they apply.
+
+    A whole number for a ``float`` param, override or input default becomes
+    a float, as the client writes it.
+    """
+    from aa_recipe_manager.editing import cli_args, typed_operations
+
+    try:
+        pairs = [
+            cli_args.split_assignment(item, "--replace-text", "DOCUMENT=FILE")
+            for item in replace_texts
+        ]
+        if [ops_file, *(source for _, source in pairs)].count("-") > 1:
+            _fail("only one of --ops and --replace-text can read standard input.")
+        ops = []
+        if ops_file is not None:
+            text = _read_text_source(ops_file, "--ops")
+            ops = cli_args.operations_from_json(text, "--ops")
+        texts = [
+            (document, _read_text_source(source, "--replace-text"))
+            for document, source in pairs
+        ]
+        ops += cli_args.edit_operations(
+            workspace,
+            sets=sets,
+            unsets=unsets,
+            checkpoints=checkpoints,
+            overrides=overrides,
+            unset_overrides=unset_overrides,
+            input_defaults=input_defaults,
+            replace_texts=texts,
+        )
+        return typed_operations(workspace, ops)
+    except ValueError as exc:
+        _fail(str(exc))
+
+
+def _describe_op(op: Any) -> str:
+    """A short name for an operation in an error message."""
+    names = ("step", "include", "document")
+    target = next((getattr(op, n) for n in names if hasattr(op, n)), "")
+    if getattr(op, "name", None) is not None:
+        dotted = ".".join(str(part) for part in (op.name, *getattr(op, "path", ())))
+        target += ("." if hasattr(op, "step") else ":") + dotted
+    return f"{op.kind} {target}".strip()
+
+
+def _edit_diff(label: str, before: str, after: str) -> str:
+    """A unified diff of one document's text."""
+    import difflib
+
+    def lines(text: str) -> list[str]:
+        found = text.splitlines(keepends=True)
+        if found and not found[-1].endswith("\n"):
+            found[-1] += "\n"
+        return found
+
+    return "".join(
+        difflib.unified_diff(lines(before), lines(after), f"a/{label}", f"b/{label}")
+    )
+
+
+def _echo_validation(report: Any) -> None:
+    """Print a validation report's verdict, errors and warnings."""
+    if report.is_valid and report.warnings:
+        click.echo(f"Valid, with {len(report.warnings)} warning(s).")
+    elif report.is_valid:
+        click.echo("Valid.")
+    else:
+        click.echo("Validation errors:")
+        for error in report.errors:
+            click.echo(f"  - {error}")
+    if report.warnings:
+        click.echo("Warnings:")
+        for warning in report.warnings:
+            click.echo(f"  - {warning}")
+
+
+def _echo_save_as(result: Any, steps: int, keep_paths: bool) -> None:
+    """Print what a Save As into another folder rewrote and what it rehashed."""
+    for label, rewrites in result.rewrites.items():
+        for rewrite in rewrites:
+            click.echo(
+                f"rebased {label} {rewrite.where}: {rewrite.old} -> {rewrite.new}"
+            )
+    if result.config is not None and result.dry_run:
+        click.echo(f"would copy run config to {result.config}")
+    elif result.config is not None:
+        click.echo(f"run config copied to {result.config}")
+    else:
+        click.echo("no run config copied")
+    for site in result.absolute:
+        click.echo(
+            f"Warning: {site} has no relative path from the new folder (another "
+            "drive); it was written as an absolute path, so the copy is not "
+            "portable.",
+            err=True,
+        )
+    if result.rehashed is None:
+        reason = (
+            "; with --keep-paths this usually means folders the recipe reads by "
+            "plain path are missing beside the copy"
+            if keep_paths
+            else ""
+        )
+        click.echo(
+            "Step hashes could not be computed, so which steps start a new cache "
+            f"is unknown{reason}."
+        )
+    elif result.rehashed:
+        click.echo(
+            f"{len(result.rehashed)} of {steps} steps hash differently from the "
+            "original; the copy starts a new cache for them: "
+            + ", ".join(result.rehashed)
+        )
+    else:
+        click.echo(
+            f"All {steps} steps hash as in the original; the copy shares its caches."
+        )
+
+
+@main.command("edit")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--set",
+    "sets",
+    multiple=True,
+    metavar="STEP.PARAM=VALUE",
+    help=(
+        "Set a step param (repeatable). PARAM may be dotted for a nested value: "
+        "filters.CRUISE_NAME, companion_extensions.0 (a number indexes a list). "
+        'An empty VALUE (s.k=) is null and "" is the empty string. A key '
+        "that holds a dot or is a number needs --ops."
+    ),
+)
+@click.option(
+    "--unset",
+    "unsets",
+    multiple=True,
+    metavar="STEP.PARAM",
+    help="Remove a step param or a nested entry (repeatable).",
+)
+@click.option(
+    "--checkpoint",
+    "checkpoints",
+    multiple=True,
+    metavar="STEP=always|never|save|none",
+    help="Set a step's checkpoint key; none removes it (repeatable).",
+)
+@click.option(
+    "--override",
+    "overrides",
+    multiple=True,
+    metavar="INCLUDE:NAME=VALUE",
+    help=(
+        "Set an include's input override (repeatable). INCLUDE is the file's "
+        "path from the root recipe's folder, as 'aa-recipe graph' lists it."
+    ),
+)
+@click.option(
+    "--unset-override",
+    "unset_overrides",
+    multiple=True,
+    metavar="INCLUDE:NAME",
+    help="Remove an include's input override (repeatable).",
+)
+@click.option(
+    "--input-default",
+    "input_defaults",
+    multiple=True,
+    metavar="[DOCUMENT:]NAME=VALUE",
+    help=(
+        "Set the default of a recipe input (repeatable), in the file that "
+        "declares it; DOCUMENT: is needed when more than one file does."
+    ),
+)
+@click.option(
+    "--replace-text",
+    "replace_texts",
+    multiple=True,
+    metavar="DOCUMENT=FILE",
+    help=(
+        "Replace a file's whole text with FILE's, or standard input for - (repeatable)."
+    ),
+)
+@click.option(
+    "--ops",
+    "ops_file",
+    default=None,
+    metavar="FILE",
+    help=(
+        "Apply a JSON list of operations in the wire format first; - reads "
+        "standard input."
+    ),
+)
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Save As: write the edited root recipe to this file. Beside the "
+        "original, the recipe's <stem>.config.yaml is copied to the new name's "
+        "and edited sub-recipes are saved in place. Into another folder, "
+        "the sub-recipes are copied with the recipe's layout, relative data "
+        "paths are rewritten to reach the same files, the run config is copied "
+        "beside it, and the originals are not changed. An existing file needs "
+        "--overwrite; a run config is never replaced."
+    ),
+)
+@click.option(
+    "--keep-paths",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --output into another folder, rewrite only the paths no step "
+        "hash contains, so the copy keeps every hash and shares the caches; "
+        "paths read as written must then exist beside the copy."
+    ),
+)
+@click.option(
+    "--no-config",
+    is_flag=True,
+    default=False,
+    help="With --output, do not copy the run config.",
+)
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --output, replace an existing file there: the root, a sub-recipe "
+        "or a run config copy. Saving in place, write files that changed on "
+        "disk since they were read."
+    ),
+)
+@click.option(
+    "--copy-to",
+    default=None,
+    metavar="DIR",
+    type=click.Path(file_okay=False),
+    help=(
+        "Edit a working copy of the recipe's files under DIR, with the same "
+        "layout; the originals are not changed. Its history is kept in "
+        "DIR/.aa-recipe, so a later --copy-to DIR continues the copy: files "
+        "changed on disk since are reloaded, unless the copy edited them too."
+    ),
+)
+@click.option(
+    "--undo",
+    "undo_count",
+    type=click.IntRange(min=1),
+    is_flag=False,
+    flag_value=1,
+    default=None,
+    metavar="[N]",
+    help="With --copy-to, undo the copy's newest N edits (default 1) first.",
+)
+@click.option(
+    "--redo",
+    "redo_count",
+    type=click.IntRange(min=1),
+    is_flag=False,
+    flag_value=1,
+    default=None,
+    metavar="[N]",
+    help="With --copy-to, redo the newest N undone edits (default 1), after --undo.",
+)
+@click.option(
+    "--reload",
+    "reload_conflicts",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --copy-to, also reload the files the copy edited that changed on "
+        "disk; the copy's edits to them are replaced, as an edit to undo."
+    ),
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help=(
+        "Print a unified diff per changed file and write nothing; with "
+        "--output, also what Save As would write and rewrite."
+    ),
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Exit 1 and write nothing when the edited recipe has validation errors.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Run config file whose inputs apply, found as for run when omitted.",
+)
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help=(
+        "Supply a pipeline-level input value (repeatable), over the run "
+        "config's, for validation, checkpoint checks and the hash comparison "
+        "of --output."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the files, edits, validation and writes as JSON instead of text.",
+)
+def edit_cmd(
+    recipe: str,
+    sets: tuple[str, ...],
+    unsets: tuple[str, ...],
+    checkpoints: tuple[str, ...],
+    overrides: tuple[str, ...],
+    unset_overrides: tuple[str, ...],
+    input_defaults: tuple[str, ...],
+    replace_texts: tuple[str, ...],
+    ops_file: str | None,
+    output: str | None,
+    keep_paths: bool,
+    no_config: bool,
+    overwrite: bool,
+    copy_to: str | None,
+    undo_count: int | None,
+    redo_count: int | None,
+    reload_conflicts: bool,
+    dry_run: bool,
+    check: bool,
+    config_path: str | None,
+    inputs: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Edit RECIPE and the sub-recipes it includes, keeping comments and layout.
+
+    Each edit lands in the file that declares its target and changes only the
+    lines it has to; a file nothing changed is written back byte for byte.
+    VALUEs are read as YAML: 5, 5.0, true, [1, 2] and {a: 1} are what they
+    look like, a bare word is a string, ${inputs.x} is kept as written, an
+    empty VALUE is null and "" is the empty string. Keys that hold a dot or
+    are numbers cannot be named in the dotted forms; use --ops for them.
+    Edits apply in this order: --ops, --set, --unset, --checkpoint,
+    --override, --unset-override, --input-default, --replace-text.
+
+    Without --output or --copy-to the changed files are saved in place. The
+    edited recipe is validated as dry-run would; validation errors are shown
+    but do not stop the save unless --check is given. An edit that leaves
+    the recipe unreadable, or a checkpoint change that breaks the DAG, is
+    refused and nothing is written.
+    """
+    from aa_recipe_manager import editing
+
+    if dry_run and copy_to:
+        _fail("--dry-run writes nothing; it cannot be combined with --copy-to.")
+    if output and copy_to:
+        _fail(
+            "--output and --copy-to cannot be combined; --output alone into "
+            "another folder copies the recipe with the edits."
+        )
+    for flag, given in (("--keep-paths", keep_paths), ("--no-config", no_config)):
+        if given and not output:
+            _fail(f"{flag} needs --output.")
+    if overwrite and copy_to:
+        _fail("--overwrite does nothing with --copy-to, which writes only the copy.")
+    for flag, given in (
+        ("--undo", undo_count),
+        ("--redo", redo_count),
+        ("--reload", reload_conflicts),
+    ):
+        if given and not copy_to:
+            _fail(f"{flag} needs a working copy with a history (--copy-to DIR).")
+    from aa_recipe_manager.editing.cli_args import split_assignment
+
+    try:
+        parsed_inputs = dict(
+            split_assignment(item, "--input value", "NAME=VALUE") for item in inputs
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    try:
+        run_config = config.load_run_config(config_path, recipe_path=recipe)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if run_config.source is not None and not as_json:
+        click.echo(f"Using run config: {run_config.source}")
+    merged_inputs = {**run_config.inputs, **parsed_inputs}
+
+    journal = editing.Journal(Path(copy_to) / ".aa-recipe") if copy_to else None
+    continuing = journal is not None and journal.exists()
+    try:
+        if continuing:
+            workspace = editing.RecipeWorkspace.reopen(
+                Path(copy_to) / Path(recipe).name, recipe, journal=journal
+            )
+        else:
+            workspace = editing.RecipeWorkspace.open(recipe)
+    except editing.WorkspaceError as exc:
+        _fail(str(exc))
+    except RecipeParseError as exc:
+        _handle_recipe_errors(exc)
+
+    disk: dict[str, Any] = {"reloaded": [], "conflicts": []}
+    if continuing:
+        for warning in workspace.warnings:
+            click.echo(f"Warning: {warning}", err=True)
+        synced = workspace.sync_disk()
+        disk["reloaded"] = [entry.documents[0] for entry in synced.reloaded]
+        conflicts = synced.conflicts
+        if reload_conflicts and conflicts:
+            try:
+                workspace.reload([conflict.label for conflict in conflicts])
+            except editing.EditRejected as exc:
+                _fail("Reload refused: " + "; ".join(exc.problems))
+            disk["reloaded"] += [conflict.label for conflict in conflicts]
+            conflicts = []
+        disk["conflicts"] = [
+            {"label": c.label, "error": c.error, "disk_sha256": c.disk_digest}
+            for c in conflicts
+        ]
+        if not as_json:
+            for label in disk["reloaded"]:
+                click.echo(f"reloaded {label} from disk")
+            for conflict in conflicts:
+                reason = f": {conflict.error}" if conflict.error else ""
+                click.echo(f"changed on disk, kept: {conflict.label}{reason}")
+        for name, done, step, count in (
+            ("undo", "undid", workspace.undo, undo_count),
+            ("redo", "redid", workspace.redo, redo_count),
+        ):
+            for _ in range(count or 0):
+                entry = step()
+                if entry is None:
+                    if not as_json:
+                        click.echo(f"Nothing more to {name}.")
+                    break
+                if not as_json:
+                    click.echo(f"{done} {_describe_op(entry.op)}")
+        workspace.flush()
+    elif (undo_count or redo_count) and not as_json:
+        click.echo("Nothing to undo or redo: the copy has no history yet.")
+
+    ops = _edit_operations(
+        workspace,
+        ops_file,
+        sets,
+        unsets,
+        checkpoints,
+        overrides,
+        unset_overrides,
+        input_defaults,
+        replace_texts,
+    )
+    applied = 0
+
+    def take_back() -> None:
+        """Undo this run's edits in a continued copy, keeping the copy in step."""
+        if continuing:
+            for _ in range(applied):
+                workspace.undo()
+            workspace.flush()
+
+    for op in ops:
+        try:
+            if workspace.apply(op, inputs=merged_inputs or None) is not None:
+                applied += 1
+        except editing.EditRejected as exc:
+            take_back()
+            _fail(f"{_describe_op(op)} refused: " + "; ".join(exc.problems))
+        except (editing.EditError, ValueError) as exc:
+            take_back()
+            _fail(f"{_describe_op(op)}: {exc}")
+
+    report = workspace.validate(merged_inputs or None)
+    refused = check and not report.is_valid
+    if refused:
+        take_back()
+    dirty = workspace.dirty()
+    history = [entry.to_dict() for entry in workspace.history.undo_stack]
+    elsewhere = bool(output) and Path(output).resolve().parent != workspace.base_dir
+    diffs = {
+        label: _edit_diff(
+            label,
+            workspace.document(label).saved_text or "",
+            workspace.document(label).text,
+        )
+        for label in dirty
+    }
+    if not as_json:
+        if dry_run:
+            for diff in diffs.values():
+                click.echo(diff, nl=False)
+            if not dirty:
+                click.echo("No changes.")
+        elif not refused:
+            for label in dirty:
+                click.echo(f"edited {label}")
+        _echo_validation(report)
+
+    written: list[Path] = []
+    result = None
+    if not refused and (output or not dry_run):
+        in_place = [d for d in dirty if d != workspace.label(workspace.root)]
+        if output and not elsewhere and in_place and not as_json:
+            click.echo(
+                "Warning: Save As beside the original saves the edited sub-recipes "
+                f"in place ({', '.join(in_place)}), which changes the original "
+                "recipe and every other recipe that includes them; use --override "
+                "on the include, or --output into another folder, to leave them "
+                "as they are.",
+                err=True,
+            )
+        try:
+            if output:
+                result = workspace.save_as(
+                    output,
+                    paths="fingerprinted" if keep_paths else "all",
+                    copy_config=not no_config,
+                    config=run_config.source,
+                    inputs=merged_inputs,
+                    overwrite=overwrite,
+                    dry_run=dry_run,
+                )
+                if elsewhere and not as_json:
+                    steps = len(workspace.recipe.steps)
+                    _echo_save_as(result, steps, keep_paths)
+                if not dry_run:
+                    written = result.written
+            elif continuing:
+                written = workspace.flush()
+            elif copy_to:
+                written = workspace.start_copy(copy_to, journal=journal)
+            else:
+                written = workspace.save(overwrite=overwrite)
+        except editing.TargetExists as exc:
+            listed = ", ".join(str(path) for path in exc.paths)
+            _fail(
+                f"Save As would replace existing files: {listed}. Choose another "
+                "name or folder, or pass --overwrite to replace them."
+            )
+        except editing.ChangedOnDisk as exc:
+            listed = ", ".join(str(path) for path in exc.paths)
+            _fail(
+                f"Changed on disk since they were read: {listed}. Nothing was "
+                "written; pass --overwrite to replace them."
+            )
+        except (editing.EditError, RecipeParseError) as exc:
+            _fail(str(exc))
+        if not as_json and dry_run:
+            for path in result.written:
+                click.echo(f"would write {path}")
+            for path in [] if overwrite else result.existing:
+                click.echo(f"Warning: {path} exists; it needs --overwrite.", err=True)
+        elif not as_json:
+            for path in dict.fromkeys(written):
+                click.echo(f"wrote {path}")
+            if not written and not dirty:
+                click.echo("No changes.")
+
+    if refused and not as_json:
+        if continuing:
+            click.echo(
+                "Edits taken back in the copy: --check and the recipe has errors.",
+                err=True,
+            )
+        else:
+            click.echo("Nothing written: --check and the recipe has errors.", err=True)
+    if as_json:
+        payload: dict[str, Any] = {
+            "files": [
+                {
+                    "label": label,
+                    "path": str(workspace.document(label).path),
+                    "origin": str(workspace.document(label).origin),
+                    "dirty": workspace.document(label).dirty,
+                }
+                for label in workspace.files()
+            ],
+            "history": history,
+            "validation": {
+                "valid": report.is_valid,
+                "errors": list(report.errors),
+                "warnings": list(report.warnings),
+            },
+            "written": [str(path) for path in dict.fromkeys(written)],
+        }
+        if dry_run:
+            payload["diffs"] = diffs
+        if continuing:
+            payload["disk"] = disk
+        if result is not None:
+            payload["save_as"] = result.to_dict()
+        click.echo(json.dumps(payload, indent=2, default=str))
+    if refused:
+        sys.exit(1)
+
+
+@main.group("config")
+def config_group() -> None:
+    """Create and edit a recipe's run config file, keeping its comments."""
+
+
+@config_group.command("init")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help="Replace an existing <stem>.config.yaml.",
+)
+def config_init_cmd(recipe: str, overwrite: bool) -> None:
+    """Write RECIPE's own <stem>.config.yaml beside it, from the template.
+
+    Every run setting is listed as null with a comment, and each input the
+    recipe requires with a null value to fill in. A run of the recipe finds
+    the file by the <recipe>.config.yaml rule.
+    """
+    from aa_recipe_manager.editing import TargetExists, run_config
+    from aa_recipe_manager.parser.yaml_reader import load_recipe
+
+    try:
+        target = run_config.create(load_recipe(recipe), recipe, overwrite=overwrite)
+    except TargetExists as exc:
+        _fail(f"{exc} Pass --overwrite to replace it.")
+    except RecipeParseError as exc:
+        _handle_recipe_errors(exc)
+    click.echo(f"wrote {target}")
+
+
+@config_group.command("set")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
+@click.argument("settings", nargs=-1, metavar="[NAME=VALUE]...")
+@click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Set a value in the file's inputs: (repeatable).",
+)
+@click.option(
+    "--unset-input",
+    "unset_inputs",
+    multiple=True,
+    metavar="NAME",
+    help="Remove a value from the file's inputs: (repeatable).",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="The run config file to edit, found as for run when omitted.",
+)
+@click.option(
+    "--only-this-recipe",
+    is_flag=True,
+    default=False,
+    help=(
+        "Write the changes to a copy of the config file as RECIPE's own "
+        "<stem>.config.yaml, leaving the file other recipes share alone."
+    ),
+)
+def config_set_cmd(
+    recipe: str,
+    settings: tuple[str, ...],
+    inputs: tuple[str, ...],
+    unset_inputs: tuple[str, ...],
+    config_path: str | None,
+    only_this_recipe: bool,
+) -> None:
+    """Set run settings and input values in the run config RECIPE uses.
+
+    Each NAME=VALUE is a run setting: user_cache_dir, survey_cache_dir,
+    outputs_dir, temp_dir, executor, dask_scheduler, dask_workers or
+    storage_options. VALUEs are read as YAML, as for edit; an empty VALUE
+    writes null. A whole number for a float input is written as a float, as
+    the client writes it. Only the lines that change are rewritten, so the
+    file keeps its comments and layout.
+
+    With --only-this-recipe the file in use is copied, comments and all, to
+    RECIPE's own <stem>.config.yaml with the changes made there. A run finds
+    that file first, so RECIPE then takes every setting from it and no longer
+    follows the shared file.
+    """
+    from aa_recipe_manager.editing import (
+        RecipeDocument,
+        TargetExists,
+        run_config,
+        typed_value,
+    )
+    from aa_recipe_manager.editing.cli_args import (
+        finite_value,
+        split_assignment,
+        yaml_value,
+    )
+    from aa_recipe_manager.parser.yaml_reader import load_recipe
+
+    if not (settings or inputs or unset_inputs):
+        _fail("Nothing to set: give NAME=VALUE, --input or --unset-input.")
+    try:
+        declared = load_recipe(recipe).inputs if inputs else {}
+    except RecipeParseError as exc:
+        _handle_recipe_errors(exc)
+    try:
+        path = config.discover_config_path(config_path, recipe_path=recipe)
+        values = {}
+        for item in settings:
+            name, text = split_assignment(item, "A setting", "NAME=VALUE")
+            values[name] = yaml_value(text, name)
+        given = {}
+        for item in inputs:
+            name, text = split_assignment(item, "--input", "NAME=VALUE")
+            value = finite_value(text, "--input")
+            if name in declared:
+                given[name] = typed_value(value, declared[name].type)
+            else:
+                given[name] = value
+                click.echo(
+                    f"Warning: {Path(recipe).name} declares no input '{name}'; "
+                    "it is written, but not used by this recipe.",
+                    err=True,
+                )
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    if path is None:
+        _fail(
+            f"{Path(recipe).name} uses no run config file; create one with "
+            "'aa-recipe config init', or name one with --config."
+        )
+    try:
+        document = RecipeDocument.load(path)
+        if only_this_recipe:
+            document = run_config.copy_to(
+                document, run_config.config_candidate(recipe)
+            )
+        written = (run_config.contents(document) or {}).get("inputs", {})
+        new_inputs = None
+        if given or unset_inputs:
+            kept = {k: v for k, v in written.items() if k not in unset_inputs}
+            new_inputs = {**kept, **given}
+        run_config.apply(document, new_inputs, values)
+    except TargetExists as exc:
+        _fail(f"{exc} Edit it without --only-this-recipe.")
+    except (RecipeParseError, ValueError) as exc:
+        _fail(f"{path}: {exc}")
+    if not only_this_recipe and not document.dirty:
+        click.echo(f"No changes to {path}.")
+        return
+    click.echo(f"wrote {document.write()}")
+
+
 @main.command("explain-cache")
 @click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
 @click.option(

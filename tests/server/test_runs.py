@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -67,7 +68,11 @@ def test_start_run_flat_completes(run_client, config, tmp_path):
     assert json.loads(Path(done["manifest"]).read_text())["status"] == "completed"
     assert done["outputs_dir"] == (run_dir / "outputs").as_posix()
     job = json.loads((run_dir / "job.json").read_text(encoding="utf-8"))
-    assert job["schema"] == 1 and job["files"].keys() == {"flat.yaml"}
+    assert job["schema"] == 1 and job["files"] == ["flat.yaml"]
+    snapshot = run_dir / "recipe" / "flat.yaml"
+    assert job["recipe"] == done["recipe"] == snapshot.as_posix()
+    assert job["cwd"] == FIXTURES.resolve().as_posix()
+    assert snapshot.read_bytes() == (FIXTURES / "flat.yaml").read_bytes()
 
     events = run_events(config, done)
     assert events[0]["kind"] == "run_started"
@@ -382,6 +387,89 @@ def test_relative_outputs_dir_is_honoured(run_client, tmp_path):
     assert (root / "out" / "manifest.json").is_file()
     assert (root / "cache").is_dir()
     assert Path(run["manifest"]).parent.name == run["id"]
+
+
+def writable_root(client, tmp_path) -> Path:
+    """A copy of the client fixtures, added as a recipe root."""
+    root = tmp_path / "recipes"
+    shutil.copytree(FIXTURES, root)
+    client.app.state.config.recipe_roots.append(root)
+    return root
+
+
+def open_in(client, path: Path, cache: Path, inputs=None) -> str:
+    """Open a recipe file with its user cache under ``cache``; return the id."""
+    response = client.post(
+        "/api/sessions", json={"path": path.as_posix()}, headers=HEADERS
+    )
+    assert response.status_code == 201, response.text
+    sid = response.json()["id"]
+    body = {"user_cache_dir": cache.as_posix()}
+    client.put(f"/api/sessions/{sid}/config", json=body, headers=HEADERS)
+    if inputs:
+        body = {"values": inputs}
+        client.put(f"/api/sessions/{sid}/inputs", json=body, headers=HEADERS)
+    return sid
+
+
+def graph_hashes(session: dict) -> dict[str, str]:
+    nodes = session["graph"]["nodes"]
+    return {node["id"]: node["hash"] for node in nodes if node["kind"] == "step"}
+
+
+def test_a_save_during_a_run_does_not_reach_it(run_client, config, tmp_path):
+    root = writable_root(run_client, tmp_path)
+    sid = open_in(run_client, root / "slow.yaml", tmp_path / "cache", {"seconds": 1})
+    before = graph_hashes(run_client.get(f"/api/sessions/{sid}").json())
+    run = start(run_client, sid)
+    snapshot = Path(run["recipe"])
+    written = snapshot.read_bytes()
+
+    operation = {"kind": "set_param", "step": "slow", "name": "seconds", "value": 0}
+    response = run_client.post(
+        f"/api/sessions/{sid}/edits", json={"operations": [operation]}, headers=HEADERS
+    )
+    assert response.status_code == 200, response.text
+    after = graph_hashes(response.json()["session"])
+    assert after["slow"] != before["slow"]
+    saved = run_client.post(f"/api/sessions/{sid}/save", json={}, headers=HEADERS)
+    assert saved.status_code == 200, saved.text
+    assert b"seconds: 0.0" in (root / "slow.yaml").read_bytes()
+
+    done = wait_for(run_client, run["id"], ENDED)
+    assert done["status"] == "completed"
+    assert snapshot.read_bytes() == written
+    assert b"${inputs.seconds}" in written
+    plan = next(e for e in run_events(config, done) if e["kind"] == "plan")
+    assert plan["data"]["steps"]["slow"]["hash"] == before["slow"]
+
+
+def test_a_run_from_the_snapshot_finds_relative_paths(run_client, tmp_path):
+    sid = run_session(run_client, "paths.yaml", tmp_path / "cache")
+    run = start(run_client, sid, mode="to", targets=["bump"])
+    assert Path(run["recipe"]).parent.name == "recipe"
+    assert wait_for(run_client, run["id"], ENDED)["status"] == "completed"
+
+
+def test_a_clean_file_changed_on_disk_is_reloaded_before_a_run(
+    run_client, tmp_path
+):
+    root = writable_root(run_client, tmp_path)
+    sid = open_in(run_client, root / "flat.yaml", tmp_path / "cache")
+    origin = root / "flat.yaml"
+    origin.write_bytes(origin.read_bytes().replace(b"default: 3", b"default: 4"))
+
+    run = start(run_client, sid, mode="to", targets=["scaled"])
+    assert run["reloaded"] == ["flat.yaml"]
+    assert Path(run["recipe"]).read_bytes() == origin.read_bytes()
+    session = run_client.get(f"/api/sessions/{sid}").json()
+    assert session["history"]["can_undo"] is True
+    assert session["dirty"] == []
+    assert "reloaded" not in run_client.get(f"/api/runs/{run['id']}").json()
+    assert wait_for(run_client, run["id"], ENDED)["status"] == "completed"
+    again = start(run_client, sid, mode="to", targets=["scaled"])
+    assert again["reloaded"] == []
+    assert wait_for(run_client, again["id"], ENDED)["status"] == "completed"
 
 
 @pytest.mark.slow

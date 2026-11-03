@@ -1,4 +1,7 @@
-import { useHealth } from '../api/queries';
+import { useCurrentSession, useHealth } from '../api/queries';
+import { SaveAsDialog } from '../editing/SaveAsDialog';
+import { SaveDialog } from '../editing/SaveDialog';
+import { SurveyWarningDialog } from '../editing/SurveyWarningDialog';
 import { Dialog } from './Dialog';
 import { useDialogs } from './dialogs';
 import { useDocsUrl } from './links';
@@ -67,10 +70,14 @@ function About() {
   );
 }
 
-/** The dialogs the menus open. */
+/** The dialogs the menus open, and the survey warning an edit opens. */
 export function ShellDialogs() {
   const open = useDialogs((state) => state.open);
   const close = useDialogs((state) => state.close);
+  const session = useCurrentSession().data;
+  if (session && open === 'save') return <SaveDialog session={session} onClose={close} />;
+  if (session && open === 'saveAs') return <SaveAsDialog session={session} onClose={close} />;
+  if (session && open === null) return <SurveyWarningDialog sid={session.id} graph={session.graph} />;
   if (open === 'shortcuts') {
     return (
       <Dialog title="Keyboard Shortcuts" onClose={close}>

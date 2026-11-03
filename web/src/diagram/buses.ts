@@ -10,7 +10,8 @@
  * a channel cross. Labels are placed once every line is routed, clear of
  * nodes and labels and LABEL_CLEARANCE away from every other line. An input
  * line's label sits near its target; an output line's label sits at the box
- * end of the line, so it reads as the box's.
+ * end of the line, so it reads as the box's. The run config box sits left of
+ * the inputs box, with its lines in a corridor between the two.
  *
  * The routing is written for left to right. For top to bottom every
  * rectangle is mirrored on the diagonal before routing and every result
@@ -49,8 +50,25 @@ export interface BusInput {
     size: Size;
     targets: { id: string; label: string }[];
     feeders: { id: string; label: string }[];
+    /** Its row handles' distances from its top, when run config lines end on its rows. */
+    rows?: Record<string, number>;
   } | null;
   outputBoxes: { id: string; owner: string; size: Size; label: string }[];
+  /** The run config box and its lines into the inputs box. */
+  runConfig?: RunConfigBus | null;
+}
+
+/** The run config box to place before the inputs box. */
+export interface RunConfigBus {
+  id: string;
+  size: Size;
+  /** Its row handles' distances from its top. */
+  rows: Record<string, number>;
+  /**
+   * Its lines: from a row of it to a row of the inputs box, or, with `from`
+   * and `to` null, from the box to the box.
+   */
+  lines: { id: string; from: string | null; to: string | null; label: string }[];
 }
 
 /** Distance between neighbouring lanes: room for a label above a lane, clear of the lane above. */
@@ -79,6 +97,10 @@ const GROUP_LANDING = 80;
 const LABEL_SLIDE = 4;
 /** The least distance between a label and any line but its own. */
 export const LABEL_CLEARANCE = 10;
+/** The least space between the run config box and the inputs box. */
+const CORRIDOR = 48;
+/** The least distance between two run config lines ending on one row. */
+const ROW_GAP = 4;
 
 interface Obstacle extends LayoutBox {
   id: string;
@@ -189,6 +211,79 @@ function labelPlacesAlong(points: Point[], width: number, fromEnd: boolean): Lay
 }
 
 /**
+ * The run config box's place and lines, in real coordinates.
+ *
+ * In both directions the box sits left of the inputs box with its top level
+ * with it, since both list their rows top to bottom, with a corridor between
+ * them for the lines. A row's line runs level out of the box, along the
+ * corridor and level into its row. Rows are in the order of the rows they
+ * set, so the lines nest: the first line running down turns furthest right,
+ * the first running up furthest left. Without an inputs box the run config
+ * box takes its place.
+ *
+ * Args:
+ *   config: The box and its lines.
+ *   inputs: The placed inputs box and its row handles, or null.
+ *   core: The left and top of the core.
+ *   flip: Top to bottom.
+ */
+function routeRunConfig(
+  config: RunConfigBus,
+  inputs: { box: LayoutBox; rows: Record<string, number> } | null,
+  core: { left: number; top: number },
+  flip: boolean,
+): { position: LayoutBox; routes: Record<string, Route>; labels: PendingLabel[] } {
+  const { width, height } = config.size;
+  if (!inputs) {
+    const position = flip
+      ? { x: core.left, y: core.top - BOX_GAP - height, width, height }
+      : { x: core.left - BOX_GAP - width, y: core.top, width, height };
+    return { position, routes: {}, labels: [] };
+  }
+  const target = inputs.box;
+  const bottom = target.y + target.height - ROW_GAP;
+  let last = -Infinity;
+  const ends = config.lines.map((line) => {
+    if (line.from === null || line.to === null) {
+      const y = target.y + Math.min(height, target.height) / 2;
+      return { line, from: y, to: y };
+    }
+    const to = Math.min(bottom, Math.max(target.y + inputs.rows[line.to], last + ROW_GAP));
+    last = to;
+    return { line, from: target.y + config.rows[line.from], to };
+  });
+  const downs = ends.filter((end) => end.to - end.from > 0.5).length;
+  const ups = ends.filter((end) => end.from - end.to > 0.5).length;
+  const labels = ends.filter((end) => end.line.label).map((end) => labelWidth(end.line.label));
+  const corridor = Math.max(CORRIDOR, 2 * BOX_INSET + Math.max(downs, ups) * DROP_STEP, Math.max(0, ...labels) + 24);
+  const position = { x: target.x - corridor - width, y: target.y, width, height };
+  const right = position.x + width;
+
+  const routes: Record<string, Route> = {};
+  const pending: PendingLabel[] = [];
+  let down = 0;
+  let up = 0;
+  for (const { line, from, to } of ends) {
+    let points: Point[];
+    if (Math.abs(to - from) <= 0.5) {
+      points = [{ x: right, y: from }, { x: target.x, y: from }];
+    } else {
+      const x = to > from ? target.x - BOX_INSET - down++ * DROP_STEP : right + BOX_INSET + up++ * DROP_STEP;
+      points = [{ x: right, y: from }, { x, y: from }, { x, y: to }, { x: target.x, y: to }];
+    }
+    routes[line.id] = { points };
+    if (line.label) {
+      // Above the line where it leaves the box, sliding along it toward the inputs box.
+      const span = labelWidth(line.label);
+      const labelBox = { x: right + 8, y: from - labelHeight() - 1, width: span, height: labelHeight() };
+      const room = corridor - span - 16;
+      pending.push({ edge: line.id, box: labelBox, slide: { x: LABEL_SLIDE, y: 0 }, room, fromEnd: false });
+    }
+  }
+  return { position, routes, labels: pending };
+}
+
+/**
  * Box positions and line routes for the inputs and outputs boxes.
  *
  * Never throws. A target or producer without a box in the core gets no
@@ -217,6 +312,7 @@ export function routeBuses(input: BusInput): Layout {
   const lines: Line[] = input.coreRoutes.flatMap((route) =>
     segments(route.points).map(([a, b]) => ({ edge: null, a, b })),
   );
+  const realExtent = coreExtent(things, input.coreRoutes.flatMap((route) => route.points));
 
   // Routing coordinates (mirrored top to bottom); lines keep clear of core labels.
   const obstacles = things.map((thing) => ({
@@ -431,6 +527,18 @@ export function routeBuses(input: BusInput): Layout {
       });
   }
 
+  if (input.runConfig) {
+    const placed = routeRunConfig(
+      input.runConfig,
+      box ? { box: positions[box.id], rows: box.rows ?? {} } : null,
+      realExtent,
+      flip,
+    );
+    positions[input.runConfig.id] = placed.position;
+    Object.assign(routes, placed.routes);
+    pending.push(...placed.labels);
+  }
+
   // A producer whose column has a node or label below its whole bottom edge
   // leaves by a rise beside the column.
   const producers = input.outputBoxes
@@ -543,6 +651,7 @@ export function busInput(request: LayoutRequest, core: Layout): BusInput {
     inputsBox: null,
     outputBoxes: [],
   };
+  let config: LayoutRequest['nodes'][number] | undefined;
   for (const node of request.nodes) {
     const size = { width: node.width, height: node.height };
     if (node.bus === 'in') {
@@ -555,7 +664,10 @@ export function busInput(request: LayoutRequest, core: Layout): BusInput {
         feeders: inLines
           .filter((edge) => edge.target === node.id)
           .map((edge) => ({ id: edge.source, label: edge.label?.text ?? '' })),
+        ...(node.rows ? { rows: node.rows } : {}),
       };
+    } else if (node.bus === 'config') {
+      config = node;
     } else if (node.bus === 'out') {
       const edge = outLines.find((candidate) => candidate.target === node.id);
       if (edge) input.outputBoxes.push({ id: node.id, owner: edge.source, size, label: edge.label?.text ?? '' });
@@ -563,6 +675,23 @@ export function busInput(request: LayoutRequest, core: Layout): BusInput {
       if (node.container) input.containers[node.id] = { box: boxes[node.id], labelWidth: node.labelWidth ?? 0 };
       else input.core[node.id] = boxes[node.id];
     }
+  }
+  if (config) {
+    const rows = config.rows ?? {};
+    const targetRows = input.inputsBox?.rows ?? {};
+    // A line leaves a row only when both of its ends have a row handle.
+    const lines = request.edges
+      .filter((edge) => edge.bus === 'config' && edge.target === input.inputsBox?.id)
+      .map((edge) => {
+        const rowLine = rows[edge.sourcePort ?? ''] !== undefined && targetRows[edge.targetPort ?? ''] !== undefined;
+        return {
+          id: edge.id,
+          from: rowLine ? edge.sourcePort! : null,
+          to: rowLine ? edge.targetPort! : null,
+          label: edge.label?.text ?? '',
+        };
+      });
+    input.runConfig = { id: config.id, size: { width: config.width, height: config.height }, rows, lines };
   }
   return input;
 }

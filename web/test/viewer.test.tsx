@@ -175,6 +175,11 @@ describe('the docs site viewer', () => {
     expect(container.querySelector('.rc-run-hint')).toBeNull();
     expect(within(container).queryByRole('button', { name: 'Dry run' })).toBeNull();
     expect(container.querySelector('.rc-viewer')).toHaveAttribute('data-theme', 'light');
+    // The site has no session, so no run config box and no handles for its lines.
+    expect(container.querySelector('.react-flow__node[data-id="runConfig"]')).toBeNull();
+    expect(container.querySelector('.rc-edge-bus-config')).toBeNull();
+    expect(nodeIn(container, 'inputs').querySelector('.react-flow__handle[data-handleid="config"]')).toBeNull();
+    expect(within(container).getByLabelText('Legend')).not.toHaveTextContent('Run config');
   });
 
   it('starts drilled into the include a level page documents', async () => {
@@ -249,6 +254,8 @@ describe('the docs site viewer', () => {
     ]);
     await waitFor(() => expect(yaml.querySelector('.rc-yaml')).not.toBeNull());
     expect(fetchMock).toHaveBeenCalledWith(`${SITE}recipes/client/with_sub.yaml`);
+    expect(yaml.querySelector('textarea')).toBeNull();
+    expect(yaml.querySelector('.rc-badge')).toHaveTextContent('read only');
 
     act(() => viewer.store.getState().select({ kind: 'step', id: 'seed' }));
     const seedLine = stepLine(FILES['with_sub.yaml'], 'seed')!;

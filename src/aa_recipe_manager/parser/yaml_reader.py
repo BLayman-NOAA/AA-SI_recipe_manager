@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,28 @@ def _strip_ruamel_types(value: Any) -> Any:
     return value
 
 
+def _load_raw_recipe(path: Path) -> dict[str, Any]:
+    """Read an included recipe file from disk as a plain mapping."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = _strip_ruamel_types(_new_yaml().load(f))
+    except FileNotFoundError:
+        raise RecipeParseError(f"Included recipe file not found: {path}")
+    except Exception as exc:
+        raise RecipeParseError(
+            f"Failed to read included recipe '{path}': {exc}"
+        ) from exc
+
+    if not isinstance(raw, dict):
+        raise RecipeParseError(
+            f"Expected a YAML mapping at the top level of '{path}'."
+        )
+    return raw
+
+
+LoadRaw = Callable[[Path], dict[str, Any]]
+
+
 def load_recipe(path: str | Path) -> Recipe:
     """Parse a YAML recipe file and return a validated Recipe object.
 
@@ -69,14 +92,53 @@ def load_recipe(path: str | Path) -> Recipe:
     if not isinstance(raw, dict):
         raise RecipeParseError(f"Expected a YAML mapping at the top level of '{path}'.")
 
-    resolved = _resolve_includes(raw, path.resolve(), (), {})
+    try:
+        return _build_recipe(raw, path.resolve(), _load_raw_recipe)
+    except ValidationError as exc:
+        raise RecipeParseError(f"Invalid recipe '{path}':\n{exc}") from exc
+
+
+def build_recipe(
+    raw: dict[str, Any],
+    path: Path,
+    load_raw: LoadRaw = _load_raw_recipe,
+) -> Recipe:
+    """Flatten a parsed root mapping into a validated Recipe.
+
+    This is ``load_recipe`` without the read of the root file, so an editor
+    can build a recipe from documents held in memory.
+
+    Args:
+        raw: The root file's plain mapping. Flattening writes into it, so pass
+            a fresh one.
+        path: The root file's resolved path, used to resolve relative includes
+            and to label them.
+        load_raw: Returns the plain mapping of an included file by resolved
+            path. It must return a fresh mapping on every call, because
+            flattening writes into it. The disk loader is the default.
+
+    Returns:
+        The validated recipe.
+
+    Raises:
+        RecipeParseError: An include cannot be loaded or resolved, step ids
+            collide, or the result fails model validation.
+    """
+    if not isinstance(raw, dict):
+        raise RecipeParseError(f"Expected a YAML mapping at the top level of '{path}'.")
+    try:
+        return _build_recipe(raw, path, load_raw)
+    except ValidationError as exc:
+        raise RecipeParseError(f"Invalid recipe '{path}':\n{exc}") from exc
+
+
+def _build_recipe(raw: dict[str, Any], path: Path, load_raw: LoadRaw) -> Recipe:
+    """Resolve includes, flatten and validate; ValidationError propagates."""
+    resolved = _resolve_includes(raw, path, (), {}, load_raw)
     merged = _flatten_recipe_yaml(resolved.raw)
     if resolved.include_blocks:
         merged["include_blocks"] = resolved.include_blocks
-    try:
-        return Recipe.model_validate(merged)
-    except ValidationError as exc:
-        raise RecipeParseError(f"Invalid recipe '{path}':\n{exc}") from exc
+    return Recipe.model_validate(merged)
 
 
 class _ResolvedRecipe:
@@ -96,6 +158,7 @@ def _resolve_includes(
     path: Path,
     stack: tuple[Path, ...],
     known_step_sources: dict[str, Path],
+    load_raw: LoadRaw,
 ) -> _ResolvedRecipe:
     """Return a raw recipe dict with include entries replaced by steps."""
     if path in stack:
@@ -114,7 +177,7 @@ def _resolve_includes(
     for step in steps:
         if _is_include_entry(step):
             include_path = _resolve_include_path(step["include"], path)
-            child_raw = _load_raw_recipe(include_path)
+            child_raw = load_raw(include_path)
             own_inputs = _own_inputs(child_raw)
             overrides = step.get("input_overrides") or {}
             if not isinstance(overrides, dict):
@@ -126,6 +189,7 @@ def _resolve_includes(
                 include_path,
                 (*stack, path),
                 visible_step_sources,
+                load_raw,
             )
             bindings = _input_bindings(child_resolved.raw.get("steps") or [], overrides)
             child_raw = _apply_input_overrides(child_resolved.raw, overrides)
@@ -187,24 +251,6 @@ def _resolve_includes(
     resolved_raw = dict(raw)
     resolved_raw["steps"] = merged_steps
     return _ResolvedRecipe(resolved_raw, include_blocks, local_step_sources)
-
-
-def _load_raw_recipe(path: Path) -> dict[str, Any]:
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = _strip_ruamel_types(_new_yaml().load(f))
-    except FileNotFoundError:
-        raise RecipeParseError(f"Included recipe file not found: {path}")
-    except Exception as exc:
-        raise RecipeParseError(
-            f"Failed to read included recipe '{path}': {exc}"
-        ) from exc
-
-    if not isinstance(raw, dict):
-        raise RecipeParseError(
-            f"Expected a YAML mapping at the top level of '{path}'."
-        )
-    return raw
 
 
 def _is_include_entry(step: Any) -> bool:

@@ -1,10 +1,11 @@
 op: run_hdbscan
 cache_key: run_hdbscan  # pinned cache identity - keep stable across op renames
 description: >
-  Run HDBSCAN unsupervised clustering on normalized feature data.
-  Pure-compute step: accepts normalized features and returns a clustering
-  result dict without modifying any Dataset. Designed to be a sweep target
-  for hyperparameter comparison.
+  Run HDBSCAN unsupervised clustering on normalized feature data. A good sweep
+  target for comparing hyperparameters.
+notes: >
+  Pure compute: it reads the normalized features and returns a clustering
+  result without modifying any Dataset.
 category: ml_clustering
 inputs:
   ds_normalized:
@@ -22,9 +23,11 @@ outputs:
   clustering_model:
     type: object
     description: >
-      Optional fitted clustering model used for HDBSCAN hierarchy plots.
-      This output is intentionally separate from clustering_results so the
-      label data can checkpoint as Zarr while the model falls back to pickle.
+      The fitted clustering model, used for HDBSCAN hierarchy plots and by
+      assign_clusters_to_all_points.
+    notes: >
+      Kept separate from clustering_results so the label data can checkpoint
+      as Zarr while the model falls back to pickle.
     required: false
     default: null
   background_label:
@@ -38,10 +41,11 @@ outputs:
     type: list
     description: >
       Sorted list of non-noise cluster labels found in this result (all
-      labels >= 0). Provided as scaffolding for a future map_over fan-out:
-      map_over: ${this_step.cluster_labels} will fan
+      labels >= 0).
+    notes: >
+      Lets map_over: ${this_step.cluster_labels} fan
       filter_normalized_by_cluster across every discovered cluster without
-      any changes to the op or its spec.
+      changes to that op or its spec.
     required: false
     default: null
 params:
@@ -68,19 +72,23 @@ params:
     type: int
     description: Absolute minimum cluster size. Mutually exclusive with min_cluster_size_fraction.
     required: false
+    constraints:
+      exclusive_with: [min_cluster_size_fraction]
   min_cluster_size_fraction:
     type: float
     description: >
-      Fraction of the points actually fitted used to derive min_cluster_size
-      when min_cluster_size is omitted. Mutually exclusive with
-      min_cluster_size. When omitted, the ML function defaults to 0.03.
-
+      Minimum cluster size as a fraction of the points fitted, used when
+      min_cluster_size is omitted. Mutually exclusive with min_cluster_size.
+      Unset uses 0.03.
+    notes: >
       Taken of the subsample when sample_size binds, so the number means the
       same thing at any scale: a cluster must hold this share of what the
       model saw. Raising sample_size therefore raises the absolute floor
       proportionally, and lowering it lowers it.
     required: false
     default: null
+    constraints:
+      exclusive_with: [min_cluster_size]
   min_samples:
     type: int
     description: >
@@ -92,11 +100,13 @@ params:
   sample_size:
     type: int
     description: >
-      Cap on how many samples are clustered. A survey flattens to more points
-      than HDBSCAN can handle in memory, so when the dataset is larger than
-      this a random subset of this size is clustered and the remaining points
-      receive no label at all. Set it above the sample count to cluster
+      Cap on how many samples are clustered. A larger dataset is clustered on
+      a random subset of this size and the rest get no label (see
+      assign_clusters_to_all_points). Set it above the sample count to cluster
       everything.
+    notes: >
+      A survey flattens to more points than HDBSCAN can handle in memory,
+      which is why the cap exists.
     required: false
     default: 100000
   cluster_selection_method:

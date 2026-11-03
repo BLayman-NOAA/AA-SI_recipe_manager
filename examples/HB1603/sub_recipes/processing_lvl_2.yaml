@@ -1,22 +1,13 @@
-# Processing Level 2 - Sv Computation and Noise Removal
+# Processing level 2: Sv, masking and noise removal.
 #
-# Starts from the combined echodata plus extracted calibration parameters,
-# computes Sv, builds and applies the masking stack, and performs background
-# noise removal.
+# detect_seafloor and create_seafloor_mask both read ep_add_depth's dataset.
+# Each follows the dataset it is given (surface referenced when it carries
+# 'depth'), so reading detect_seafloor off compute_sv instead silently offsets
+# the mask by the transducer depth.
 #
-# ep_add_depth adds the surface-referenced 'depth' variable, and detect_seafloor
-# returns a line matched to whichever dataset it is given: surface referenced
-# when that dataset carries 'depth', transducer referenced otherwise.
-# create_seafloor_mask picks its comparison variable the same way. Both
-# therefore read ep_add_depth's dataset, so the line and the samples share one
-# reference. Reading detect_seafloor off compute_sv instead pairs a
-# transducer-referenced line against surface-referenced samples, which offsets
-# the mask by the transducer depth without erroring.
-#
-# ep_add_splitbeam_angle is commented out below: nothing downstream consumes
-# split-beam angles. apply_mask sources ep_add_depth, so the angles never
-# reached an output. Restore it, and point create_seafloor_mask back at its
-# output, if a later step needs them.
+# ep_add_splitbeam_angle is commented out because nothing downstream uses the
+# angles. Restore it, and point create_seafloor_mask at its output, if a later
+# step needs them.
 
 recipe:
   name: "processing_lvl_2"
@@ -28,19 +19,20 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Combined EchoData object from the raw ingest stage."
+    description: "Combined raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters extracted from the standardized mapping."
+    description: "Calibration values for each channel, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters extracted from the standardized mapping."
+    description: "Environmental values for each channel, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
   noise_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size to apply before remove_noise, so it can run in dask-parallel chunks instead of one
-      in-memory block. 
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      the noise ping_num.
 
 steps:
 
@@ -71,7 +63,7 @@ steps:
   #     encode_mode: "power"
   #     to_disk: false
 
-  # optional
+  # Optional: logs statistics only.
   - id: log_seafloor_stats
     op: log_seafloor_detection_stats
     inputs:
@@ -80,8 +72,7 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
-  # .bot file based seafloor. Reads ep_add_depth's dataset so the line comes
-  # back surface referenced; see the file header.
+  # Seafloor from the .bot files, surface referenced; see the file header.
   - id: detect_seafloor
     op: detect_seafloor
     depends_on: [log_seafloor_stats]
@@ -132,10 +123,8 @@ steps:
       ds_Sv: ${ep_add_depth.ds_Sv}
       mask: ${combine_masks.mask}
 
-  # Everything below the deepest seafloor is NaN after apply_mask but still
-  # occupies range samples, widening remove_noise, mask_sparse, compute_mvbs
-  # and the cell-statistics grid. Lossless: only trailing samples that hold no
-  # finite Sv anywhere in the survey are dropped.
+  # Drops the all-NaN samples below the deepest seafloor, which would otherwise
+  # widen every later grid. Lossless.
   - id: crop_range
     op: crop_range
     checkpoint: always

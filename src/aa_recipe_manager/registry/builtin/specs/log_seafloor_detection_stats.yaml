@@ -1,12 +1,9 @@
 op: log_seafloor_detection_stats
 cache_key: log_seafloor_detection_stats  # pinned cache identity - keep stable across op renames
 description: >
-  Sink step. Compute and print summary statistics for seafloor detection across
-  all available channels. For each channel, reports depth range (min/max),
-  valid-ping count (pings where depth >= min_valid_depth_m), and 10th/50th/90th
-  percentile depths. Use this step before detect_seafloor to inspect per-channel
-  detection quality and inform the channel parameter choice. Produces no data
-  output.
+  Print per-channel seafloor detection statistics (depth range, valid ping
+  count, 10th, 50th and 90th percentile depths). Use before detect_seafloor to
+  choose its channel. Produces no data output.
 category: detection
 sink: true
 inputs:

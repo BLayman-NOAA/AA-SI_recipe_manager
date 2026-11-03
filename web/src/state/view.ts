@@ -7,9 +7,10 @@ export const VIEW_KEY = 'rc.view';
 
 /**
  * What a selection points at. An `inputsBox` id is `inputs` or
- * `overrides:<includeId>`; an `outputsBox` id is the box owner's node id.
+ * `overrides:<includeId>`; an `outputsBox` id is the box owner's node id; a
+ * `runConfig` id is `runConfig` (the app only, the site has no run config).
  */
-export type SelectionKind = 'step' | 'include' | 'input' | 'inputsBox' | 'outputsBox';
+export type SelectionKind = 'step' | 'include' | 'input' | 'inputsBox' | 'outputsBox' | 'runConfig';
 
 export interface Selection {
   kind: SelectionKind;
@@ -48,8 +49,11 @@ export interface ViewState extends ViewPreferences {
   fitRequest: number;
   /** Incremented to ask the diagram to focus its find box. */
   findRequest: number;
+  /** Step ids marked like find matches (the survey warning's Show on diagram); cleared by the next selection. */
+  highlight: Set<string>;
 
   select: (selection: Selection | null) => void;
+  setHighlight: (ids: Iterable<string>) => void;
   toggleStepExpanded: (id: string) => void;
   toggleBoxExpanded: (id: string) => void;
   requestExpandAll: (expanded: boolean) => void;
@@ -133,8 +137,11 @@ export function createViewStore(options: ViewStoreOptions = {}): ViewStore {
     findQuery: '',
     fitRequest: 0,
     findRequest: 0,
+    highlight: new Set<string>(),
 
-    select: (selected) => set({ selected }),
+    select: (selected) =>
+      set((state) => (state.highlight.size > 0 ? { selected, highlight: new Set<string>() } : { selected })),
+    setHighlight: (ids) => set({ highlight: new Set(ids) }),
     toggleStepExpanded: (id) => set((state) => ({ expandedSteps: toggled(state.expandedSteps, id) })),
     toggleBoxExpanded: (id) => set((state) => ({ expandedBoxes: toggled(state.expandedBoxes, id) })),
     requestExpandAll: (expanded) =>
@@ -184,6 +191,7 @@ export function createViewStore(options: ViewStoreOptions = {}): ViewStore {
         expandedBoxes: new Set<string>(),
         drill: [],
         findQuery: '',
+        highlight: new Set<string>(),
       }),
   }));
 }

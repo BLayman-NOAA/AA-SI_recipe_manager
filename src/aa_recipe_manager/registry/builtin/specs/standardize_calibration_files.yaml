@@ -1,12 +1,13 @@
 op: standardize_calibration_files
 cache_key: standardize_calibration_files  # pinned cache identity - keep stable across op renames
 description: >
-  Convert manufacturer calibration files to standardized single-channel files.
-
-  Parses the EK60 .cal or EK80 .xml files in the calibration input folder,
-  validates them against the standardized schema, and writes one .yaml per
-  channel into single_channel_calibration_files/ under the calibration output
-  directory. These per-channel files are what NCEI archives.
+  Convert manufacturer calibration files (EK60 .cal or EK80 .xml) to
+  standardized single-channel .yaml files under
+  single_channel_calibration_files/. Skipped when the manufacturer files are
+  unchanged.
+notes: >
+  Validates against the standardized schema before writing. These per-channel
+  files are what NCEI archives.
 
   The parse is skipped when standardization.fingerprint.json shows the same
   manufacturer files already produced the files that are there. That sidecar
@@ -41,11 +42,12 @@ outputs:
     required: false
     description: >
       The standardized channels as data: {"channels": [...]}, one entry per
-      single-channel file, each carrying the _calibration_file_key that the
-      mapping is built on. Produced on the fresh parse, the reuse path and an
-      override alike, so a caller can review the channels without reading the
-      folder. Plain JSON types only, so it checkpoints as JSON rather than a
-      pickle and stays eligible for the shared survey cache.
+      single-channel file, for review without reading the folder.
+    notes: >
+      Each entry carries the _calibration_file_key that the mapping is built
+      on. Produced on the fresh parse, the reuse path and an override alike.
+      Plain JSON types only, so it checkpoints as JSON rather than a pickle
+      and stays eligible for the shared survey cache.
 params:
   cal_input_folder:
     type: path
@@ -56,9 +58,11 @@ params:
     # a step-output reference would not.
     fingerprint_mode: auto
     description: >
-      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).
-      May be a remote fsspec URL, which is downloaded whole to local scratch
-      for the duration of the parse.
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      local or a remote URL.
+    notes: >
+      A remote folder is downloaded whole to local scratch for the duration
+      of the parse.
     constraints:
       # Auto-create if missing so dry-run does not fail before the user has
       # placed calibration files. The step errors at run time if it is empty.
@@ -82,17 +86,18 @@ params:
     type: str
     required: true
     description: >
-      Name recorded as the author of every generated single-channel file. Part
-      of the provenance the standardized format carries, not something the
-      calculation uses.
+      Name recorded as the author of every generated single-channel file. Not
+      used in any calculation.
   short_filenames:
     type: bool
     required: false
     default: true
     description: >
       Use compact names for the generated single-channel files. Set false for
-      longer, more descriptive names. The names become the calibration keys the
-      mapping is built from, so this participates in the reuse fingerprint.
+      longer, more descriptive names.
+    notes: >
+      The names become the calibration keys the mapping is built from, so this
+      participates in the reuse fingerprint.
   overwrite:
     type: bool
     required: false
@@ -112,8 +117,10 @@ params:
       Write these channels as the single-channel files instead of parsing the
       manufacturer files. Same shape as the single_channel_data output: omit
       an entry to discard that channel, and edit values in place to correct
-      them. This is how a reviewed and edited set of channels comes back from
-      a caller that has no access to the folder.
+      them.
+    notes: >
+      This is how a reviewed and edited set of channels comes back from a
+      caller that has no access to the folder.
 
       _calibration_file_key is ignored on input, because filenames are
       re-derived from the supplied values and an edit can therefore rename a

@@ -1,18 +1,13 @@
 op: filter_normalized_by_cluster
 cache_key: filter_normalized_by_cluster  # pinned cache identity - keep stable across op renames
 description: >
-  Subset the normalised ML Dataset to samples belonging to a single cluster
-  label from a previous run_hdbscan result. Returns a filtered Dataset that
-  can be passed directly to run_hdbscan for a second-pass clustering.
-
-  Use cluster_label: -1 (default) to isolate noise points for re-clustering.
-  Use any non-negative integer to isolate a specific cluster for sub-cluster
-  refinement.
-
-  Designed as a single-item, map-friendly primitive: it processes one
-  cluster_label at a time so that a future map_over step attribute can fan it
-  out across all cluster labels (e.g. map_over: ${run_hdbscan.cluster_labels})
-  without any changes to this op or its spec.
+  Subset the normalised ML Dataset to the samples of one cluster label from a
+  run_hdbscan result, such as the noise points (-1). The result can go
+  straight to run_hdbscan for a second pass.
+notes: >
+  It processes one cluster_label at a time so a map_over can fan it out across
+  all cluster labels (for example map_over: ${run_hdbscan.cluster_labels})
+  without changes to this op or its spec.
 category: ml_clustering
 inputs:
   ds_normalized:
@@ -25,10 +20,11 @@ outputs:
   ds_normalized_filtered:
     type: Dataset
     description: >
-      Copy of ds_normalized whose normalised feature variable is subsetted to
-      the samples belonging to the requested cluster_label. The full
-      sample_index_to_grid_index mapping is preserved so the filtered dataset
-      can be passed directly to run_hdbscan.
+      Copy of ds_normalized subsetted to the samples of the requested
+      cluster_label, ready for run_hdbscan.
+    notes: >
+      Only the normalised feature variable is subsetted. The full
+      sample_index_to_grid_index mapping is preserved.
 params:
   cluster_label:
     type: int

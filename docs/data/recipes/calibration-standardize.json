@@ -20,7 +20,7 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw",
-      "description": "Folder of .raw files, read for channel configuration only.",
+      "description": "Folder of raw .raw files, a local path or a gs:// URL, read for channel configuration only.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -31,7 +31,7 @@
       "declared": true,
       "required": false,
       "default": "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS",
-      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80).",
+      "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -42,7 +42,7 @@
       "declared": true,
       "required": false,
       "default": "calibration",
-      "description": "Subdirectory under the run's outputs folder for the calibration artifacts.",
+      "description": "Name of the subfolder of the run's outputs folder that calibration artifacts are written to.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -53,7 +53,7 @@
       "declared": true,
       "required": false,
       "default": "RL2307",
-      "description": "Recorded in every generated single-channel file so it stays traceable to the survey.",
+      "description": "Cruise identifier, such as \"HB1603\", recorded in every generated single-channel calibration file so it stays traceable to the survey.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -64,7 +64,7 @@
       "declared": true,
       "required": false,
       "default": "<Your Name>",
-      "description": "Recorded as the author of every generated single-channel file.",
+      "description": "Name recorded as the author of every generated single-channel calibration file.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -75,7 +75,7 @@
       "declared": true,
       "required": false,
       "default": "2023-07-17T16:30:46",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -86,7 +86,7 @@
       "declared": true,
       "required": false,
       "default": "2023-07-18T19:50:19",
-      "description": "Used to narrow file set down for Debugging purposes. Leave unassigned for full results.",
+      "description": "Optional inclusive ISO datetime, for debugging, matched to the D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it are scanned for calibration. Unset takes every file.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -97,7 +97,7 @@
       "declared": true,
       "required": false,
       "default": null,
-      "description": "Reviewed channels from single_channel_data, written in place of the manufacturer files. Unset, both phases share standardize_cal's cache.",
+      "description": "Reviewed standardized channels, in the shape of the single_channel_data output, written in place of parsing the manufacturer files. Unset parses the files.",
       "declared_in": "calibration_standardize.yaml"
     },
     {
@@ -118,7 +118,7 @@
       "document": "calibration_standardize.yaml",
       "hash": null,
       "editable": false,
-      "description": "Validate the raw file set in the input directory, create calibration output directories if they do not exist, and return a list of raw file paths and the resolved calibration output directory ready for processing.",
+      "description": "Validate the raw files in the input folder, create the calibration output directory if needed, and return the raw file paths and that directory.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -132,19 +132,27 @@
           "name": "raw_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder containing .raw files. May be a local path or a remote fsspec URL (e.g. gs://bucket/survey/raw); remote folders are listed without downloading any data, and existence checks are skipped at validation time for remote URLs.",
+          "description": "Folder of .raw files, local or a remote URL such as gs://bucket/survey/raw. Remote folders are listed without downloading any data.",
           "default": null,
           "set": true,
-          "value": "${inputs.raw_input_folder}"
+          "value": "${inputs.raw_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "auto"
         },
         {
           "name": "calibration_outputs",
           "type": "str",
           "units": null,
-          "description": "Subdirectory name under the pipeline's user-facing outputs folder where calibration artifacts are written. Resolved automatically relative to the outputs directory when run via the executor; treated as a CWD-relative path when called standalone (e.g. in a notebook). Calibration JSON logs are always written to a logs/ subdirectory within this folder.",
+          "description": "Subdirectory under the run's outputs folder where calibration artifacts are written, with JSON logs in its logs/ subfolder.",
           "default": "calibration",
           "set": true,
-          "value": "${inputs.calibration_outputs}"
+          "value": "${inputs.calibration_outputs}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "raw_file_names",
@@ -153,7 +161,10 @@
           "description": "Explicit file name list; empty means include all files in folder",
           "default": [],
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "clear_previous_json_logs",
@@ -162,16 +173,22 @@
           "description": "Delete the calibration_flags.json left by a previous run before this one starts, so the flags reflect this run alone. Set false to let the flags accumulate across runs.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_start",
           "type": "str",
           "units": null,
-          "description": "Optional inclusive ISO datetime (e.g. \"2016-07-25T20:58\") restricting the raw file set to files whose filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound. Filenames without a parseable datetime are excluded when a bound is set. Applies to local and gs:// folders alike; filtering is name-based, so no data is read (or downloaded) to filter.",
+          "description": "Inclusive ISO datetime, for example \"2016-07-25T20:58\"; keeps only raw files whose filename time (D{YYYYMMDD}-T{HHMMSS}) is at or after it. Unset keeps all files.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_start}"
+          "value": "${inputs.file_time_start}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "file_time_end",
@@ -180,7 +197,10 @@
           "description": "Optional inclusive ISO datetime upper bound for filename-encoded file times. See file_time_start.",
           "default": null,
           "set": true,
-          "value": "${inputs.file_time_end}"
+          "value": "${inputs.file_time_end}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -220,7 +240,7 @@
       "document": "calibration_standardize.yaml",
       "hash": null,
       "editable": false,
-      "description": "Read ONE raw file's channel configuration from its datagram headers.\nThe fan-out unit of the calibration raw scan. Map it over initial_setup.raw_file_paths with checkpoint: always and each file becomes its own cache entry, so a run interrupted at file 400 of 500 keeps the 399 already scanned. Pair it with record_raw_file_configs, which collects the results into the survey's raw_file_configs.yaml.",
+      "description": "Read one raw file's channel configuration from its datagram headers. Map it over the raw file paths and collect the results with record_raw_file_configs.",
       "sink": false,
       "mapped": true,
       "group": "group:0",
@@ -234,37 +254,49 @@
           "name": "raw_file_path",
           "type": "path",
           "units": null,
-          "description": "One .raw file. May be a local path or a remote fsspec URL, which is downloaded to local scratch, read, and deleted before this step returns. Normally wired to ${_item}. Not fingerprinted, because the mapped item already content-addresses the instance.",
+          "description": "One .raw file, as a local path or a remote URL. Normally wired to ${_item}.",
           "default": null,
           "set": true,
-          "value": "${_item}"
+          "value": "${_item}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verify_start_time",
           "type": "bool",
           "units": null,
-          "description": "If true, EK80 files are additionally read with the full SimradFileReader to verify metadata_start_time, which is slower. The default single pass scan is enough for channel configuration.",
+          "description": "If true, also read EK80 files in full to verify metadata_start_time, which is slower. The default single pass scan is enough for channel configuration.",
           "default": false,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
           "type": "bool",
           "units": null,
-          "description": "Print per-file progress. Worth setting false on a long fan-out, where one banner per file buries the rest of the log.",
+          "description": "Print per-file progress. Set false on a long fan-out to keep the log readable.",
           "default": true,
           "set": true,
-          "value": false
+          "value": false,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "max_scan_bytes",
           "type": "int",
           "units": null,
-          "description": "Ceiling on how many leading bytes of a remote EK60 or EK80 file may be read in place of transferring it whole. The scan starts at min(8 MiB, this) and doubles up to this cap, stopping as soon as the configuration settles every channel, so a file that settles early pays only the small read and the local prefix grows in place rather than being re-read from zero.\nSize it for the deepest configuration in the survey. Too low is expensive, not wrong: a file that never settles is read whole.\nEK80: CW files settle within a fraction of a MiB; FM files sit behind much larger RAW3 payloads and scale with file size, so a survey of ~1 GiB FM files needs a cap in the tens of MiB.\nEK60 settles far earlier, and the cap doubles as the starting read, so setting it to 1 MiB turns a cruise-wide scan into one small read per file. Measured on HB1603 (52 MB files, five channels), the configuration settles at 256 KiB. Do not be tempted lower on the strength of the channel list alone: at 64 KiB every channel is already listed and looks complete, but three of the five carry CON0's configured 2000 W rather than the 500, 300 and 750 W actually transmitted. The step guards against that by requiring one RAW0 datagram per channel before it trusts a prefix, so a too-small cap costs a whole-file read rather than wrong calibration.\nBecause a prefix cannot measure them, the per-file datagram counts and gps_data come back null; last_ping_time is recovered from the file's tail. Leave unset for the whole-file read, which is also what local files and verify_start_time always get.",
+          "description": "Most leading bytes of a remote EK60 or EK80 file to read instead of the whole file, in bytes. Unset reads whole files. Around 1 MiB suits EK60; FM EK80 needs tens of MiB. Too low only costs a whole-file read.",
           "default": null,
           "set": true,
-          "value": 134217728
+          "value": 134217728,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -296,7 +328,7 @@
       "document": "calibration_standardize.yaml",
       "hash": null,
       "editable": false,
-      "description": "Collect per-file channel configurations into the survey's raw config file.\nThe fan-in half of the raw scan. Drops the files that could not be read, sorts the rest by metadata_start_time, and writes raw_file_configs/raw_file_configs.yaml under the calibration output directory. Declare it with collect on the scan step's file_config output.",
+      "description": "Collect per-file channel configurations into raw_file_configs/raw_file_configs.yaml under the calibration output directory. Use collect on the scan step's file_config output.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -323,7 +355,12 @@
           "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -332,7 +369,10 @@
           "description": "Print a summary of what was recorded.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -380,7 +420,7 @@
       "document": "calibration_standardize.yaml",
       "hash": null,
       "editable": false,
-      "description": "Convert manufacturer calibration files to standardized single-channel files.\nParses the EK60 .cal or EK80 .xml files in the calibration input folder, validates them against the standardized schema, and writes one .yaml per channel into single_channel_calibration_files/ under the calibration output directory. These per-channel files are what NCEI archives.\nThe parse is skipped when standardization.fingerprint.json shows the same manufacturer files already produced the files that are there. That sidecar answers to the manufacturer folder, so deleting a single-channel file does not bring it back, which is what the mapping step's \"error\" conflict workflow relies on.",
+      "description": "Convert manufacturer calibration files (EK60 .cal or EK80 .xml) to standardized single-channel .yaml files under single_channel_calibration_files/. Skipped when the manufacturer files are unchanged.",
       "sink": false,
       "mapped": false,
       "group": null,
@@ -404,10 +444,15 @@
           "name": "cal_input_folder",
           "type": "path",
           "units": null,
-          "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80). May be a remote fsspec URL, which is downloaded whole to local scratch for the duration of the parse.",
+          "description": "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), local or a remote URL.",
           "default": null,
           "set": true,
-          "value": "${inputs.cal_input_folder}"
+          "value": "${inputs.cal_input_folder}",
+          "required": true,
+          "constraints": {
+            "create_if_missing": true
+          },
+          "fingerprint_mode": "auto"
         },
         {
           "name": "output_base",
@@ -416,7 +461,12 @@
           "description": "Root directory the calibration artifacts are written under. Normally wired to initial_setup's calibration_output_dir.",
           "default": null,
           "set": true,
-          "value": "${initial_setup.calibration_output_dir}"
+          "value": "${initial_setup.calibration_output_dir}",
+          "required": true,
+          "constraints": {
+            "must_exist": false
+          },
+          "fingerprint_mode": "off"
         },
         {
           "name": "cruise_id",
@@ -425,25 +475,34 @@
           "description": "Cruise identifier recorded in every generated single-channel file (e.g. \"HB2407\"), so a standardized file stays traceable to the survey it came from.",
           "default": null,
           "set": true,
-          "value": "${inputs.cruise_id}"
+          "value": "${inputs.cruise_id}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "record_author",
           "type": "str",
           "units": null,
-          "description": "Name recorded as the author of every generated single-channel file. Part of the provenance the standardized format carries, not something the calculation uses.",
+          "description": "Name recorded as the author of every generated single-channel file. Not used in any calculation.",
           "default": null,
           "set": true,
-          "value": "${inputs.record_author}"
+          "value": "${inputs.record_author}",
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "short_filenames",
           "type": "bool",
           "units": null,
-          "description": "Use compact names for the generated single-channel files. Set false for longer, more descriptive names. The names become the calibration keys the mapping is built from, so this participates in the reuse fingerprint.",
+          "description": "Use compact names for the generated single-channel files. Set false for longer, more descriptive names.",
           "default": true,
           "set": true,
-          "value": true
+          "value": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "overwrite",
@@ -452,7 +511,10 @@
           "description": "Re-parse and rewrite even when the sidecar says the existing files are current, forcing a clean rebuild of the single-channel folder.",
           "default": false,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "verbose",
@@ -461,16 +523,22 @@
           "description": "Print the parsed parameters and the files written.",
           "default": true,
           "set": false,
-          "value": null
+          "value": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         },
         {
           "name": "override_channels",
           "type": "dict",
           "units": null,
-          "description": "Write these channels as the single-channel files instead of parsing the manufacturer files. Same shape as the single_channel_data output: omit an entry to discard that channel, and edit values in place to correct them. This is how a reviewed and edited set of channels comes back from a caller that has no access to the folder.\n_calibration_file_key is ignored on input, because filenames are re-derived from the supplied values and an edit can therefore rename a file. The channels are validated against the standardized schema before anything is written, and the folder is cleared first so a discarded channel leaves no orphan behind for the mapping to match. Folded into the standardization fingerprint, so changing them rewrites the folder, and a later run that parses the manufacturer files again clears what an override wrote rather than mapping both sets.",
+          "description": "Write these channels as the single-channel files instead of parsing the manufacturer files. Same shape as the single_channel_data output: omit an entry to discard that channel, and edit values in place to correct them.",
           "default": null,
           "set": true,
-          "value": "${inputs.override_channels}"
+          "value": "${inputs.override_channels}",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off"
         }
       ],
       "outputs": [
@@ -501,7 +569,7 @@
         {
           "name": "single_channel_data",
           "type": "dict",
-          "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, each carrying the _calibration_file_key that the mapping is built on. Produced on the fresh parse, the reuse path and an override alike, so a caller can review the channels without reading the folder. Plain JSON types only, so it checkpoints as JSON rather than a pickle and stays eligible for the shared survey cache.",
+          "description": "The standardized channels as data: {\"channels\": [...]}, one entry per single-channel file, for review without reading the folder.",
           "disposed": false,
           "many": false,
           "semantic": null
