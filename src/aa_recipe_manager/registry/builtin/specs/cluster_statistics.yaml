@@ -1,0 +1,64 @@
+op: cluster_statistics
+cache_key: cluster_statistics  # pinned cache identity - keep stable across op renames
+description: >
+  Per-cluster statistics of the source Sv as a JSON table: sample count and
+  share, then mean, std, min and max per channel and per channel difference,
+  for every cluster and the noise group.
+notes: >
+  The table follows the aa-table/1 contract the client's statistics pane
+  reads: columns tagged with feature and stat, a features list with kind
+  'sv' or 'difference', rows keyed by group with group_id -1 for noise.
+  NumPy scalars become Python values and NaN becomes null, so the output
+  checkpoints as JSON. Same numbers as the statistics panel of
+  plot_clustering_report, without the figure.
+category: ml_clustering
+inputs:
+  ds_normalized:
+    type: Dataset
+    description: >
+      Dataset from embed_clustering_results, holding the embedded cluster
+      labels and the Sv variable the statistics are taken from.
+outputs:
+  table:
+    type: dict
+    description: >
+      JSON table (schema aa-table/1) with one row per cluster and one for
+      noise.
+params:
+  dataset_name:
+    type: str
+    description: >
+      ML dataset the clustering belongs to. Must match the dataset_name used
+      by reshape_for_ml.
+    required: true
+  ml_result_name:
+    type: str
+    description: >
+      Embedded clustering result to summarise. Must match the ml_result_name
+      used by embed_clustering_results.
+    required: true
+  sv_data_var:
+    type: str
+    description: >
+      Sv variable the statistics are taken from, or 'ml_features' for the
+      flattened ML features.
+    required: false
+    default: "Sv"
+  compute_pairwise_diffs:
+    type: bool
+    description: >
+      Add each channel's difference from the second-lowest frequency as a
+      feature.
+    required: false
+    default: true
+implementations:
+  - key: default
+    callable_path: aa_si_ml.ml.cluster_statistics_table
+    default: true
+    dependency:
+      name: aa-si-ml
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_ML.git
+    output_map:
+      table: __return__

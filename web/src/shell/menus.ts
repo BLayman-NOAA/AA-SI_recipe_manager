@@ -81,6 +81,7 @@ export interface EditMenuState {
 export interface Commands {
   openRecipe: () => void;
   openSession: (sid: string) => void;
+  /** Delete the front session, closing its tab and removing its layers. */
   closeSession: () => void;
   save: () => void;
   saveAs: () => void;

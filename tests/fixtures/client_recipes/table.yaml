@@ -1,0 +1,18 @@
+# One saved aa-table/1 statistics table, for the statistics pane.
+recipe:
+  name: client_table
+  version: "1.0"
+  description: Return a small cluster statistics table and save it.
+  schema_version: "1"
+
+steps:
+  - id: stats
+    op: custom
+    checkpoint: always
+    custom_spec:
+      description: A cluster statistics table in the aa-table/1 shape.
+      callable_path: _stage9_helpers.stats_table
+      outputs:
+        table: {type: dict}
+      output_map: {table: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

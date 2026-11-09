@@ -18,6 +18,8 @@ from aa_recipe_manager.editing import (
     WorkspaceError,
 )
 from aa_recipe_manager.exceptions import (
+    ArtifactNotFound,
+    ArtifactTooLarge,
     RecipeValidationError,
     UpstreamNotCachedError,
 )
@@ -76,6 +78,21 @@ def test_run_errors(exc, status):
     assert code == status
     assert body["error"] == type(exc).__name__
     assert body["details"] is None
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "details"),
+    [
+        (ArtifactNotFound("s has no saved 'o'", "s", "o"), 404, None),
+        (ArtifactTooLarge("s.o is larger than 16 bytes", "s", "o", 16), 413,
+         {"limit": 16}),
+    ],
+)
+def test_artifact_errors(exc, status, details):
+    code, body = translate_error(exc)
+    assert code == status
+    assert body["error"] == type(exc).__name__
+    assert (body["details"], body["step_id"]) == (details, "s")
 
 
 def test_upstream_not_cached_is_409_with_the_missing_steps():

@@ -173,7 +173,7 @@
     from aa_si_calibration.calibration import build_calibration_mapping
 
     # query_ncei: Query an NCEI acoustic data catalog for file listings within a
-    # time window.
+    # time window, checked against the archive's own file listing.
     _result = query_ncei_data(
         file_time_start='2016-06-01T00:00:00',
         file_time_end='2016-09-01T00:00:00',

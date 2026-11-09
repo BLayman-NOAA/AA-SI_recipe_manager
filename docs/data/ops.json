@@ -3,9 +3,9 @@
   "generator": "aa-recipe-manager 0.1.0",
   "source_links": true,
   "counts": {
-    "ops": 54,
-    "implementations": 53,
-    "sources_resolved": 52
+    "ops": 55,
+    "implementations": 54,
+    "sources_resolved": 53
   },
   "categories": [
     "annotation",
@@ -163,7 +163,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -691,6 +691,17 @@
           "constraints": {},
           "fingerprint_mode": "off",
           "notes": "The model is only used by the hierarchy panel of plot_clustering_report, which is skipped when no model reaches it."
+        },
+        {
+          "name": "predict_all",
+          "type": "bool",
+          "units": null,
+          "description": "Predict a label for every point of ds_normalized from the model and keep none of the fitted labels. For labelling a Dataset the model was not fitted on.",
+          "default": false,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": "The Dataset must be on the model's feature scale: normalize it with a normalize_ml_data step whose normalizer input is wired to the normalizer output of the normalize_ml_data step that fed run_hdbscan. clustering_results still supplies the result's metadata, but its sample indices are ignored, so it need not belong to this Dataset. The result records label_source 'approximate_predict' and n_fitted 0."
         }
       ],
       "implementations": [
@@ -728,20 +739,20 @@
             "resolved": true,
             "module": "aa_si_ml.ml",
             "qualname": "assign_clusters_by_prediction",
-            "signature": "assign_clusters_by_prediction(ds_normalized, clustering_results, clustering_model, dataset_name, normalization_name, ml_result_name=None, batch_size=200000, keep_model=True)",
-            "doc": "Extend a subsampled clustering to every point in the dataset.\n\n:func:`run_hdbscan` clusters at most ``sample_size`` points, and the rest\nreceive no label at all, so they come back NaN once the result is regridded.\nThis projects the fitted structure onto the unlabelled points with\n``hdbscan.approximate_predict`` and returns a result covering every sample\nindex, which :func:`embed_clustering_results` then embeds as usual.\n\nPoints the fit did see keep their fitted label rather than a predicted one:\nthe fit is the more authoritative answer where it exists, and only the\nremainder is being filled in. Predicted points that fall outside every\ncluster get -1, the same noise label the fit uses.\n\nThe fitted model is required and cannot come from ``clustering_results``:\n:func:`_clustering_result_to_dataset` drops the model when it converts a\nresult for checkpointing, recording only ``model_type`` and\n``model_available``. Wire ``clustering_model`` straight from the\n``run_hdbscan`` step that produced the result.\n\n``keep_model=False`` returns None on the ``clustering_model`` port. The\nmodel only serves the hierarchy plot downstream, and a checkpoint of this\nstep would otherwise have to pickle it; with the port empty every output\ncheckpoints as Zarr or JSON.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalized ML dataset the clustering was run\n        against, supplying the full feature matrix.\n    clustering_results (xr.Dataset | dict): Result from run_hdbscan, holding\n        the fitted labels and the sample indices they belong to.\n    clustering_model (hdbscan.HDBSCAN): The fitted model from the same\n        run_hdbscan step, fitted with ``prediction_data=True``.\n    dataset_name (str): Base ML dataset name, matching reshape_for_ml.\n    normalization_name (str): Normalized feature set name, matching\n        normalize_ml_data.\n    ml_result_name (str or None): Name the extended result is stored under.\n        Defaults to the name already on *clustering_results*.\n    batch_size (int): Rows predicted per approximate_predict call.\n        Defaults to 200000.\n    keep_model (bool): Pass the model through on ``clustering_model``.\n        False returns None there so the step checkpoints without pickle.\n\nReturns:\n    dict: With keys 'clustering_results' (an xr.Dataset covering every\n    sample index), 'clustering_model' (passed through unchanged), and\n    'cluster_labels' (sorted non-noise labels present in the result).\n\nRaises:\n    ValueError: If *clustering_model* is None, or if the stored result\n        references sample indices the normalized dataset does not have.",
-            "line": 2334,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2334",
+            "signature": "assign_clusters_by_prediction(ds_normalized, clustering_results, clustering_model, dataset_name, normalization_name, ml_result_name=None, batch_size=200000, keep_model=True, predict_all=False)",
+            "doc": "Extend a subsampled clustering to every point in the dataset.\n\n:func:`run_hdbscan` clusters at most ``sample_size`` points, and the rest\nreceive no label at all, so they come back NaN once the result is regridded.\nThis projects the fitted structure onto the unlabelled points with\n``hdbscan.approximate_predict`` and returns a result covering every sample\nindex, which :func:`embed_clustering_results` then embeds as usual.\n\nPoints the fit did see keep their fitted label rather than a predicted one:\nthe fit is the more authoritative answer where it exists, and only the\nremainder is being filled in. Predicted points that fall outside every\ncluster get -1, the same noise label the fit uses.\n\nThe fitted model is required and cannot come from ``clustering_results``:\n:func:`_clustering_result_to_dataset` drops the model when it converts a\nresult for checkpointing, recording only ``model_type`` and\n``model_available``. Wire ``clustering_model`` straight from the\n``run_hdbscan`` step that produced the result.\n\n``keep_model=False`` returns None on the ``clustering_model`` port. The\nmodel only serves the hierarchy plot downstream, and a checkpoint of this\nstep would otherwise have to pickle it; with the port empty every output\ncheckpoints as Zarr or JSON.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalized ML dataset the clustering was run\n        against, supplying the full feature matrix.\n    clustering_results (xr.Dataset | dict): Result from run_hdbscan, holding\n        the fitted labels and the sample indices they belong to.\n    clustering_model (hdbscan.HDBSCAN): The fitted model from the same\n        run_hdbscan step, fitted with ``prediction_data=True``.\n    dataset_name (str): Base ML dataset name, matching reshape_for_ml.\n    normalization_name (str): Normalized feature set name, matching\n        normalize_ml_data.\n    ml_result_name (str or None): Name the extended result is stored under.\n        Defaults to the name already on *clustering_results*.\n    batch_size (int): Rows predicted per approximate_predict call.\n        Defaults to 200000.\n    keep_model (bool): Pass the model through on ``clustering_model``.\n        False returns None there so the step checkpoints without pickle.\n    predict_all (bool): Predict a label for every row of *ds_normalized*\n        and keep none of the fitted labels. For labelling a dataset the\n        model was not fitted on, normalized with the same\n        FittedNormalizer. Defaults to False.\n\nReturns:\n    dict: With keys 'clustering_results' (an xr.Dataset covering every\n    sample index), 'clustering_model' (passed through unchanged), and\n    'cluster_labels' (sorted non-noise labels present in the result).\n\nRaises:\n    ValueError: If *clustering_model* is None, or if the stored result\n        references sample indices the normalized dataset does not have.",
+            "line": 2613,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2613",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
-      "search": "assign_clusters_to_all_points ml_clustering label every point of a subsampled clustering, so no cell is left unlabelled. points outside the fit get the cluster the fitted model predicts, or -1 for noise. place it between ``run_hdbscan`` and ``embed_clustering_results``. ds_normalized the normalized ml dataset the clustering was run against. must be the same dataset that fed run_hdbscan. clustering_results result from run_hdbscan, holding the fitted labels and the sample indices they belong to. clustering_model the fitted model from the same run_hdbscan step. required. clustering_results clustering result covering every sample index in ds_normalized, in the same shape run_hdbscan produces. clustering_model the input model, passed through so a later plotting step can take it. cluster_labels sorted list of non-noise cluster labels present in the extended result. dataset_name ml dataset the clustering belongs to. must match the dataset_name used by reshape_for_ml and run_hdbscan. normalization_name normalized feature set that was clustered. must match the normalization_name used by normalize_ml_data and run_hdbscan. ml_result_name name the extended result is stored under. unset keeps the name already on the incoming result, so downstream embedding and plotting steps need no change. batch_size rows predicted per batch. lower it if a survey-scale run runs out of memory; batching does not change the labels. keep_model pass the fitted model through on the clustering_model output. set false when this step is checkpointed and pickle is unwanted. aa_si_ml.ml.assign_clusters_by_prediction aa-si-ml",
+      "search": "assign_clusters_to_all_points ml_clustering label every point of a subsampled clustering, so no cell is left unlabelled. points outside the fit get the cluster the fitted model predicts, or -1 for noise. place it between ``run_hdbscan`` and ``embed_clustering_results``. ds_normalized the normalized ml dataset the clustering was run against. must be the same dataset that fed run_hdbscan. clustering_results result from run_hdbscan, holding the fitted labels and the sample indices they belong to. clustering_model the fitted model from the same run_hdbscan step. required. clustering_results clustering result covering every sample index in ds_normalized, in the same shape run_hdbscan produces. clustering_model the input model, passed through so a later plotting step can take it. cluster_labels sorted list of non-noise cluster labels present in the extended result. dataset_name ml dataset the clustering belongs to. must match the dataset_name used by reshape_for_ml and run_hdbscan. normalization_name normalized feature set that was clustered. must match the normalization_name used by normalize_ml_data and run_hdbscan. ml_result_name name the extended result is stored under. unset keeps the name already on the incoming result, so downstream embedding and plotting steps need no change. batch_size rows predicted per batch. lower it if a survey-scale run runs out of memory; batching does not change the labels. keep_model pass the fitted model through on the clustering_model output. set false when this step is checkpointed and pickle is unwanted. predict_all predict a label for every point of ds_normalized from the model and keep none of the fitted labels. for labelling a dataset the model was not fitted on. aa_si_ml.ml.assign_clusters_by_prediction aa-si-ml",
       "notes": "``run_hdbscan`` clusters at most ``sample_size`` points, and the rest receive no label; they come back NaN once ``embed_clustering_results`` regrids the result, which on a survey-scale ML dataset is most of the data. This step projects the fitted structure onto the unlabelled points with hdbscan's ``approximate_predict``, which walks each point down the condensed tree the fit produced and returns the cluster it falls into, or -1 when it falls outside every cluster.\nPoints the fit did see keep their fitted label rather than a predicted one, since the fit is the more authoritative answer where it exists.\nThe output has the same shape ``run_hdbscan`` produces, so ``embed_clustering_results``, ``plot_clustering_report`` and ``merge_clustering_passes`` consume it unchanged.\nCheckpointing: this step needs the fitted model, and a checkpointed clustering_results Dataset does not carry one, because converting a result for Zarr drops the model and records only model_type and model_available. The clustering_model port is a plain object, so it falls back to pickle, which the tiered store refuses to write to the shared survey tier. To checkpoint this step without pickle, set keep_model to false: the model port is then null, every output is Zarr or JSON, and a downstream plot_clustering_report skips the hierarchy panel. Otherwise keep this step next to the run_hdbscan that feeds it, in the user tier, or set checkpoint: never and let it recompute.",
       "used_by": [
         {
@@ -1384,6 +1395,133 @@
       "used_by": []
     },
     {
+      "op": "cluster_statistics",
+      "description": "Per-cluster statistics of the source Sv as a JSON table: sample count and share, then mean, std, min and max per channel and per channel difference, for every cluster and the noise group.",
+      "category": "ml_clustering",
+      "spec_file": "registry/builtin/specs/cluster_statistics.yaml",
+      "experimental": false,
+      "sink": false,
+      "cache_key": "cluster_statistics",
+      "version": null,
+      "inputs": [
+        {
+          "name": "ds_normalized",
+          "type": "Dataset",
+          "description": "Dataset from embed_clustering_results, holding the embedded cluster labels and the Sv variable the statistics are taken from.",
+          "required": true,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "table",
+          "type": "dict",
+          "description": "JSON table (schema aa-table/1) with one row per cluster and one for noise.",
+          "required": true,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": null
+        }
+      ],
+      "params": [
+        {
+          "name": "dataset_name",
+          "type": "str",
+          "units": null,
+          "description": "ML dataset the clustering belongs to. Must match the dataset_name used by reshape_for_ml.",
+          "default": null,
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        },
+        {
+          "name": "ml_result_name",
+          "type": "str",
+          "units": null,
+          "description": "Embedded clustering result to summarise. Must match the ml_result_name used by embed_clustering_results.",
+          "default": null,
+          "required": true,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        },
+        {
+          "name": "sv_data_var",
+          "type": "str",
+          "units": null,
+          "description": "Sv variable the statistics are taken from, or 'ml_features' for the flattened ML features.",
+          "default": "Sv",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        },
+        {
+          "name": "compute_pairwise_diffs",
+          "type": "bool",
+          "units": null,
+          "description": "Add each channel's difference from the second-lowest frequency as a feature.",
+          "default": true,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        }
+      ],
+      "implementations": [
+        {
+          "key": "default",
+          "default": true,
+          "callable_path": "aa_si_ml.ml.cluster_statistics_table",
+          "version": null,
+          "tested_versions": [],
+          "setup": null,
+          "teardown": null,
+          "dependency": {
+            "name": "aa-si-ml",
+            "version": ">=0.1.0",
+            "source": "git",
+            "url": "https://github.com/BLayman-NOAA/AA-SI_ML.git"
+          },
+          "param_map": [],
+          "output_map": [
+            {
+              "spec": "table",
+              "expression": "__return__"
+            }
+          ],
+          "source": {
+            "callable_path": "aa_si_ml.ml.cluster_statistics_table",
+            "resolved": true,
+            "module": "aa_si_ml.ml",
+            "qualname": "cluster_statistics_table",
+            "signature": "cluster_statistics_table(ds_normalized, ml_result_name, dataset_name, sv_data_var='Sv', compute_pairwise_diffs=True)",
+            "doc": "Per-cluster statistics as a JSON table (schema ``aa-table/1``).\n\nWraps :func:`extract_cluster_statistics`. Each row is a cluster or the\nnoise group (``group_id`` -1) with its sample count and share, then the\nmean, std, min and max of every feature. Columns carrying a feature\nstatistic are tagged with ``feature`` and ``stat``; ``features`` lists\neach feature with its display label and kind ('sv' or 'difference').\n\nArgs:\n    ds_normalized (xr.Dataset): Dataset holding the embedded cluster\n        labels and the source Sv variable.\n    ml_result_name (str): Name of the embedded clustering result.\n    dataset_name (str): Base ML dataset name.\n    sv_data_var (str): Sv variable the statistics are taken from, or\n        'ml_features' for the flattened ML features. Defaults to 'Sv'.\n    compute_pairwise_diffs (bool): Add each channel's difference from the\n        second-lowest frequency as a feature. Defaults to True.\n\nReturns:\n    dict: JSON-serialisable table with keys 'schema', 'title',\n    'description', 'group_column', 'columns', 'features', 'rows' and\n    'source'.",
+            "line": 2067,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2067",
+            "repo": "BLayman-NOAA/AA-SI_ML",
+            "ref": "main",
+            "repo_relative_path": "src/aa_si_ml/ml.py",
+            "origin": "git",
+            "installed_version": "0.1.0",
+            "note": "uncommitted local edits, line may differ"
+          }
+        }
+      ],
+      "search": "cluster_statistics ml_clustering per-cluster statistics of the source sv as a json table: sample count and share, then mean, std, min and max per channel and per channel difference, for every cluster and the noise group. ds_normalized dataset from embed_clustering_results, holding the embedded cluster labels and the sv variable the statistics are taken from. table json table (schema aa-table/1) with one row per cluster and one for noise. dataset_name ml dataset the clustering belongs to. must match the dataset_name used by reshape_for_ml. ml_result_name embedded clustering result to summarise. must match the ml_result_name used by embed_clustering_results. sv_data_var sv variable the statistics are taken from, or 'ml_features' for the flattened ml features. compute_pairwise_diffs add each channel's difference from the second-lowest frequency as a feature. aa_si_ml.ml.cluster_statistics_table aa-si-ml",
+      "notes": "The table follows the aa-table/1 contract the client's statistics pane reads: columns tagged with feature and stat, a features list with kind 'sv' or 'difference', rows keyed by group with group_id -1 for noise. NumPy scalars become Python values and NaN becomes null, so the output checkpoints as JSON. Same numbers as the statistics panel of plot_clustering_report, without the figure.",
+      "used_by": []
+    },
+    {
       "op": "combine_masks",
       "description": "Combine two or more mask datasets into one final mask. Accepts a list of mask inputs to support inserting additional custom mask-producing steps into the chain without changing core framework code.",
       "category": "masking",
@@ -1982,7 +2120,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -3182,14 +3320,14 @@
             "qualname": "download_ncei_data",
             "signature": "download_ncei_data(results, output_dir, overwrite=False, companion_extensions=None, query_id=None, query_label=None)",
             "doc": "Download files returned by :func:`query_ncei_data`.\n\nEach invocation writes into a per-query subfolder under *output_dir*:\n``output_dir / (query_id or query_label or \"downloads\")``. This isolates\nthe files belonging to each query so that re-running with different\nparameters does not mix results, and re-running with the same parameters\nreuses the same folder (already-present files are skipped).\n\nConverts each result's ``CLOUD_PATH`` (an S3 URI) to a public HTTPS URL\nand streams the file to the per-query subfolder. ``.tar`` archives are\nautomatically extracted into a sibling subfolder and the archive is\nremoved.\n\nArgs:\n    results: Either the dict returned by :func:`query_ncei_data` (with\n        ``records`` and ``query_label`` keys) or a bare ``list[dict]`` of\n        records.\n    output_dir (str | Path): Local *base* directory. The actual files are\n        written into ``output_dir / <subfolder_name>/``.\n    overwrite (bool): If ``False`` (default), skip files that already\n        exist in the per-query subfolder.\n    companion_extensions (list[str] | None): Additional file extensions to\n        download alongside each result, e.g. ``[\".bot\", \".idx\"]``.\n    query_id (str | None): Explicit subfolder name. Overrides\n        ``query_label``. Sanitized for filesystem safety.\n    query_label (str | None): Fallback subfolder name when ``query_id`` is\n        not given and ``results`` is a bare list. Ignored when ``results``\n        is a dict (its embedded ``query_label`` is used).\n\nReturns:\n    dict: ``{\"downloaded_paths\": list[str], \"download_dir\": str}`` where\n    ``download_dir`` is the per-query subfolder. Paths are returned as\n    forward-slash strings so recipe checkpoints remain JSON-serializable\n    and portable across operating systems.\n\nExample::\n\n    result = query_ncei_data(dataset_name=\"DY2207_EK80\", max_files=3)\n    out = download_ncei_data(\n        result,\n        output_dir=\"./downloads\",\n        companion_extensions=[\".bot\", \".idx\"],\n    )\n    files = out[\"downloaded_paths\"]\n    folder = out[\"download_dir\"]",
-            "line": 999,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/data_retrieval.py#L999",
+            "line": 1308,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/data_retrieval.py#L1308",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/data_retrieval.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -3322,14 +3460,14 @@
             "qualname": "embed_clustering_results",
             "signature": "embed_clustering_results(ds_normalized, clustering_results, dataset_name, ml_result_name)",
             "doc": "Embed one or more clustering results into the normalized dataset.",
-            "line": 2618,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2618",
+            "line": 2910,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2910",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -4267,14 +4405,14 @@
             "qualname": "filter_normalized_by_cluster",
             "signature": "filter_normalized_by_cluster(ds_normalized, clustering_results, cluster_label=-1, dataset_name='ml_data_clean', normalization_name=None)",
             "doc": "Subset the normalised ML Dataset to samples belonging to a single cluster.\n\nSelects all samples whose label in *clustering_results* matches\n*cluster_label* and returns a filtered copy of the normalised dataset\ncontaining only those samples.  The full ``sample_index_to_grid_index``\nmapping is preserved so the filtered dataset can be passed directly to\n:func:`run_hdbscan` for a second-pass clustering.\n\nDesigned as a single-item primitive so it is compatible with a future\n``map_over`` fan-out over multiple cluster labels without any changes to\nthis function or its op spec.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalised ML dataset produced by\n        :func:`normalize_data`.\n    clustering_results (xr.Dataset): Clustering result from\n        :func:`run_hdbscan`.\n    cluster_label (int): Label of the cluster to isolate.  Use ``-1``\n        (default) to select noise points for re-clustering.  Any\n        non-negative integer selects that specific cluster for\n        sub-cluster refinement.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str): Normalization result suffix used to locate\n        the normalised feature variable\n        (``{dataset_name}_{normalization_name}``).\n\nReturns:\n    dict: ``{'ds_normalized_filtered': xr.Dataset}`` — a copy of\n    *ds_normalized* whose normalised feature variable is subsetted to\n    the requested cluster's samples.  The full\n    ``sample_index_to_grid_index`` mapping is retained.\n\nRaises:\n    ValueError: If *cluster_label* is not present in *clustering_results*\n        or if the normalization variable is not found in *ds_normalized*.",
-            "line": 3102,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3102",
+            "line": 3394,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3394",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -4405,14 +4543,14 @@
             "qualname": "filter_normalized_by_feature",
             "signature": "filter_normalized_by_feature(ds_normalized, feature_name, min_value=None, max_value=None, dataset_name='ml_data_clean', normalization_name=None)",
             "doc": "Subset the normalised ML Dataset to samples inside a raw-feature range.\n\nThresholds are applied to the pre-normalization values in *dataset_name*,\nso they are given in the feature's own units (dB for ``mean_Sv``) rather\nthan in transformed units.  The normalised feature variable is carried\nthrough untouched, which lets a second-pass :func:`run_hdbscan` reuse the\nfirst pass's normalization instead of re-fitting a scaler on the subset.\n\nChains after :func:`filter_normalized_by_cluster` to isolate, for example,\nthe high-Sv part of the first pass's noise points.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalised ML dataset from\n        :func:`normalize_data`, or a filtered copy of one.\n    feature_name (str): Feature to threshold on, matching a label in the\n        feature coordinate (e.g. ``'mean_Sv'``).\n    min_value (float or None): Keep samples at or above this value.\n        Defaults to None for no lower bound.\n    max_value (float or None): Keep samples at or below this value.\n        Defaults to None for no upper bound.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str): Normalization result suffix used to locate\n        the normalised feature variable\n        (``{dataset_name}_{normalization_name}``).\n\nReturns:\n    dict: ``{'ds_normalized_filtered': xr.Dataset}``, a copy of\n    *ds_normalized* subsetted to the samples inside the requested range.\n    The ``sample_index_to_grid_index`` mapping is subsetted with it.\n\nRaises:\n    ValueError: If both bounds are None, if *feature_name* or the\n        normalization variable is not found, or if no samples fall inside\n        the requested range.",
-            "line": 3190,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3190",
+            "line": 3482,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3482",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5381,14 +5519,14 @@
             "qualname": "merge_clustering_passes",
             "signature": "merge_clustering_passes(clustering_results_pass1, clustering_results_pass2, ml_result_name, dataset_name='ml_data_clean', normalization_name=None, retain_parent_labels=True)",
             "doc": "Merge pass-1 and pass-2 clustering results into a single result Dataset.\n\nCombines a first-pass clustering result with one or more second-pass\nresults obtained by re-clustering a subset of the pass-1 samples (e.g.\nnoise points or a specific cluster).  Child cluster labels are remapped\nto unique integers that do not collide with pass-1 labels.  Noise points\nproduced by the second pass override the parent label for those samples.\n\nDesigned as a fan-in primitive: *clustering_results_pass2* accepts either\na single Dataset or a list of Datasets today (``many: true`` in YAML) and\nwill accept a collected list from a future ``collect:`` step attribute once\nthe recipe executor supports native fan-in — with no changes to this\nfunction or its op spec.\n\nArgs:\n    clustering_results_pass1 (xr.Dataset): Clustering result from the\n        first pass of :func:`run_hdbscan`, covering all samples.\n    clustering_results_pass2 (xr.Dataset or list[xr.Dataset]): One or\n        more clustering result Datasets from second-pass\n        :func:`run_hdbscan` calls, each covering a subset of the pass-1\n        samples.  A single Dataset is wrapped into a list automatically.\n    ml_result_name (str): Name assigned to the merged result for\n        downstream tracking.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str or None): Normalization result suffix stored\n        in result metadata.  Defaults to None.\n    retain_parent_labels (bool): When True, stores the original pass-1\n        label for every sample as a ``parent_labels`` variable alongside\n        the merged labels, enabling parent→child lineage queries.\n        Defaults to True.\n\nReturns:\n    dict: ``{'clustering_results': xr.Dataset}`` — a merged Dataset with\n    the same sample scope as *clustering_results_pass1*.  Child cluster\n    labels are offset above the highest pass-1 label so they never\n    collide.  Includes a ``parent_labels`` variable when\n    *retain_parent_labels* is True.",
-            "line": 3297,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3297",
+            "line": 3589,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3589",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5670,6 +5808,18 @@
           "expected_coords": [],
           "provenance_role": null,
           "notes": null
+        },
+        {
+          "name": "normalizer",
+          "type": "object",
+          "description": "Fitted normalizer from an earlier normalize_ml_data step. When wired, nothing is fitted: its scaling is applied to this Dataset.",
+          "required": false,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": "For putting a second segment on the scale a model was fitted on, so assign_clusters_to_all_points can label it with predict_all. The feature coordinate must equal the one the normalizer was fitted on; the step fails naming both lists otherwise. method, shift_positive, feature_weights and per_group_methods are then ignored, since the normalizer carries them."
         }
       ],
       "outputs": [
@@ -5684,6 +5834,18 @@
           "expected_coords": [],
           "provenance_role": null,
           "notes": null
+        },
+        {
+          "name": "normalizer",
+          "type": "object",
+          "description": "The fitted scaling, for a later normalize_ml_data step to apply to another Dataset.",
+          "required": false,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": "Kept separate from ds_normalized so the Dataset checkpoints as Zarr while the normalizer falls back to pickle, which the tiered store writes to the user tier only. Methods without a reusable fit (umap, flatten_plus_umap, l2) make the step fail."
         }
       ],
       "params": [
@@ -5758,7 +5920,7 @@
         {
           "key": "default",
           "default": true,
-          "callable_path": "aa_si_ml.ml.normalize_data",
+          "callable_path": "aa_si_ml.ml.normalize_ml_data_step",
           "version": null,
           "tested_versions": [],
           "setup": null,
@@ -5778,28 +5940,32 @@
           "output_map": [
             {
               "spec": "ds_normalized",
-              "expression": "__return__"
+              "expression": "['ds_normalized']"
+            },
+            {
+              "spec": "normalizer",
+              "expression": "['normalizer']"
             }
           ],
           "source": {
-            "callable_path": "aa_si_ml.ml.normalize_data",
+            "callable_path": "aa_si_ml.ml.normalize_ml_data_step",
             "resolved": true,
             "module": "aa_si_ml.ml",
-            "qualname": "normalize_data",
-            "signature": "normalize_data(ds_ml_ready, method='standard', pre_l2_method='standard', shift_positive=False, per_feature=True, dataset_name='ml_data_clean', normalization_name=None, feature_weights=None, n_quantiles=100, flatten_weight=1, per_group_methods=None)",
-            "doc": "Normalize flattened ML data using a variety of scaling methods.\n\nSupports per-feature and global normalization, optional L2 row\nnormalization with a configurable pre-scaler, power-transform\nflattening, UMAP embedding, feature weighting, and per-group method\noverrides for auxiliary features.\n\nArgs:\n    ds_ml_ready (xr.Dataset): Dataset produced by reshape_data_for_ml.\n    method (str): Default normalization method applied to all Sv-derived\n        features (i.e. features not listed in *per_group_methods*). One\n        of 'standard', 'robust', 'minmax', 'flatten', 'power',\n        'quantile', 'umap', 'flatten_plus_umap', or 'l2'.\n        Defaults to 'standard'.\n    pre_l2_method (str): Scaler applied before L2 normalization when\n        method is 'l2'. Defaults to 'standard'.\n    shift_positive (bool): Shift all values to be positive after\n        normalization. Defaults to False.\n    per_feature (bool): When True, normalize each Sv-group feature\n        independently; when False, use a single global scaler pooled\n        across all Sv-group features.  Does not affect per-group\n        auxiliary columns, which are always normalized per-column.\n        Defaults to True.\n    dataset_name (str): Base dataset name. Defaults to 'ml_data_clean'.\n    normalization_name (str or None): Suffix for the stored result.\n        Defaults to the method name.\n    feature_weights (array-like or None): Per-feature multiplicative\n        weights applied after normalization. Length must match the total\n        number of features. Defaults to None.\n    n_quantiles (int): Number of quantiles for 'quantile' method.\n        Defaults to 100.\n    flatten_weight (float): Blending weight for 'flatten' method's CDF\n        transform. Defaults to 1.\n    per_group_methods (dict[str, str] or None): Mapping of feature label\n        to normalization method for auxiliary features that should be\n        normalized differently from the Sv group.  Features not listed\n        here fall back to *method*.  A warning is emitted for any\n        auxiliary feature (tracked via ``attrs['auxiliary_features']``)\n        that is not listed.  Example::\n\n            per_group_methods={\n                'depth': 'minmax',\n                'ping_time_seconds': 'minmax',\n            }\n\n        Defaults to None (all features use *method*).\n\nReturns:\n    xr.Dataset: Dataset with the normalized data added.",
-            "line": 1170,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L1170",
+            "qualname": "normalize_ml_data_step",
+            "signature": "normalize_ml_data_step(ds_ml_ready, normalizer=None, **kwargs)",
+            "doc": "Recipe step wrapping :func:`normalize_data` with a normalizer port.\n\nArgs:\n    ds_ml_ready (xr.Dataset): Dataset produced by reshape_data_for_ml.\n    normalizer (FittedNormalizer or None): Scaling from an earlier\n        normalize step to apply instead of fitting. Defaults to None.\n    **kwargs: Keyword arguments of :func:`normalize_data`.\n\nReturns:\n    dict: ``'ds_normalized'`` (the dataset) and ``'normalizer'`` (the\n    FittedNormalizer fitted here or passed in).",
+            "line": 1568,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L1568",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
-      "search": "normalize_ml_data ml_preprocessing normalize ml features in the flattened dataset. supports per-feature normalization methods via per_group_methods. ds_ml flattened ml dataset to normalize, from reshape_for_ml or add_auxiliary_features. auxiliary columns are on unrelated scales (metres, seconds, a coefficient of variation); per_group_methods handles them. ds_normalized dataset with normalized feature values method global normalization method (e.g. 'flatten', 'minmax', 'zscore') dataset_name ml dataset to normalize. must match the dataset_name used by reshape_for_ml. normalization_name name this normalized result is stored under. run_hdbscan, the ml plots, and filter_normalized_by_cluster take the same name to find it, so several normalizations of one dataset can coexist and be compared. shift_positive shift all values to be non-negative after normalization feature_weights per-feature weight multipliers applied before normalization per_group_methods map of feature name to individual normalization method override aa_si_ml.ml.normalize_data aa-si-ml",
+      "search": "normalize_ml_data ml_preprocessing normalize ml features in the flattened dataset. supports per-feature normalization methods via per_group_methods. ds_ml flattened ml dataset to normalize, from reshape_for_ml or add_auxiliary_features. auxiliary columns are on unrelated scales (metres, seconds, a coefficient of variation); per_group_methods handles them. normalizer fitted normalizer from an earlier normalize_ml_data step. when wired, nothing is fitted: its scaling is applied to this dataset. ds_normalized dataset with normalized feature values normalizer the fitted scaling, for a later normalize_ml_data step to apply to another dataset. method global normalization method (e.g. 'flatten', 'minmax', 'zscore') dataset_name ml dataset to normalize. must match the dataset_name used by reshape_for_ml. normalization_name name this normalized result is stored under. run_hdbscan, the ml plots, and filter_normalized_by_cluster take the same name to find it, so several normalizations of one dataset can coexist and be compared. shift_positive shift all values to be non-negative after normalization feature_weights per-feature weight multipliers applied before normalization per_group_methods map of feature name to individual normalization method override aa_si_ml.ml.normalize_ml_data_step aa-si-ml",
       "notes": null,
       "used_by": [
         {
@@ -6731,14 +6897,14 @@
             "qualname": "plot_clustering_report",
             "signature": "plot_clustering_report(ds_normalized, clustering_results=None, dataset_name=None, ml_result_name=None, clustering_model=None, ds_Sv=None, plot_window=None, x_axis_units='datetime', y_axis_units='meters', overlay_line_var=None, overlay_windows=None, overlay_window_keys=None, overlay_fit_style=None, overlay_bound_style=None, normalization_name=None, cluster_colors=None, y_to_x_aspect_ratio_override=None, cluster_stats_sv_data_var='Sv', cluster_stats_compute_pairwise_differences=True, cluster_stats_dpi=200, save_image=None, save_formats=None, save_dir=None, show=None, dpi=None, time_min=None, time_max=None)",
             "doc": "Render the full clustering report for one or more clustering results.\n\nSet ``cluster_stats_sv_data_var='ml_features'`` to plot statistics for\nthe flattened ML features used by clustering instead of gridded Sv channel\nvalues.\n\nThe cluster statistics figure carries a lot of small text, so it is\nrendered at ``cluster_stats_dpi`` rather than the report-wide ``dpi``\nused by the much larger echogram. Pass None to tie it back to ``dpi``.\n\n``time_min`` and ``time_max`` window the echogram by UTC timestamp,\ntaking precedence over the ping bounds in ``plot_window``. Pair them with\n``x_axis_units='datetime'`` to label the axis with clock times.\n\n``overlay_windows`` draws line files onto the echogram per window: each\nwindow's files under ``overlay_window_keys`` (the three dive-profile keys\nby default) are read onto that window's own pings, so every window is a\nseparate segment and overlapping windows each keep their own line.\n\n``overlay_fit_style`` and ``overlay_bound_style`` are matplotlib keyword\ndicts for the fitted profile and for its two confidence bounds. Each is\nmerged over the built-in style, so naming only ``color`` restyles the\ncolour and leaves the width and dash pattern alone.\n\n``clustering_results`` is optional. Every panel but the hierarchy plot\nreads the labels from ``ds_normalized``, where\n:func:`embed_clustering_results` stored them under ``ml_result_name``, so\na report can be drawn from that checkpointed dataset alone. Without a\nresult the hierarchy panel is skipped, and ``normalization_name`` supplies\nwhat ``cluster_stats_sv_data_var='ml_features'`` would otherwise read from\nthe result.",
-            "line": 2656,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2656",
+            "line": 2948,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2948",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -7285,7 +7451,7 @@
     },
     {
       "op": "query_ncei_data",
-      "description": "Query an NCEI acoustic data catalog for file listings within a time window. Returns a list of result records (file metadata), not the files themselves.",
+      "description": "Query an NCEI acoustic data catalog for file listings within a time window, checked against the archive's own file listing. Returns a list of result records (file metadata), not the files themselves.",
       "category": "data_retrieval",
       "spec_file": "registry/builtin/specs/query_ncei_data.yaml",
       "experimental": false,
@@ -7375,6 +7541,17 @@
           "constraints": {},
           "fingerprint_mode": "off",
           "notes": "Matching on the stamp means a bare D20160725-T205832.raw finds the archive's HB1603_L1- form and the reverse. Applied after the time window, client side, in catalogue order. A missing name raises rather than silently shrinking the result. Wire it from a planning step, for example ${plan_dives.raw_files}, to map a per-file chain over an analysis's files alone."
+        },
+        {
+          "name": "listing",
+          "type": "str",
+          "units": null,
+          "description": "Whether to check the catalog against the archive's file listing. \"auto\" uses the listing where they disagree and warns, \"catalog\" never reads the archive, \"bucket\" always uses the listing.",
+          "default": "auto",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": "The catalog can lack files the archive holds; in late 2026 it lost about 59% of its rows across all cruises. \"auto\" and \"bucket\" fail the step when the catalog or the archive cannot be read, since a short list would be checkpointed under the normal hash; \"catalog\" is the way through an archive outage. A listing knows only file names, so it needs a CRUISE_NAME or DATASET_NAME filter and no per-file filter such as FREQUENCY. Other queries come from the catalog alone: \"auto\" warns if the catalog is short for the cruise and \"bucket\" raises. A file taken from the listing has a minimal record, with no track geometry or other catalog attributes. Set only when overriding the default, since a param a recipe sets enters the step hash."
         }
       ],
       "implementations": [
@@ -7412,20 +7589,20 @@
             "resolved": true,
             "module": "aa_si_utils.data_retrieval",
             "qualname": "query_ncei_data",
-            "signature": "query_ncei_data(dataset_name=None, instrument_type=None, frequencies=None, calibration_state=None, collection_start=None, collection_end=None, file_time_start=None, file_time_end=None, max_files=None, bbox=None, center_point=None, radius_nm=None, filters=None, return_geometry=True, file_names=None)",
-            "doc": "Query the NOAA NCEI Water Column Sonar Data (WCSD) archive.\n\nSearches the WCSD ArcGIS MapServer for sonar data files matching the given\ncriteria.  All parameters are optional; omit a parameter to leave that\nfield unconstrained.\n\nArgs:\n    dataset_name (str | None): Dataset identifier, e.g. ``'DY2207_EK80'``.\n    instrument_type (str | None): Instrument name substring, e.g. ``'EK80'``.\n    frequencies (list[str] | None): Frequency strings to match,\n        e.g. ``['18WKHZ', '38WKHZ']``.  Results must contain *any* of the\n        listed frequencies (OR logic).\n    calibration_state (int | list[int] | None): Calibration state value(s),\n        e.g. ``4`` for \"Calibrated w/ calibration data\".\n    collection_start (str | None): Inclusive start date as ``'YYYY-MM-DD'``.\n        Filters the server-side ``COLLECTION_DATE`` field (day-level\n        granularity).\n    collection_end (str | None): Inclusive end date as ``'YYYY-MM-DD'``.\n    file_time_start (str | datetime | None): Inclusive start datetime for\n        fine-grained filtering.  Each file's recording span is inferred\n        from the filename timestamps (``D{YYYYMMDD}-T{HHMMSS}``): its own\n        stamp is the recording start and the next file's stamp (within\n        the same dataset) is its end.  Files whose span overlaps the\n        window are kept, so a file that starts before this bound but\n        records into the window is included.  A dataset's last file has\n        no inferred end and is kept only when its own stamp is inside the\n        window.  Accepts an ISO-format string or a ``datetime`` object.\n    file_time_end (str | datetime | None): Inclusive end datetime for\n        fine-grained filtering (same format as *file_time_start*).\n    max_files (int | None): Maximum number of results to return.  Applied\n        after all other filters; results are sorted chronologically by\n        filename timestamp.\n    bbox (tuple | None): Bounding box ``(west, south, east, north)`` in\n        WGS 84 decimal degrees. Applied server-side as an ArcGIS\n        envelope-intersection filter against each file's own track\n        polyline, so every file whose track passes through the box is\n        returned (including tracks that cross a corner between vertices).\n    center_point (tuple | None): ``(longitude, latitude)`` for a\n        radius-based spatial query.\n    radius_nm (float | None): Search radius in nautical miles (requires\n        *center_point*).\n    filters (dict | None): Additional field-level filters as\n        ``{FIELD_NAME: value}`` pairs.  Each becomes an exact-match clause\n        in the query.  Use this for any WCSD attribute not covered by the\n        explicit parameters above (e.g.\n        ``{'CRUISE_NAME': 'DY2207', 'PLATFORM_NAME': 'Oscar Dyson (DY)'}``).\n    return_geometry (bool): Whether each record should include its track\n        ``GEOMETRY``. Defaults to ``True`` (the geometry adds negligible\n        query time). Set ``False`` to omit it and keep the returned\n        records / checkpoints smaller. Geometry is always returned for\n        spatial queries (``bbox`` or ``center_point``) regardless of this\n        flag.\n    file_names (list[str] | None): Keep only these files, matched on the\n        ``D{date}-T{time}`` stamp in the name, so ``D20160725-T205832.raw``\n        finds the archive's ``HB1603_L1-D20160725-T205832.tar`` and the\n        reverse. Applied after the time window, client side, in catalogue\n        order. A name with no stamp, or one the query did not return,\n        raises rather than silently shrinking the result. ``None`` or\n        empty keeps everything.\n\nReturns:\n    dict: A dict with two keys:\n\n        - ``records`` (``list[dict]``): One entry per file. Each dict\n          contains all WCSD attribute fields plus a ``FILE_DATETIME``\n          (``datetime`` or ``None``) parsed from the filename. Unless\n          ``return_geometry=False``, each dict also carries a ``GEOMETRY``\n          key holding the file's track polyline as an ArcGIS\n          ``{\"paths\": [[[lon, lat], ...]]}`` dict.\n        - ``query_label`` (``str``): A readable, folder-safe slug derived\n          from the query parameters (see :func:`build_query_label`).\n          Useful for grouping downloads into per-query subfolders.\n\nExample::\n\n    result = query_ncei_data(\n        dataset_name=\"DY2207_EK80\",\n        frequencies=[\"38WKHZ\", \"120WKHZ\"],\n        collection_start=\"2022-06-04\",\n        collection_end=\"2022-06-04\",\n        file_time_start=\"2022-06-04T08:00:00\",\n        file_time_end=\"2022-06-04T10:00:00\",\n    )\n    records = result[\"records\"]\n    label = result[\"query_label\"]",
-            "line": 724,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/data_retrieval.py#L724",
+            "signature": "query_ncei_data(dataset_name=None, instrument_type=None, frequencies=None, calibration_state=None, collection_start=None, collection_end=None, file_time_start=None, file_time_end=None, max_files=None, bbox=None, center_point=None, radius_nm=None, filters=None, return_geometry=True, file_names=None, listing='auto')",
+            "doc": "Query the NOAA NCEI Water Column Sonar Data (WCSD) archive.\n\nSearches the WCSD ArcGIS MapServer for sonar data files matching the given\ncriteria.  All parameters are optional; omit a parameter to leave that\nfield unconstrained.\n\nArgs:\n    dataset_name (str | None): Dataset identifier, e.g. ``'DY2207_EK80'``.\n    instrument_type (str | None): Instrument name substring, e.g. ``'EK80'``.\n    frequencies (list[str] | None): Frequency strings to match,\n        e.g. ``['18WKHZ', '38WKHZ']``.  Results must contain *any* of the\n        listed frequencies (OR logic).\n    calibration_state (int | list[int] | None): Calibration state value(s),\n        e.g. ``4`` for \"Calibrated w/ calibration data\".\n    collection_start (str | None): Inclusive start date as ``'YYYY-MM-DD'``.\n        Filters the server-side ``COLLECTION_DATE`` field (day-level\n        granularity).\n    collection_end (str | None): Inclusive end date as ``'YYYY-MM-DD'``.\n    file_time_start (str | datetime | None): Inclusive start datetime for\n        fine-grained filtering.  Each file's recording span is inferred\n        from the filename timestamps (``D{YYYYMMDD}-T{HHMMSS}``): its own\n        stamp is the recording start and the next file's stamp (within\n        the same dataset) is its end.  Files whose span overlaps the\n        window are kept, so a file that starts before this bound but\n        records into the window is included.  A dataset's last file has\n        no inferred end and is kept only when its own stamp is inside the\n        window.  Accepts an ISO-format string or a ``datetime`` object.\n    file_time_end (str | datetime | None): Inclusive end datetime for\n        fine-grained filtering (same format as *file_time_start*).\n    max_files (int | None): Maximum number of results to return.  Applied\n        after all other filters; results are sorted chronologically by\n        filename timestamp.\n    bbox (tuple | None): Bounding box ``(west, south, east, north)`` in\n        WGS 84 decimal degrees. Applied server-side as an ArcGIS\n        envelope-intersection filter against each file's own track\n        polyline, so every file whose track passes through the box is\n        returned (including tracks that cross a corner between vertices).\n    center_point (tuple | None): ``(longitude, latitude)`` for a\n        radius-based spatial query.\n    radius_nm (float | None): Search radius in nautical miles (requires\n        *center_point*).\n    filters (dict | None): Additional field-level filters as\n        ``{FIELD_NAME: value}`` pairs.  Each becomes an exact-match clause\n        in the query.  Use this for any WCSD attribute not covered by the\n        explicit parameters above (e.g.\n        ``{'CRUISE_NAME': 'DY2207', 'PLATFORM_NAME': 'Oscar Dyson (DY)'}``).\n    return_geometry (bool): Whether each record should include its track\n        ``GEOMETRY``. Defaults to ``True`` (the geometry adds negligible\n        query time). Set ``False`` to omit it and keep the returned\n        records / checkpoints smaller. Geometry is always returned for\n        spatial queries (``bbox`` or ``center_point``) regardless of this\n        flag.\n    file_names (list[str] | None): Keep only these files, matched on the\n        ``D{date}-T{time}`` stamp in the name, so ``D20160725-T205832.raw``\n        finds the archive's ``HB1603_L1-D20160725-T205832.tar`` and the\n        reverse. Applied after the time window, client side, in catalogue\n        order. A name with no stamp, or one the query did not return,\n        raises rather than silently shrinking the result. ``None`` or\n        empty keeps everything.\n    listing (str): How to use the archive's own file listing, since the\n        catalogue can lack files the archive holds. ``\"auto\"`` compares\n        them and, where they disagree, takes that S3 folder's files from\n        the listing with a printed warning. ``\"catalog\"`` never reads the\n        archive. ``\"bucket\"`` always takes raw files from the listing. In\n        ``\"auto\"`` and ``\"bucket\"``, a catalogue or archive that cannot be\n        read raises ``RuntimeError`` rather than return a list that may be\n        short, which a checkpoint would keep under the step's normal hash;\n        ``\"catalog\"`` is the way through an archive outage. A listing\n        knows only file names, so it needs\n        a query naming a cruise or dataset (``dataset_name``, or\n        ``CRUISE_NAME`` or ``DATASET_NAME`` in *filters*) and no per-file\n        filter (*frequencies*, *calibration_state*, a spatial filter,\n        explicit collection dates, or other *filters* keys). A query with\n        one comes from the catalogue alone: ``\"auto\"`` warns if the\n        catalogue is short for the cruise and ``\"bucket\"`` raises. A file\n        taken from the listing has a minimal record, with no ``GEOMETRY``\n        or other catalogue attributes.\n\nReturns:\n    dict: A dict with two keys:\n\n        - ``records`` (``list[dict]``): One entry per file. Each dict\n          contains all WCSD attribute fields plus a ``FILE_DATETIME``\n          (``datetime`` or ``None``) parsed from the filename. Unless\n          ``return_geometry=False``, each dict also carries a ``GEOMETRY``\n          key holding the file's track polyline as an ArcGIS\n          ``{\"paths\": [[[lon, lat], ...]]}`` dict.\n        - ``query_label`` (``str``): A readable, folder-safe slug derived\n          from the query parameters (see :func:`build_query_label`).\n          Useful for grouping downloads into per-query subfolders.\n\nExample::\n\n    result = query_ncei_data(\n        dataset_name=\"DY2207_EK80\",\n        frequencies=[\"38WKHZ\", \"120WKHZ\"],\n        collection_start=\"2022-06-04\",\n        collection_end=\"2022-06-04\",\n        file_time_start=\"2022-06-04T08:00:00\",\n        file_time_end=\"2022-06-04T10:00:00\",\n    )\n    records = result[\"records\"]\n    label = result[\"query_label\"]",
+            "line": 968,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/data_retrieval.py#L968",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/data_retrieval.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
-      "search": "query_ncei_data data_retrieval query an ncei acoustic data catalog for file listings within a time window. returns a list of result records (file metadata), not the files themselves. ncei_results list of ncei file metadata records (dicts) matching the query query_label readable, folder-safe slug derived from the query parameters. intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir. raw_urls public https url of each record's .raw object, in record order. map over it for steps that read files in place, such as read_raw_file_config with max_scan_bytes. file_time_start iso 8601 start of window, e.g. '2016-07-25t20:58' file_time_end iso 8601 end of window filters key-value filters applied to ncei metadata (e.g. cruise_name) file_names keep only these files, matched on the d{date}-t{time} stamp in the name. a name the query did not return is an error. empty keeps everything. aa_si_utils.data_retrieval.query_ncei_data aa-si-utils",
+      "search": "query_ncei_data data_retrieval query an ncei acoustic data catalog for file listings within a time window, checked against the archive's own file listing. returns a list of result records (file metadata), not the files themselves. ncei_results list of ncei file metadata records (dicts) matching the query query_label readable, folder-safe slug derived from the query parameters. intended to be passed to download_ncei_data so that each query writes into its own subfolder under output_dir. raw_urls public https url of each record's .raw object, in record order. map over it for steps that read files in place, such as read_raw_file_config with max_scan_bytes. file_time_start iso 8601 start of window, e.g. '2016-07-25t20:58' file_time_end iso 8601 end of window filters key-value filters applied to ncei metadata (e.g. cruise_name) file_names keep only these files, matched on the d{date}-t{time} stamp in the name. a name the query did not return is an error. empty keeps everything. listing whether to check the catalog against the archive's file listing. \"auto\" uses the listing where they disagree and warns, \"catalog\" never reads the archive, \"bucket\" always uses the listing. aa_si_utils.data_retrieval.query_ncei_data aa-si-utils",
       "notes": null,
       "used_by": [
         {
@@ -8386,14 +8563,14 @@
             "qualname": "remove_noise",
             "signature": "remove_noise(ds_Sv, ping_num=5, range_sample_num=10, background_noise_max=None, SNR_threshold='3.0dB', assign_to_sv=True)",
             "doc": "Remove background noise from Sv data using echopype.\n\nWraps :func:`echopype.clean.remove_background_noise` and optionally\ncopies the corrected result into the ``Sv`` variable.\n\nArgs:\n    ds_Sv (xr.Dataset): Dataset with ``Sv`` data.\n    ping_num (int): Number of pings for noise estimation.\n        Defaults to 5.\n    range_sample_num (int): Number of range samples for noise\n        estimation. Defaults to 10.\n    background_noise_max (str or None): Upper limit on the estimated\n        noise level, e.g. ``'-125dB'``. ``None`` leaves the estimate\n        unbounded. Defaults to None.\n    SNR_threshold (str): Signal-to-noise ratio below which corrected\n        samples are masked out. Defaults to '3.0dB'.\n    assign_to_sv (bool): Copy ``Sv_corrected`` into ``Sv``.\n        Defaults to True.\n\nReturns:\n    xr.Dataset: Dataset with background noise removed.",
-            "line": 1878,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L1878",
+            "line": 2157,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2157",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -8544,7 +8721,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -8821,14 +8998,14 @@
             "qualname": "run_hdbscan",
             "signature": "run_hdbscan(ds_normalized, dataset_name, normalization_name, ml_result_name, min_cluster_size=None, min_cluster_size_fraction=None, min_samples=2, sample_size=1000000, cluster_selection_method='leaf', use_hdbscan=True, epsilon=0.004, find_background_cluster=False, soft_membership_threshold=None)",
             "doc": "Run clustering as a pure-compute step and return result metadata.",
-            "line": 2254,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2254",
+            "line": 2533,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2533",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],

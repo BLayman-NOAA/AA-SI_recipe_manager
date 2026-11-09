@@ -91,6 +91,36 @@ class UnknownStepError(ValueError):
     """Raised when a run names a step id the recipe does not have."""
 
 
+class ArtifactNotFound(LookupError):
+    """Raised when a step has no saved artifact of an output at its current hash.
+
+    Attributes:
+        step_id: The step.
+        output: The output asked for.
+    """
+
+    def __init__(self, message: str, step_id: str, output: str) -> None:
+        self.step_id = step_id
+        self.output = output
+        super().__init__(message)
+
+
+class ArtifactTooLarge(ValueError):
+    """Raised when an artifact is larger than the caller's limit.
+
+    Attributes:
+        step_id: The step.
+        output: The output asked for.
+        limit: The limit in bytes.
+    """
+
+    def __init__(self, message: str, step_id: str, output: str, limit: int) -> None:
+        self.step_id = step_id
+        self.output = output
+        self.limit = limit
+        super().__init__(message)
+
+
 class UpstreamNotCachedError(ValueError):
     """Raised by run only when a step besides the targets would compute.
 

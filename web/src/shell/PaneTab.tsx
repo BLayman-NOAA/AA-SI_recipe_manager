@@ -21,8 +21,11 @@ function TabMenu({ id, menu, onDone }: { id: string; menu: OpenMenu; onDone: () 
     const onPointer = (event: globalThis.MouseEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) onDone();
     };
+    // The document sees the key before the window's shortcuts, so Escape closes only the menu.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDone();
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onDone();
     };
     menu.doc.addEventListener('mousedown', onPointer);
     menu.doc.addEventListener('keydown', onKey);

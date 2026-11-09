@@ -503,6 +503,14 @@ class StepArtifactsResponse(BaseModel):
     echogram: EchogramBlock
 
 
+class ArtifactJsonResponse(BaseModel):
+    step_id: str
+    step_hash: str
+    output: str
+    tier: str
+    data: Any
+
+
 class LogEntry(BaseModel):
     seq: int
     time: float

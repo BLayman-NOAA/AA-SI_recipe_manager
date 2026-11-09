@@ -77,7 +77,7 @@
     file_time_end = None  # TODO: set this value  # str
 
     # query_ncei: Query an NCEI acoustic data catalog for file listings within a
-    # time window.
+    # time window, checked against the archive's own file listing.
     _result = query_ncei_data(
         file_time_start=file_time_start,
         file_time_end=file_time_end,

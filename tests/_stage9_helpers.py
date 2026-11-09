@@ -189,6 +189,36 @@ def sv_dataset(x: int = 0, pings: int = 12) -> Any:
     )
 
 
+def sv_with_lines(ds: Any) -> Any:
+    """The Sv dataset with two depth lines along ping_time.
+
+    Written as add_line_overlay writes them: ``line_a`` is referenced to the
+    surface and has one gap; ``line_b`` to the transducer. The dataset is also
+    marked as echopype marks MVBS, so a header for it says its cells are
+    labelled by their start.
+    """
+    import numpy as np
+
+    pings = ds.sizes["ping_time"]
+    line_a = 10 + 0.5 * np.arange(pings, dtype="float64")
+    line_a[3] = np.nan
+    line_b = 5 + 0.25 * np.arange(pings, dtype="float64")
+    lined = ds.assign(
+        line_a=(
+            "ping_time",
+            line_a,
+            {"long_name": "line a", "units": "m", "vertical_reference": "surface"},
+        ),
+        line_b=(
+            "ping_time",
+            line_b,
+            {"long_name": "line b", "units": "m", "vertical_reference": "transducer"},
+        ),
+    )
+    lined.attrs = {**ds.attrs, "processing_function": "commongrid.compute_MVBS"}
+    return lined
+
+
 def count_items(values: list) -> int:
     """Count the collected values."""
     return len(values)
@@ -200,6 +230,74 @@ def console_note(x: int) -> int:
 
     console_print(f"console-note x={x}")
     return x
+
+
+def stats_table() -> dict[str, Any]:
+    """A small cluster statistics table in the ``aa-table/1`` shape.
+
+    Laid out as ``aa_si_ml.ml.cluster_statistics_table`` writes it: two Sv
+    features and one difference, two clusters and noise, and one null
+    statistic (noise's difference std).
+    """
+    features = [
+        {"name": "18kHz", "label": "18 kHz", "kind": "sv"},
+        {"name": "38kHz", "label": "38 kHz", "kind": "sv"},
+        {"name": "38kHz-18kHz_diff", "label": "38 kHz - 18 kHz", "kind": "difference"},
+    ]
+    stats = ("mean", "std", "min", "max")
+    columns = [
+        {"name": "group", "type": "str"},
+        {"name": "group_id", "type": "int"},
+        {"name": "n_samples", "type": "int"},
+        {"name": "percentage", "type": "float", "unit": "%"},
+    ]
+    for feature in features:
+        for stat in stats:
+            columns.append({
+                "name": f"{feature['name']}_{stat}", "type": "float", "unit": "dB",
+                "feature": feature["name"], "stat": stat,
+            })
+    values = {
+        "Cluster 0": (0, 1234, 41.2, [
+            (-71.3, 4.1, -82.0, -60.5), (-68.9, 3.6, -79.4, -58.2),
+            (2.4, 1.8, -3.1, 7.9),
+        ]),
+        "Cluster 1": (1, 1461, 48.8, [
+            (-80.2, 5.3, -95.1, -66.7), (-77.5, 4.8, -90.3, -64.0),
+            (2.7, 2.2, -4.0, 9.6),
+        ]),
+        "Noise": (-1, 300, 10.0, [
+            (-88.4, 6.9, -110.2, -61.3), (-86.1, 7.4, -108.8, -59.9),
+            (2.3, None, -6.5, 11.2),
+        ]),
+    }
+    rows = []
+    for group, (group_id, n, percentage, cells) in values.items():
+        row = {
+            "group": group, "group_id": group_id, "n_samples": n,
+            "percentage": percentage,
+        }
+        for feature, cell in zip(features, cells):
+            for stat, value in zip(stats, cell):
+                row[f"{feature['name']}_{stat}"] = value
+        rows.append(row)
+    return {
+        "schema": "aa-table/1",
+        "title": "Cluster statistics",
+        "description": "Sv statistics per cluster",
+        "group_column": "group",
+        "columns": columns,
+        "features": features,
+        "rows": rows,
+        "source": {
+            "ml_result_name": "hdbscan",
+            "dataset_name": "fixture",
+            "sv_data_var": "Sv",
+            "n_total_samples": 2995,
+            "n_clusters": 2,
+            "n_noise": 300,
+        },
+    }
 
 
 # A cancel token a step can set mid run, and a call counter, for the cancel

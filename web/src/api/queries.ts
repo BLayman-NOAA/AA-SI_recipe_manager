@@ -13,10 +13,12 @@ import type { Operation } from '../editing/operations';
 import { noticeReloaded, useEditingStore } from '../editing/store';
 import { surveyHitsLost, surveyTierLost } from '../editing/survey';
 import { useSessionStore } from '../state/session';
+import { closeTab, openTab } from '../state/tabs';
 import { ApiError, apiGet, apiSend, isApiError, isClientError, isNetworkError } from './client';
 import { previewQuery, RUN_ALL, toStartRequest, type RunIntent } from '../runs/intent';
 import { isActiveRun } from './models';
 import type {
+  ArtifactJson,
   EditResponse,
   FileText,
   Health,
@@ -57,11 +59,15 @@ export const queryKeys = {
   run: (rid: string) => ['run', rid] as const,
   runLog: (rid: string, step: string | null) => ['run', rid, 'log', step] as const,
   artifacts: (sid: string, step: string) => ['session', sid, 'artifacts', step] as const,
+  /** Every json output read of a session; a run rewrites them, an edit does not. */
+  allArtifactJson: (sid: string) => ['session', sid, 'json'] as const,
+  artifactJson: (sid: string, step: string, output: string, hash: string) =>
+    ['session', sid, 'json', step, output, hash] as const,
 };
 
 /** How long a preview is fresh; runs and edits refetch it sooner. */
 const PREVIEW_STALE_MS = 10000;
-const ACTIVE_RUNS_POLL_MS = 5000;
+const ACTIVE_RUNS_POLL_MS = 3000;
 
 const OPEN_SESSION_KEY = ['open-session'] as const;
 
@@ -192,29 +198,55 @@ export function useStepArtifacts(sid: string | null, step: string | null, enable
   });
 }
 
-/** Open a recipe as a session and make it the current one. */
+/** The URL of one json output of a step. */
+export function artifactJsonUrl(sid: string, step: string, output: string): string {
+  return `${sessionPath(sid)}/steps/${encodeURIComponent(step)}/artifacts/${encodeURIComponent(output)}/json`;
+}
+
+/**
+ * One json output of a step at the hash its artifact list gave, for the
+ * statistics pane; fetched only while enabled. The hash is in the key, so an
+ * answer or an error belongs to that hash only, and an edit's refetch of the
+ * artifact lists leaves it alone; a finished run refetches it.
+ */
+export function useArtifactJson(
+  sid: string | null,
+  step: string | null,
+  output: string | null,
+  hash: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.artifactJson(sid ?? '', step ?? '', output ?? '', hash ?? ''),
+    queryFn: () => apiGet<ArtifactJson>(artifactJsonUrl(sid ?? '', step ?? '', output ?? '')),
+    enabled: sid !== null && step !== null && output !== null && hash !== null && enabled,
+    staleTime: 0,
+    // A 4xx (missing, too large, not json) is final; anything else is retried once, as elsewhere in the app.
+    retry: (failures, error) => !(error instanceof ApiError && error.status < 500) && failures < 1,
+  });
+}
+
+/** Open a recipe as a session in a tab of its own, in front. */
 export function useOpenSession() {
   const client = useQueryClient();
-  const setSid = useSessionStore((state) => state.setSid);
   return useMutation({
     mutationKey: OPEN_SESSION_KEY,
     mutationFn: (path: string) => apiSend<SessionDocument>('POST', '/api/sessions', { path }),
     onSuccess: (session) => {
       client.setQueryData(queryKeys.session(session.id), session);
       client.invalidateQueries({ queryKey: queryKeys.sessions });
-      setSid(session.id);
+      openTab(session.id);
     },
   });
 }
 
-/** Delete a session on the server; clears it when it is the current one. */
+/** Delete a session on the server and close its tab. */
 export function useCloseSession() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (sid: string) => apiSend<null>('DELETE', sessionPath(sid)),
     onSuccess: (_data, sid) => {
-      const store = useSessionStore.getState();
-      if (store.sid === sid) store.setSid(null);
+      closeTab(sid);
       client.removeQueries({ queryKey: queryKeys.session(sid) });
       client.invalidateQueries({ queryKey: queryKeys.sessions });
     },

@@ -1,9 +1,19 @@
 /**
  * The echogram pane's layer rules, kept pure so the store and the tests share them.
  *
- * A layer is one output variable of one step, drawn as one EchogramGL source.
+ * A layer is one output variable of one step: a value drawn as one EchogramGL
+ * source, or a line drawn over the values, read from each instance's mount.
  */
-import { describeMiss, type Layer, type Resolution, type ViewSettings } from 'aa-si-echogram-gl';
+import {
+  describeMiss,
+  lineVariables,
+  type Choice,
+  type Layer,
+  type LineData,
+  type LineSpec,
+  type Resolution,
+  type ViewSettings,
+} from 'aa-si-echogram-gl';
 import type { Preview, StepPreview } from '../api/models';
 import { partlyHeld } from '../runs/badges';
 import type { RunState, StepRunState } from '../runs/reducer';
@@ -11,17 +21,30 @@ import type { RunState, StepRunState } from '../runs/reducer';
 /** Where the client server mounts EchogramGL's routes, relative to the page. */
 export const ECHOGRAM_ROOT = '/echogram/';
 
+/** A value variable drawn as a panel source, or a line drawn over the values. */
+export type LayerKind = 'value' | 'line';
+
 export interface EchogramLayer {
-  /** The panel's source id: `step/output/var`. */
+  /** The panel's source id: `sid/step/output/var`. A line's specs add `#<instance>`. */
   id: string;
+  /** The session the layer belongs to: its tab, its artifacts route, its preview. */
+  sid: string;
+  kind: LayerKind;
   step: string;
   output: string;
+  /** The variable drawn; for a line, the line's name. */
   variable: string | null;
-  /** What the layer is called: the step, and the variable when it is not the default. */
+  /**
+   * What the layer is called in its session: the step, and the variable when
+   * it is not the default. The list adds the session's title (rowLabel).
+   */
   label: string;
   /** The step's hash when the layer was added or last refreshed. */
   stepHash: string;
-  /** What the server resolved and mounted; null until fetched after a reload. */
+  /**
+   * What the server resolved and mounted; null until fetched after a reload.
+   * For a line, the output's default value, whose instances' mounts serve the line.
+   */
   resolution: Resolution | null;
   state: 'loading' | 'shown' | 'error' | 'refreshing';
   error: string | null;
@@ -36,6 +59,20 @@ export interface EchogramLayer {
    * refresh found nothing at, with the last finished run then.
    */
   missed?: { stepHash: string; after: string | null };
+  /** A line's colour, `#rrggbb`. */
+  color?: string;
+  /** A line's width in device pixels. */
+  width?: number;
+  /** Whether a line is drawn. */
+  visible?: boolean;
+}
+
+/** A line row. Its look is set whenever one is added or restored. */
+export type LineLayer = EchogramLayer & { kind: 'line'; color: string; width: number; visible: boolean };
+
+/** Whether a row is a line. */
+export function isLineLayer(layer: EchogramLayer): layer is LineLayer {
+  return layer.kind === 'line';
 }
 
 /**
@@ -52,12 +89,15 @@ export type Freshness =
   | { state: 'current' | 'available' | 'not_computed' | 'not_saved' | 'unknown' }
   | { state: 'partial'; held: number; of: number | null };
 
-/** What is kept of a layer across a page reload. */
-export type SavedLayer = Pick<EchogramLayer, 'step' | 'output' | 'variable' | 'label' | 'stepHash' | 'addedAt'>;
+/** What is kept of a layer across a page reload. A row without a `kind` is a value. */
+export type SavedLayer = Pick<
+  EchogramLayer,
+  'sid' | 'step' | 'output' | 'variable' | 'label' | 'stepHash' | 'addedAt' | 'color' | 'width' | 'visible'
+> & { kind?: 'line' };
 
-/** A layer's source id. Layers belong to one session, so the session is not part of it. */
-export function layerId(step: string, output: string, variable: string | null): string {
-  return variable ? `${step}/${output}/${variable}` : `${step}/${output}`;
+/** A layer's source id. Layers belong to their session, so it leads the id. */
+export function layerId(sid: string, step: string, output: string, variable: string | null): string {
+  return variable ? `${sid}/${step}/${output}/${variable}` : `${sid}/${step}/${output}`;
 }
 
 /** The generated type leaves the resolution open; this is the one place it becomes EchogramGL's. */
@@ -137,18 +177,32 @@ function sameFreshness(a: Freshness, b: Freshness): boolean {
   return a.held === b.held && a.of === b.of;
 }
 
+/** What one session's freshness is read from: its run all preview and its last finished run. */
+export interface SessionTracking {
+  preview: Preview | null;
+  computed: ComputedSteps | null;
+}
+
+/** Each open session's tracking, by sid. */
+export type TrackingBySession = Record<string, SessionTracking>;
+
 /**
- * The layers with their freshness set from a preview and the last run; a
- * layer whose freshness is unchanged is the same object.
+ * The layers with their freshness set from their own session's preview and
+ * last run; a layer whose freshness is unchanged is the same object.
  */
-export function withFreshness(
-  layers: EchogramLayer[],
-  preview: Preview | null,
-  computed: ComputedSteps | null,
-): EchogramLayer[] {
-  const steps = new Map((preview?.steps ?? []).map((step) => [step.step_id, step]));
+export function withFreshness(layers: EchogramLayer[], bySession: TrackingBySession): EchogramLayer[] {
+  const steps = new Map<string, Map<string, StepPreview>>();
+  const stepsOf = (sid: string) => {
+    let found = steps.get(sid);
+    if (!found) {
+      found = new Map((bySession[sid]?.preview?.steps ?? []).map((step) => [step.step_id, step]));
+      steps.set(sid, found);
+    }
+    return found;
+  };
   return layers.map((layer) => {
-    const freshness = layerFreshness(layer, steps.get(layer.step), computed);
+    const computed = bySession[layer.sid]?.computed ?? null;
+    const freshness = layerFreshness(layer, stepsOf(layer.sid).get(layer.step), computed);
     return sameFreshness(freshness, layer.freshness) ? layer : { ...layer, freshness };
   });
 }
@@ -230,17 +284,71 @@ export function settingsFor(saved: ViewSettings, current: ViewSettings | undefin
   };
 }
 
-/** A layer as it is saved across a reload. */
+/** A layer as it is saved across a reload; a line keeps its kind and style. */
 export function savedLayer(layer: EchogramLayer): SavedLayer {
-  const { step, output, variable, label, stepHash, addedAt } = layer;
-  return { step, output, variable, label, stepHash, addedAt };
+  const { sid, step, output, variable, label, stepHash, addedAt } = layer;
+  const saved: SavedLayer = { sid, step, output, variable, label, stepHash, addedAt };
+  if (layer.kind !== 'line') return saved;
+  return { ...saved, kind: 'line', color: layer.color, width: layer.width, visible: layer.visible };
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+/** A saved line's style, with the default for each part missing or malformed. */
+function savedStyle(entry: Record<string, unknown>, name: string): Pick<SavedLayer, 'color' | 'width' | 'visible'> {
+  const { color, width, visible } = entry;
+  return {
+    color: typeof color === 'string' && HEX_COLOR.test(color) ? color : defaultLineColor(name),
+    width: typeof width === 'number' && width > 0 && Number.isFinite(width) ? width : LINE_WIDTH,
+    visible: typeof visible === 'boolean' ? visible : true,
+  };
+}
+
+/**
+ * Saved rows read from storage, tolerating missing fields.
+ *
+ * A row needs a `step`, an `output` and a `sid` (its own, else
+ * `fallbackSid`); `variable` defaults to null, `label` to the step,
+ * `stepHash` to '' and `addedAt` to 0. A row is a value unless its `kind`
+ * says line; a line needs its variable, and its style defaults as when it
+ * was added. Anything else is dropped.
+ *
+ * Args:
+ *   value: The stored `layers` value.
+ *   fallbackSid: The session of rows saved before rows carried one.
+ */
+export function parseSavedLayers(value: unknown, fallbackSid: string | null = null): SavedLayer[] {
+  if (!Array.isArray(value)) return [];
+  const text = (field: unknown) => (typeof field === 'string' && field ? field : null);
+  return value.flatMap((row: unknown): SavedLayer[] => {
+    if (!row || typeof row !== 'object') return [];
+    const entry = row as Record<string, unknown>;
+    const sid = text(entry.sid) ?? fallbackSid;
+    const step = text(entry.step);
+    const output = text(entry.output);
+    if (!sid || !step || !output) return [];
+    const line = entry.kind === 'line';
+    const variable = text(entry.variable);
+    if (line && !variable) return [];
+    const saved: SavedLayer = {
+      sid,
+      step,
+      output,
+      variable,
+      label: text(entry.label) ?? step,
+      stepHash: typeof entry.stepHash === 'string' ? entry.stepHash : '',
+      addedAt: typeof entry.addedAt === 'number' ? entry.addedAt : 0,
+    };
+    return [line ? { ...saved, kind: 'line', ...savedStyle(entry, variable!) } : saved];
+  });
 }
 
 /** A saved layer, back as a row waiting to be drawn. */
 export function restoredLayer(saved: SavedLayer): EchogramLayer {
   return {
     ...saved,
-    id: layerId(saved.step, saved.output, saved.variable),
+    kind: saved.kind ?? 'value',
+    id: layerId(saved.sid, saved.step, saved.output, saved.variable),
     resolution: null,
     state: 'loading',
     error: null,
@@ -249,20 +357,51 @@ export function restoredLayer(saved: SavedLayer): EchogramLayer {
   };
 }
 
+/** The HTTP status an EchogramGL error carries, when its build records one. */
+function statusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
 /**
- * Whether an error from the panel says a mount is unknown, as after a server restart.
+ * Whether an error says a mount is unknown, as after a server restart.
  *
  * A chunk read names its URL and status (`410 Gone for .../mount/<m>/...`). A
- * header read says only the server's error code: `gone`, or `not_found` from
- * a server older than EchogramGL's 410 for an unknown describe mount (the
- * panel reads no other JSON, so `not_found` there is always a header). A
- * header that is not JSON names its URL with the status.
+ * JSON read says the server's error code, `gone`. With `header`, the error is
+ * from a describe header read, where `not_found` is a server older than
+ * EchogramGL's 410 for an unknown mount, and a header that is not JSON names
+ * its URL with the status. Elsewhere `not_found` is something the mount lacks,
+ * such as a line route's variable.
  */
-export function isGone(error: unknown): boolean {
+export function isGone(error: unknown, { header = false } = {}): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  if (message === 'gone' || message === 'not_found') return true;
+  if (message === 'gone' || statusOf(error) === 410) return true;
   if (/\b410\b/.test(message) || message.includes('unknown mount')) return true;
+  if (!header) return false;
+  if (message === 'not_found') return true;
   return /\b404\b/.test(message) && message.includes('/echogram/api/describe/');
+}
+
+/** Said on a line row while no value row is left to draw it over. */
+export const NEEDS_VALUE = 'Lines are drawn over a value layer; add one.';
+
+/**
+ * Why a line row's line could not be read, for an error that is not a
+ * forgotten mount: what is missing for a 404, else the server's message when
+ * the error carries one, else the error itself or, for a 400, what it means.
+ *
+ * Args:
+ *   step: The row's step.
+ *   name: The line's name.
+ *   error: What fetching one instance's line threw.
+ */
+export function lineErrorText(step: string, name: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'not_found') return `${step} has no line '${name}' in one of its files.`;
+  const detail = (error as { detail?: unknown } | null)?.detail;
+  if (typeof detail === 'string' && detail) return `${step}, line '${name}': ${detail}`;
+  if (message === 'bad_request') return `${step}'s '${name}' is not a line in one of its files.`;
+  return message;
 }
 
 /**
@@ -287,35 +426,81 @@ function suffix(layer: EchogramLayer): string {
   return parts.join(':');
 }
 
+/** A key of a session and a name in it, since two sessions may share a step id. */
+function inSession(layer: EchogramLayer, name: string): string {
+  return `${layer.sid}\n${name}`;
+}
+
 /**
- * Each layer's label, unique among the layers: the step alone for its first
- * output's default variable when it is the step's only layer, else the step
- * with what tells the layer apart (`embed_results:gridded_results`,
+ * Each layer's label, unique among its session's layers: the step alone for
+ * its first output's default variable when it is the step's only layer, else
+ * the step with what tells the layer apart (`embed_results:gridded_results`,
  * `embed_results:Sv`). A layer not yet resolved keeps the label it has.
  */
 export function withLabels(layers: EchogramLayer[]): EchogramLayer[] {
   const perStep = new Map<string, number>();
-  for (const layer of layers) perStep.set(layer.step, (perStep.get(layer.step) ?? 0) + 1);
+  for (const layer of layers) {
+    const key = inSession(layer, layer.step);
+    perStep.set(key, (perStep.get(key) ?? 0) + 1);
+  }
   const named = layers.map((layer) => {
     if (!layer.resolution) return layer.label;
     let tail = suffix(layer);
-    if (!tail && perStep.get(layer.step)! > 1) tail = layer.variable ?? layer.output;
+    if (!tail && perStep.get(inSession(layer, layer.step))! > 1) tail = layer.variable ?? layer.output;
     return tail ? `${layer.step}:${tail}` : layer.step;
   });
   const seen = new Map<string, number>();
-  for (const label of named) seen.set(label, (seen.get(label) ?? 0) + 1);
+  layers.forEach((layer, index) => {
+    const key = inSession(layer, named[index]);
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  });
   return layers.map((layer, index) => {
     const full = [layer.step, layer.output, layer.variable].filter(Boolean).join(':');
-    const label = seen.get(named[index])! > 1 ? full : named[index];
+    const label = seen.get(inSession(layer, named[index]))! > 1 ? full : named[index];
     return label === layer.label ? layer : { ...layer, label };
   });
 }
 
-/** "3 datasets, 1 empty", "a pyramid": what a resolution draws, for a layer row. */
-export function foundText(resolution: Resolution | null): string {
+/** Whether the layers come from more than one session. */
+export function spansSessions(layers: Pick<EchogramLayer, 'sid'>[]): boolean {
+  return new Set(layers.map((layer) => layer.sid)).size > 1;
+}
+
+/**
+ * A row's text: `<title>: <label>` when the layers span sessions or the row's
+ * session is not the tab in front, else the label. A session without a known
+ * title is named by its sid.
+ */
+export function rowLabel(
+  layer: EchogramLayer,
+  titles: Record<string, string>,
+  spanning: boolean,
+  front: string | null,
+): string {
+  return spanning || layer.sid !== front ? `${titles[layer.sid] ?? layer.sid}: ${layer.label}` : layer.label;
+}
+
+/**
+ * The rows as the list shows them: the front session's first, then each
+ * other session's in the order its first row was added, each in stored order.
+ */
+export function orderedRows(layers: EchogramLayer[], front: string | null): EchogramLayer[] {
+  const groups = new Map<string, EchogramLayer[]>();
+  if (front !== null) groups.set(front, []);
+  for (const layer of layers) {
+    const group = groups.get(layer.sid);
+    if (group) group.push(layer);
+    else groups.set(layer.sid, [layer]);
+  }
+  return [...groups.values()].flat();
+}
+
+/** "3 datasets, 1 empty", "a pyramid", "3 lines": what a resolution draws, for a layer row. */
+export function foundText(resolution: Resolution | null, kind: LayerKind = 'value'): string {
   if (!resolution) return '';
-  if (resolution.kind === 'pyramid') return 'pyramid';
   const count = resolution.instances?.length ?? 0;
+  if (kind === 'line') return `${count} line${count === 1 ? '' : 's'}`;
+  if (resolution.kind === 'pyramid') return 'pyramid';
   const empty = resolution.empty ? `, ${resolution.empty} empty` : '';
   return `${count} dataset${count === 1 ? '' : 's'}${empty}`;
 }
@@ -324,4 +509,97 @@ export function foundText(resolution: Resolution | null): string {
 export function tierLetters(resolution: Resolution | null): string {
   const tiers = new Set((resolution?.instances ?? []).map((instance) => instance.tier).filter(Boolean));
   return [...tiers].map((tier) => (tier === 'survey' ? 'S' : 'U')).join('');
+}
+
+/** A line's width when it is added, in device pixels. */
+export const LINE_WIDTH = 2;
+
+/** The widths a line row offers. */
+export const LINE_WIDTHS = [1, 2, 3, 4];
+
+/** What a line row changes of how its line is drawn. */
+export type LineStyle = Partial<Pick<EchogramLayer, 'color' | 'width' | 'visible'>>;
+
+/** A dive's fitted depth, and the band around it. */
+export const LINE_COLORS = { fit: '#e040fb', band: '#00e5ff' };
+
+/** The theme's accent, for a line named neither, when the page's own is not known. */
+export const LINE_ACCENT = '#7986cb';
+
+/**
+ * A line's colour when it is added: `*fit*` magenta, `*u99*` and `*l99*`
+ * cyan, else the accent, when it is a `#rrggbb` colour.
+ */
+export function defaultLineColor(name: string, accent: string = LINE_ACCENT): string {
+  const lower = name.toLowerCase();
+  if (lower.includes('fit')) return LINE_COLORS.fit;
+  if (lower.includes('u99') || lower.includes('l99')) return LINE_COLORS.band;
+  return HEX_COLOR.test(accent) ? accent : LINE_ACCENT;
+}
+
+/** A line a resolution offers beside its value. */
+export interface OfferedLine {
+  output: string;
+  name: string;
+  verticalRef: 'depth' | 'range';
+  units: string | null;
+  longName: string | null;
+}
+
+/** The lines a resolution's outputs offer beside their values. */
+export function linesOf(resolution: Resolution): OfferedLine[] {
+  return lineVariables(resolution).map(({ output, variable }) => ({
+    output,
+    name: variable.name,
+    verticalRef: variable.verticalReference ?? 'depth',
+    units: variable.units ?? null,
+    longName: variable.longName ?? null,
+  }));
+}
+
+/** Whether a choice is a line, drawn over a value rather than as a source. */
+export function isLineChoice(choice: Choice): boolean {
+  return choice.kind === 'line';
+}
+
+/** What a mapped instance is called after its line's label: the last part of its item. */
+function itemName(item: unknown): string {
+  const text = String(item);
+  return text.split('/').pop() || text;
+}
+
+/**
+ * A line layer's specs for the panel, one per instance whose line was
+ * fetched, ids `<layer id>#<instance>`. With several instances each label
+ * names its item, so the readout says which piece it reads.
+ *
+ * Args:
+ *   layer: The line layer.
+ *   fetched: Its lines by instance id.
+ *   label: What the row is called.
+ */
+export function lineSpecsFor(
+  layer: LineLayer,
+  fetched: Record<string, LineData> | undefined,
+  label: string,
+): LineSpec[] {
+  const instances = layer.resolution?.instances ?? [];
+  return instances.flatMap((instance) => {
+    const line = fetched?.[instance.id];
+    if (!line) return [];
+    const named = instances.length > 1 && instance.item != null ? `${label} (${itemName(instance.item)})` : label;
+    return [
+      {
+        id: `${layer.id}#${instance.id}`,
+        label: named,
+        pingTime: line.pingTime,
+        value: line.value,
+        verticalRef: line.verticalRef,
+        color: layer.color,
+        width: layer.width,
+        opacity: 1,
+        visible: layer.visible,
+      },
+    ];
+  });
 }

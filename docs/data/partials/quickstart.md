@@ -120,7 +120,7 @@
     from aa_si_visualization.echogram import plot_sv_echogram
 
     # query_ncei: Query an NCEI acoustic data catalog for file listings within a
-    # time window.
+    # time window, checked against the archive's own file listing.
     _result = query_ncei_data(
         file_time_start='2016-07-25T20:58:00',
         file_time_end='2016-07-25T21:45:00',

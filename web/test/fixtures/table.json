@@ -1,0 +1,190 @@
+{
+ "schema": "aa-table/1",
+ "title": "Cluster statistics",
+ "description": "Sv statistics per cluster",
+ "group_column": "group",
+ "columns": [
+  {
+   "name": "group",
+   "type": "str"
+  },
+  {
+   "name": "group_id",
+   "type": "int"
+  },
+  {
+   "name": "n_samples",
+   "type": "int"
+  },
+  {
+   "name": "percentage",
+   "type": "float",
+   "unit": "%"
+  },
+  {
+   "name": "18kHz_mean",
+   "type": "float",
+   "unit": "dB",
+   "feature": "18kHz",
+   "stat": "mean"
+  },
+  {
+   "name": "18kHz_std",
+   "type": "float",
+   "unit": "dB",
+   "feature": "18kHz",
+   "stat": "std"
+  },
+  {
+   "name": "18kHz_min",
+   "type": "float",
+   "unit": "dB",
+   "feature": "18kHz",
+   "stat": "min"
+  },
+  {
+   "name": "18kHz_max",
+   "type": "float",
+   "unit": "dB",
+   "feature": "18kHz",
+   "stat": "max"
+  },
+  {
+   "name": "38kHz_mean",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz",
+   "stat": "mean"
+  },
+  {
+   "name": "38kHz_std",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz",
+   "stat": "std"
+  },
+  {
+   "name": "38kHz_min",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz",
+   "stat": "min"
+  },
+  {
+   "name": "38kHz_max",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz",
+   "stat": "max"
+  },
+  {
+   "name": "38kHz-18kHz_diff_mean",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz-18kHz_diff",
+   "stat": "mean"
+  },
+  {
+   "name": "38kHz-18kHz_diff_std",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz-18kHz_diff",
+   "stat": "std"
+  },
+  {
+   "name": "38kHz-18kHz_diff_min",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz-18kHz_diff",
+   "stat": "min"
+  },
+  {
+   "name": "38kHz-18kHz_diff_max",
+   "type": "float",
+   "unit": "dB",
+   "feature": "38kHz-18kHz_diff",
+   "stat": "max"
+  }
+ ],
+ "features": [
+  {
+   "name": "18kHz",
+   "label": "18 kHz",
+   "kind": "sv"
+  },
+  {
+   "name": "38kHz",
+   "label": "38 kHz",
+   "kind": "sv"
+  },
+  {
+   "name": "38kHz-18kHz_diff",
+   "label": "38 kHz - 18 kHz",
+   "kind": "difference"
+  }
+ ],
+ "rows": [
+  {
+   "group": "Cluster 0",
+   "group_id": 0,
+   "n_samples": 1234,
+   "percentage": 41.2,
+   "18kHz_mean": -71.3,
+   "18kHz_std": 4.1,
+   "18kHz_min": -82.0,
+   "18kHz_max": -60.5,
+   "38kHz_mean": -68.9,
+   "38kHz_std": 3.6,
+   "38kHz_min": -79.4,
+   "38kHz_max": -58.2,
+   "38kHz-18kHz_diff_mean": 2.4,
+   "38kHz-18kHz_diff_std": 1.8,
+   "38kHz-18kHz_diff_min": -3.1,
+   "38kHz-18kHz_diff_max": 7.9
+  },
+  {
+   "group": "Cluster 1",
+   "group_id": 1,
+   "n_samples": 1461,
+   "percentage": 48.8,
+   "18kHz_mean": -80.2,
+   "18kHz_std": 5.3,
+   "18kHz_min": -95.1,
+   "18kHz_max": -66.7,
+   "38kHz_mean": -77.5,
+   "38kHz_std": 4.8,
+   "38kHz_min": -90.3,
+   "38kHz_max": -64.0,
+   "38kHz-18kHz_diff_mean": 2.7,
+   "38kHz-18kHz_diff_std": 2.2,
+   "38kHz-18kHz_diff_min": -4.0,
+   "38kHz-18kHz_diff_max": 9.6
+  },
+  {
+   "group": "Noise",
+   "group_id": -1,
+   "n_samples": 300,
+   "percentage": 10.0,
+   "18kHz_mean": -88.4,
+   "18kHz_std": 6.9,
+   "18kHz_min": -110.2,
+   "18kHz_max": -61.3,
+   "38kHz_mean": -86.1,
+   "38kHz_std": 7.4,
+   "38kHz_min": -108.8,
+   "38kHz_max": -59.9,
+   "38kHz-18kHz_diff_mean": 2.3,
+   "38kHz-18kHz_diff_std": null,
+   "38kHz-18kHz_diff_min": -6.5,
+   "38kHz-18kHz_diff_max": 11.2
+  }
+ ],
+ "source": {
+  "ml_result_name": "hdbscan",
+  "dataset_name": "fixture",
+  "sv_data_var": "Sv",
+  "n_total_samples": 2995,
+  "n_clusters": 2,
+  "n_noise": 300
+ }
+}

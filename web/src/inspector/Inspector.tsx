@@ -30,6 +30,7 @@ import { useCurrentPreview } from '../runs/usePreviewIntent';
 import { showPane } from '../shell/dock';
 import { useSessionStore } from '../state/session';
 import { useViewStore } from '../state/view';
+import { showTable } from '../stats/show';
 import { plural, secondsText, valueText } from '../text';
 import { includerFile } from './bindings';
 import { ByFile } from './ByFile';
@@ -109,6 +110,17 @@ function SavedFiles({ step }: { step: StepNode }) {
               <td>{artifact.tier}</td>
               <td className="rc-mono rc-artifact-url" title={artifact.url}>
                 {artifact.url}
+              </td>
+              <td>
+                {artifact.format === 'json' && artifact.instance_index === null && (
+                  <button
+                    type="button"
+                    className="rc-button rc-small"
+                    onClick={() => showTable(step.id, artifact.output)}
+                  >
+                    Show table
+                  </button>
+                )}
               </td>
             </tr>
           ))}

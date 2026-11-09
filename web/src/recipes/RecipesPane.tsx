@@ -1,8 +1,10 @@
 import { useState, type MouseEvent } from 'react';
 import type { RecipeEntry } from '../api/models';
-import { useCloseSession, useRecipes, useSessions } from '../api/queries';
+import { useRecipes, useSessions } from '../api/queries';
+import { useDeleteSession } from '../shell/commands';
 import { useSessionStore } from '../state/session';
 import { readStored, writeStored } from '../state/storage';
+import { openTab } from '../state/tabs';
 import { Prose } from '../Prose';
 import { firstSentence, plainText } from '../text';
 import { formatTime, groupRecipes, sessionFolder, shortPath } from './recipeList';
@@ -83,26 +85,20 @@ function RecipeRow({ recipe, pending, onOpen }: RecipeRowProps) {
 function RecentSessions({ recipes }: { recipes: RecipeEntry[] }) {
   const sessions = useSessions();
   const sid = useSessionStore((state) => state.sid);
-  const setSid = useSessionStore((state) => state.setSid);
-  const deleteSession = useCloseSession();
+  const { remove: deleteSession, error } = useDeleteSession();
   const list = sessions.data ?? [];
-
-  const confirmDelete = (id: string, title: string) => {
-    if (window.confirm(`Delete the session "${title}"? Its saved inputs and settings are removed.`)) {
-      deleteSession.mutate(id);
-    }
-  };
 
   return (
     <section>
       <h3>Recent sessions</h3>
       {list.length === 0 && <div className="rc-empty">No sessions yet.</div>}
+      {error && <div className="rc-field-error">{error}</div>}
       <ul className="rc-list">
         {list.map((session) => (
           <li
             key={session.id}
             className={`rc-row${session.id === sid ? ' rc-selected' : ''}`}
-            onDoubleClick={() => setSid(session.id)}
+            onDoubleClick={() => openTab(session.id)}
             title={session.origin}
           >
             <div className="rc-row-main">
@@ -116,7 +112,7 @@ function RecentSessions({ recipes }: { recipes: RecipeEntry[] }) {
                 type="button"
                 className="rc-button rc-small"
                 disabled={session.id === sid}
-                onClick={() => setSid(session.id)}
+                onClick={() => openTab(session.id)}
                 onDoubleClick={stop}
               >
                 Reopen
@@ -125,7 +121,7 @@ function RecentSessions({ recipes }: { recipes: RecipeEntry[] }) {
                 type="button"
                 className="rc-button rc-small"
                 title="Delete the session and its saved state"
-                onClick={() => confirmDelete(session.id, session.title)}
+                onClick={() => deleteSession(session.id, session.title)}
                 onDoubleClick={stop}
               >
                 Delete session

@@ -20,6 +20,7 @@ from aa_recipe_manager import api, config
 from aa_recipe_manager.events import CancelFileWatcher, CancelToken, JsonlEventSink
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
+    ArtifactNotFound,
     DependencyConflictError,
     DependencyVersionError,
     ImplementationNotFoundError,
@@ -2654,6 +2655,20 @@ def explain_cache_cmd(
     default=False,
     help="Emit the answer as JSON instead of text.",
 )
+@click.option(
+    "--read",
+    "read_output",
+    default=None,
+    metavar="OUTPUT",
+    help="Print the json artifact of OUTPUT instead of listing.",
+)
+@click.option(
+    "--max-bytes",
+    default=1 << 20,
+    show_default=True,
+    type=int,
+    help="Largest artifact printed, with --read.",
+)
 def artifacts_cmd(
     recipe: str,
     step_id: str,
@@ -2663,6 +2678,8 @@ def artifacts_cmd(
     inputs: tuple[str, ...],
     base_dir: str | None,
     as_json: bool,
+    read_output: str | None,
+    max_bytes: int,
 ) -> None:
     """List where STEP_ID's checkpointed outputs are, without running RECIPE.
 
@@ -2670,7 +2687,8 @@ def artifacts_cmd(
     tier; for a mapped or swept step, each instance's entry. Each line gives
     the output, its format, the tier it was found in, the instance and its
     item for a mapped step, and the location. Finding nothing is not an
-    error. Nothing is written.
+    error. Nothing is written. With --read, prints the parsed json artifact
+    of one output of a plain step instead, and finding nothing is an error.
     """
     parsed_inputs: dict[str, str] = {}
     for item in inputs:
@@ -2683,13 +2701,37 @@ def artifacts_cmd(
         run_config = config.load_run_config(config_path, recipe_path=recipe)
     except (FileNotFoundError, ValueError) as exc:
         _fail(str(exc))
-    if run_config.source is not None and not as_json:
+    if run_config.source is not None and not as_json and read_output is None:
         click.echo(f"Using run config: {run_config.source}")
     user_cache_dir = (
         user_cache_dir or run_config.user_cache_dir or f"./{DEFAULT_OUTPUT_ROOT}"
     )
     survey_cache_dir = survey_cache_dir or run_config.survey_cache_dir
     merged_inputs = {**run_config.inputs, **parsed_inputs}
+
+    if read_output is not None:
+        try:
+            read = api.artifact_json(
+                recipe,
+                step_id,
+                read_output,
+                inputs=merged_inputs or None,
+                user_cache_dir=user_cache_dir,
+                survey_cache_dir=survey_cache_dir,
+                storage_options=run_config.storage_options,
+                base_dir=base_dir,
+                max_bytes=max_bytes,
+            )
+        except (ArtifactNotFound, ValueError) as exc:
+            _fail(str(exc))
+        except Exception as exc:
+            _handle_recipe_errors(exc)
+            return
+        if as_json:
+            click.echo(json.dumps(read.to_dict(), indent=2, default=str))
+        else:
+            click.echo(json.dumps(read.data, indent=2))
+        return
 
     try:
         found = api.step_artifacts(

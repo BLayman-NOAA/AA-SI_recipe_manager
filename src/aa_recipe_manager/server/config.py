@@ -22,6 +22,7 @@ FILE_KEYS = {
     "run_config",
     "docs_url",
     "cancel_grace_seconds",
+    "max_artifact_json_bytes",
 }
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 VITE_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
@@ -42,6 +43,8 @@ class ServerConfig:
         dev: Accept the Vite dev server origin and reload on code changes.
         cancel_grace_seconds: How long a cancelled run may take to stop by
             itself before the server kills its process tree.
+        max_artifact_json_bytes: Largest json artifact the artifact json route
+            reads; ``server.yaml`` only, no ``serve`` flag.
     """
 
     host: str = "127.0.0.1"
@@ -53,6 +56,7 @@ class ServerConfig:
     docs_url: str = "https://blayman-noaa.github.io/AA-SI_recipe_manager/"
     dev: bool = False
     cancel_grace_seconds: float = 30.0
+    max_artifact_json_bytes: int = 1 << 20
 
     def __post_init__(self) -> None:
         # Op links are built as docs_url + "ops/...", so it ends in a slash.
@@ -159,6 +163,11 @@ def _read_file(path: Path) -> dict[str, Any]:
                 isinstance(value, (int, float))
                 and not isinstance(value, bool)
                 and value >= 0
+            )
+        elif key == "max_artifact_json_bytes":
+            expected = "a whole number of bytes, one or more"
+            valid = (
+                isinstance(value, int) and not isinstance(value, bool) and value >= 1
             )
         else:
             expected = "a string"

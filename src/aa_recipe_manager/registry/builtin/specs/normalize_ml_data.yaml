@@ -12,10 +12,36 @@ inputs:
       add_auxiliary_features. Auxiliary columns are on unrelated scales
       (metres, seconds, a coefficient of variation); per_group_methods
       handles them.
+  normalizer:
+    type: object
+    description: >
+      Fitted normalizer from an earlier normalize_ml_data step. When wired,
+      nothing is fitted: its scaling is applied to this Dataset.
+    notes: >
+      For putting a second segment on the scale a model was fitted on, so
+      assign_clusters_to_all_points can label it with predict_all. The
+      feature coordinate must equal the one the normalizer was fitted on;
+      the step fails naming both lists otherwise. method, shift_positive,
+      feature_weights and per_group_methods are then ignored, since the
+      normalizer carries them.
+    required: false
+    default: null
 outputs:
   ds_normalized:
     type: Dataset
     description: Dataset with normalized feature values
+  normalizer:
+    type: object
+    description: >
+      The fitted scaling, for a later normalize_ml_data step to apply to
+      another Dataset.
+    notes: >
+      Kept separate from ds_normalized so the Dataset checkpoints as Zarr
+      while the normalizer falls back to pickle, which the tiered store
+      writes to the user tier only. Methods without a reusable fit (umap,
+      flatten_plus_umap, l2) make the step fail.
+    required: false
+    default: null
 params:
   method:
     type: str
@@ -51,7 +77,7 @@ params:
     default: {}
 implementations:
   - key: default
-    callable_path: aa_si_ml.ml.normalize_data
+    callable_path: aa_si_ml.ml.normalize_ml_data_step
     default: true
     dependency:
       name: aa-si-ml
@@ -61,4 +87,5 @@ implementations:
     param_map:
       ds_ml: ds_ml_ready
     output_map:
-      ds_normalized: __return__
+      ds_normalized: "['ds_normalized']"
+      normalizer: "['normalizer']"

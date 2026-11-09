@@ -1,6 +1,7 @@
 /** The preview the client shows: what Ctrl+Enter would do for the current selection. */
 import { useEffect, useState } from 'react';
-import { useCurrentSession, usePreview } from '../api/queries';
+import { useCurrentSession, usePreview, useSession } from '../api/queries';
+import { useSessionStore } from '../state/session';
 import { useView, type Selection } from '../state/view';
 import { previewIntent, RUN_ALL, type RunIntent } from './intent';
 
@@ -40,8 +41,13 @@ export function useCurrentPreview() {
   return usePreview(session?.id ?? null, intent, Boolean(session?.validation.valid));
 }
 
+/** The run all preview of any session; off until its document says the recipe is valid. */
+export function useRunAllPreviewFor(sid: string | null) {
+  const session = useSession(sid).data;
+  return usePreview(sid, RUN_ALL, Boolean(session?.validation.valid));
+}
+
 /** The run all preview of the open session, whatever is selected; off while the recipe is invalid. */
 export function useRunAllPreview() {
-  const session = useCurrentSession().data;
-  return usePreview(session?.id ?? null, RUN_ALL, Boolean(session?.validation.valid));
+  return useRunAllPreviewFor(useSessionStore((state) => state.sid));
 }

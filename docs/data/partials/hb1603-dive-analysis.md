@@ -224,7 +224,7 @@
     from aa_si_utils.utils import rechunk_dataset
     from aa_si_ml.ml import reshape_data_for_ml
     from aa_si_ml.ml import add_auxiliary_features
-    from aa_si_ml.ml import normalize_data
+    from aa_si_ml.ml import normalize_ml_data_step
     from aa_si_ml.ml import run_hdbscan
     from aa_si_ml.ml import assign_clusters_by_prediction
     from aa_si_ml.ml import embed_clustering_results
@@ -247,7 +247,7 @@
     # HB1603 level 0, NCEI catalogue and calibration mapping
 
     # query_ncei: Query an NCEI acoustic data catalog for file listings within a
-    # time window.
+    # time window, checked against the archive's own file listing.
     _result = query_ncei_data(
         file_time_start='2016-06-01T00:00:00',
         file_time_end='2016-09-01T00:00:00',
@@ -546,13 +546,15 @@
     )
 
     # normalize_ml: Normalize ML features in the flattened Dataset.
-    normalize_ml_ds_normalized = normalize_data(
+    _result = normalize_ml_data_step(
         ds_ml_ready=add_aux_features_ds_ml_ready,
         method='flatten',
         dataset_name='ml_dataset',
         normalization_name='normalized_flatten_mean_centered',
         shift_positive=False,
     )
+    normalize_ml_ds_normalized = _result['ds_normalized']
+    normalizer = _result['normalizer']
 
     # run_hdbscan: Run HDBSCAN unsupervised clustering on normalized feature data.
     _result = run_hdbscan(

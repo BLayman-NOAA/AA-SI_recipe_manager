@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
-"""Step artifacts: where a step's checkpointed outputs are, per tier."""
+"""Step artifacts: where a step's checkpointed outputs are, per tier, and
+reading a json one back."""
 
 from __future__ import annotations
 
@@ -12,7 +13,12 @@ import pytest
 
 import _stage9_helpers as H
 from aa_recipe_manager import api
-from aa_recipe_manager.exceptions import UnknownStepError
+from aa_recipe_manager.artifacts import ArtifactInfo, read_json_artifact
+from aa_recipe_manager.exceptions import (
+    ArtifactNotFound,
+    ArtifactTooLarge,
+    UnknownStepError,
+)
 from aa_recipe_manager.executor.checkpoint import entry_dir_parts
 
 FIXTURES = Path(__file__).parent / "fixtures" / "client_recipes"
@@ -228,3 +234,106 @@ def test_sv_dataset_is_zarr(tmp_path):
     instances = resolved["instances"]
     assert [i["index"] for i in instances] == [0, 1, 2]
     assert all(a["end"] < b["start"] for a, b in zip(instances, instances[1:]))
+
+
+TABLE = FIXTURES / "table.yaml"
+
+
+def test_reads_the_saved_table(tmp_path):
+    cache = tmp_path / "cache"
+    _run(TABLE, cache, tmp_path)
+
+    read = api.artifact_json(TABLE, "stats", "table", user_cache_dir=cache)
+    assert read.data == H.stats_table()
+    assert (read.step_id, read.output, read.tier) == ("stats", "table", "user")
+    assert read.step_hash == api.step_hashes(TABLE)["stats"].step_hash
+    [record] = api.step_artifacts(TABLE, "stats", user_cache_dir=cache).artifacts
+    assert read.url == record.url
+
+
+def test_nothing_saved_is_not_found(tmp_path):
+    with pytest.raises(ArtifactNotFound, match="stats has no saved 'table'") as caught:
+        api.artifact_json(TABLE, "stats", "table", user_cache_dir=tmp_path / "c")
+    assert (caught.value.step_id, caught.value.output) == ("stats", "table")
+    with pytest.raises(ArtifactNotFound, match=r"\(no cache configured\)"):
+        api.artifact_json(TABLE, "stats", "table")
+
+
+def test_unknown_output_is_not_found(tmp_path):
+    cache = tmp_path / "cache"
+    _run(TABLE, cache, tmp_path)
+    with pytest.raises(ArtifactNotFound, match="stats has no output 'nope'"):
+        api.artifact_json(TABLE, "stats", "nope", user_cache_dir=cache)
+
+
+def test_unknown_step_is_refused_for_json(tmp_path):
+    with pytest.raises(UnknownStepError, match="stat"):
+        api.artifact_json(TABLE, "stat", "table", user_cache_dir=tmp_path)
+
+
+def test_too_large(tmp_path):
+    cache = tmp_path / "cache"
+    _run(TABLE, cache, tmp_path)
+    with pytest.raises(ArtifactTooLarge, match="larger than 16 bytes") as caught:
+        api.artifact_json(TABLE, "stats", "table", user_cache_dir=cache, max_bytes=16)
+    assert caught.value.limit == 16
+    assert caught.value.step_id == "stats"
+    assert isinstance(caught.value, ValueError)
+
+
+def test_remote_tier_reads_through_fsspec(tmp_path):
+    _run(TABLE, USER_ROOT, tmp_path)
+    read = api.artifact_json(TABLE, "stats", "table", user_cache_dir=USER_ROOT)
+    assert read.url.startswith("memory://")
+    assert read.data["schema"] == "aa-table/1"
+
+
+def test_survey_tier_is_read_when_the_user_tier_is_empty(tmp_path):
+    _run(
+        TABLE, OTHER_USER_ROOT, tmp_path,
+        survey_cache_dir=SURVEY_ROOT, cache_write_tier="survey",
+    )
+    read = api.artifact_json(
+        TABLE, "stats", "table", user_cache_dir="memory://artifacts/empty",
+        survey_cache_dir=SURVEY_ROOT,
+    )
+    assert read.tier == "survey"
+    assert read.url.startswith(SURVEY_ROOT)
+
+
+def test_mapped_step_is_refused_for_json(tmp_path):
+    cache = tmp_path / "cache"
+    _run_mapped(cache, tmp_path)
+    with pytest.raises(ValueError, match="proc2 is mapped"):
+        api.artifact_json(
+            FIXTURES / "mapped.yaml", "proc2", "out", user_cache_dir=cache
+        )
+
+
+def test_non_json_output_is_refused():
+    record = ArtifactInfo(
+        output="ds_Sv", url="memory://nowhere", format="zarr", tier="user",
+        step_hash="0" * 64,
+    )
+    with pytest.raises(ValueError, match="sv.ds_Sv is saved as zarr, not json"):
+        read_json_artifact(record, step_id="sv")
+
+
+def test_missing_file_is_not_found():
+    record = ArtifactInfo(
+        output="table", url="memory://artifacts/gone.json", format="json",
+        tier="user", step_hash="0" * 64,
+    )
+    with pytest.raises(ArtifactNotFound, match="gone"):
+        read_json_artifact(record, step_id="stats")
+
+
+def test_json_to_dict_is_json_ready(tmp_path):
+    import json
+
+    cache = tmp_path / "cache"
+    _run(TABLE, cache, tmp_path)
+    read = api.artifact_json(TABLE, "stats", "table", user_cache_dir=cache)
+    data = json.loads(json.dumps(read.to_dict()))
+    assert set(data) == {"step_id", "step_hash", "output", "tier", "url", "data"}
+    assert data["data"] == read.data

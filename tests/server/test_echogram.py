@@ -148,6 +148,82 @@ def test_open_reads_only_under_session_folders(client, mapped, tmp_path):
     assert response.json()["kind"] == "dataset"
 
 
+@pytest.fixture
+def lined(client, tmp_path):
+    sid = saved(client, tmp_path, "sv_line.yaml")
+    response = artifacts(client, sid, step="lines")
+    assert response.status_code == 200, response.text
+    return sid, response.json()["echogram"]["resolution"]
+
+
+def test_lines_are_offered_beside_the_value(client, lined):
+    sid, resolution = lined
+    assert resolution["var"] == "Sv"
+    [output] = resolution["outputs"]
+    variables = {v["name"]: v for v in output["variables"]}
+    assert variables["Sv"]["kind"] == "mvbs"
+    assert variables["line_a"]["kind"] == "line"
+    assert variables["line_a"]["verticalReference"] == "depth"
+    assert variables["line_b"]["verticalReference"] == "range"
+
+    response = artifacts(client, sid, step="lines", var="line_a")
+    assert response.status_code == 400
+    assert response.json()["error"] == "CatalogError"
+    assert "is a line" in response.json()["message"]
+
+
+def test_a_line_is_served_per_mount(client, lined):
+    _, resolution = lined
+    [instance] = resolution["instances"]
+    mount = instance["mount"]
+
+    response = client.get(f"/echogram/api/line/{mount}/line_a")
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    line = response.json()
+    assert line["name"] == "line_a" and line["longName"] == "line a"
+    assert line["units"] == "m" and line["verticalReference"] == "depth"
+    assert len(line["pingTime"]) == len(line["value"]) == 12
+    assert line["value"][3] is None and line["value"][0] == 10.0
+
+    line_b = client.get(f"/echogram/api/line/{mount}/line_b")
+    assert line_b.status_code == 200
+    assert line_b.json()["verticalReference"] == "range"
+
+    response = client.get(f"/echogram/api/line/{mount}/nothing")
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+    response = client.get(f"/echogram/api/line/{mount}/Sv")
+    assert response.status_code == 400
+    assert response.json()["error"] == "bad_request"
+
+    response = client.get("/echogram/api/line/0123456789abcdef/line_a")
+    assert response.status_code == 410
+    assert response.json()["error"] == "gone"
+    assert "resolve the step again" in response.json()["message"]
+
+
+def test_the_line_route_checks_the_host(config):
+    client = TestClient(create_app(config), base_url="http://evil:8765")
+    response = client.get("/echogram/api/line/x/y")
+    assert response.status_code == 403
+    assert response.json()["error"] == "forbidden_host"
+
+
+def test_a_binned_header_says_so(client, tmp_path, lined):
+    _, resolution = lined
+    mount = resolution["instances"][0]["mount"]
+    header = client.get(f"/echogram/api/describe/{mount}").json()
+    assert header["binLabel"] == "start"
+
+    sid = saved(client, tmp_path, "sv.yaml")
+    plain = artifacts(client, sid).json()["echogram"]["resolution"]
+    mount = plain["instances"][0]["mount"]
+    header = client.get(f"/echogram/api/describe/{mount}").json()
+    assert header["binLabel"] == "centre"
+
+
 def test_a_plain_step_is_one_instance(client, tmp_path):
     sid = saved(client, tmp_path, "sv.yaml")
     found = artifacts(client, sid).json()

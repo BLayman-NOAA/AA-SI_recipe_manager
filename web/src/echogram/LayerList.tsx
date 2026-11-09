@@ -1,13 +1,32 @@
 import { describeFound } from 'aa-si-echogram-gl';
-import { foundText, tierLetters, type EchogramLayer, type Freshness } from './layers';
+import {
+  foundText,
+  isLineLayer,
+  LINE_WIDTHS,
+  orderedRows,
+  rowLabel,
+  spansSessions,
+  tierLetters,
+  type EchogramLayer,
+  type Freshness,
+  type LineLayer,
+  type LineStyle,
+} from './layers';
 
 interface LayerListProps {
   layers: EchogramLayer[];
+  /** The session in front; its rows come first, and only they offer a run. */
+  front: string | null;
+  /** Session titles by sid, which name the rows when they span sessions. */
+  titles: Record<string, string>;
+  /** Select a row's step, bringing its session's tab to the front first. */
   onSelect: (layer: EchogramLayer) => void;
   onRefresh: (layer: EchogramLayer) => void;
   onRemove: (layer: EchogramLayer) => void;
   /** Run to a row's step and refresh the row when the run finishes. */
   onRun: (layer: EchogramLayer) => void;
+  /** Change how a line row's line is drawn. */
+  onLineStyle: (layer: EchogramLayer, style: LineStyle) => void;
   canRun: boolean;
 }
 
@@ -47,26 +66,93 @@ export function actionsFor(layer: Pick<EchogramLayer, 'freshness' | 'state'>): '
   return null;
 }
 
-/** The steps drawn in the echogram, one row per layer. */
-export function LayerList({ layers, onSelect, onRefresh, onRemove, onRun, canRun }: LayerListProps) {
+/** A row's tooltip: what it draws, or that a click brings its session's tab to the front. */
+function rowTitle(layer: EchogramLayer, front: string | null, titles: Record<string, string>): string {
+  if (layer.sid !== front) return `Switch to ${titles[layer.sid] ?? layer.sid} and select ${layer.step}`;
+  return layer.resolution ? describeFound(layer.resolution) : `Select ${layer.step}`;
+}
+
+interface LineControlsProps {
+  layer: LineLayer;
+  /** What the row is called, which names each control. */
+  label: string;
+  onChange: (style: LineStyle) => void;
+}
+
+/** A line row's colour, width and whether it is drawn. */
+function LineControls({ layer, label, onChange }: LineControlsProps) {
+  return (
+    <span className="rc-echogram-line-style">
+      <input
+        type="color"
+        className="rc-echogram-swatch"
+        aria-label={`Colour of ${label}`}
+        title="Line colour"
+        value={layer.color}
+        onChange={(event) => onChange({ color: event.target.value })}
+      />
+      <select
+        className="rc-input"
+        aria-label={`Width of ${label}`}
+        title="Line width"
+        value={layer.width}
+        onChange={(event) => onChange({ width: Number(event.target.value) })}
+      >
+        {LINE_WIDTHS.map((width) => (
+          <option key={width} value={width}>
+            {width} px
+          </option>
+        ))}
+      </select>
+      <input
+        type="checkbox"
+        aria-label={`Show ${label}`}
+        title="Draw the line"
+        checked={layer.visible}
+        onChange={(event) => onChange({ visible: event.target.checked })}
+      />
+    </span>
+  );
+}
+
+/**
+ * The steps drawn in the echogram, one row per layer: the front session's
+ * first, named with their session's title when the rows span sessions or
+ * come from a tab behind. A line row also sets its line's colour, width and
+ * visibility.
+ */
+export function LayerList({
+  layers,
+  front,
+  titles,
+  onSelect,
+  onRefresh,
+  onRemove,
+  onRun,
+  onLineStyle,
+  canRun,
+}: LayerListProps) {
   if (layers.length === 0) return null;
+  const spanning = spansSessions(layers);
   return (
     <ul className="rc-list rc-echogram-layers" aria-label="Echogram layers">
-      {layers.map((layer) => {
+      {orderedRows(layers, front).map((layer) => {
+        const text = rowLabel(layer, titles, spanning, front);
         const tiers = tierLetters(layer.resolution);
         const state = STATE_TEXT[layer.state];
         const freshness = freshnessText(layer.freshness, Boolean(layer.resolution));
+        const inFront = layer.sid === front;
         const action = actionsFor(layer);
         return (
-          <li key={layer.id} className="rc-row" data-layer={layer.id}>
+          <li key={layer.id} className="rc-row" data-layer={layer.id} data-sid={layer.sid}>
             <button
               type="button"
               className="rc-row-main rc-echogram-layer"
-              title={layer.resolution ? describeFound(layer.resolution) : `Select ${layer.step}`}
+              title={rowTitle(layer, front, titles)}
               onClick={() => onSelect(layer)}
             >
               <span className="rc-row-title">
-                {layer.label}
+                {text}
                 {tiers && (
                   <span className="rc-echogram-tier" title={tiers === 'S' ? 'survey cache' : 'user cache'}>
                     {' '}
@@ -75,7 +161,11 @@ export function LayerList({ layers, onSelect, onRefresh, onRemove, onRun, canRun
                 )}
               </span>
               <span className="rc-row-sub">
-                {[layer.variable ? `${layer.output}: ${layer.variable}` : layer.output, foundText(layer.resolution), state]
+                {[
+                  layer.variable ? `${layer.output}: ${layer.variable}` : layer.output,
+                  foundText(layer.resolution, layer.kind),
+                  state,
+                ]
                   .filter(Boolean)
                   .join(', ')}
               </span>
@@ -83,6 +173,9 @@ export function LayerList({ layers, onSelect, onRefresh, onRemove, onRun, canRun
               {layer.error && <span className="rc-field-error">{layer.error}</span>}
             </button>
             <div className="rc-row-actions">
+              {isLineLayer(layer) && (
+                <LineControls layer={layer} label={text} onChange={(style) => onLineStyle(layer, style)} />
+              )}
               {action === 'refresh' && (
                 <button
                   type="button"
@@ -93,7 +186,7 @@ export function LayerList({ layers, onSelect, onRefresh, onRemove, onRun, canRun
                   Refresh
                 </button>
               )}
-              {action === 'run' && (
+              {action === 'run' && inFront && (
                 <button
                   type="button"
                   className="rc-button rc-small"
@@ -107,7 +200,7 @@ export function LayerList({ layers, onSelect, onRefresh, onRemove, onRun, canRun
               <button
                 type="button"
                 className="rc-button rc-small"
-                aria-label={`Remove ${layer.label}`}
+                aria-label={`Remove ${text}`}
                 onClick={() => onRemove(layer)}
               >
                 Remove

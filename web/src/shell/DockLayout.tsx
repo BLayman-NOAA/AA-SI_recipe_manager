@@ -7,7 +7,7 @@ import {
   type DockviewReadyEvent,
   type IDockviewPanelProps,
 } from 'dockview-react';
-import { useEffect, useRef, type FunctionComponent } from 'react';
+import { useEffect, useRef, useState, type FunctionComponent } from 'react';
 import { Diagram } from '../diagram/Diagram';
 import { EchogramPane } from '../echogram/EchogramPane';
 import { InputsPane } from '../inputs/InputsPane';
@@ -21,9 +21,11 @@ import { RunConfigPane } from '../runs/RunConfigPane';
 import { RunSettingsPane } from '../runs/RunSettingsPane';
 import { RunsPane } from '../runs/RunsPane';
 import { useView, type Theme } from '../state/view';
+import { StatsPane } from '../stats/StatsPane';
 import { YamlPane } from '../yaml/YamlPane';
 import {
   addPopoutWindow,
+  PaneVisibleContext,
   persistLayout,
   removePopoutWindow,
   restoreLayout,
@@ -33,10 +35,23 @@ import {
 import { PaneTab } from './PaneTab';
 import type { PaneId } from './panes';
 
-/** Wrap a pane so Dockview's panel props are not passed to it. */
+/**
+ * Wrap a pane so Dockview's panel props are not passed to it; whether the
+ * panel is visible reaches it through usePaneVisible.
+ */
 function pane(Component: FunctionComponent): FunctionComponent<IDockviewPanelProps> {
-  return function DockPane() {
-    return <Component />;
+  return function DockPane({ api }: IDockviewPanelProps) {
+    const [visible, setVisible] = useState(api.isVisible);
+    useEffect(() => {
+      setVisible(api.isVisible);
+      const listener = api.onDidVisibilityChange((event) => setVisible(event.isVisible));
+      return () => listener.dispose();
+    }, [api]);
+    return (
+      <PaneVisibleContext.Provider value={visible}>
+        <Component />
+      </PaneVisibleContext.Provider>
+    );
   };
 }
 
@@ -53,6 +68,7 @@ export const PANE_COMPONENTS: Record<PaneId, FunctionComponent<IDockviewPanelPro
   runs: pane(RunsPane),
   outputs: pane(OutputsPane),
   problems: pane(ProblemsPane),
+  stats: pane(StatsPane),
   echogram: pane(EchogramPane),
 };
 

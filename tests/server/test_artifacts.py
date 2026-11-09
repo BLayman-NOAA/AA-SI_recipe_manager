@@ -1,19 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
-"""Where a session's step outputs are saved, as the artifacts endpoint reports it."""
+"""Where a session's step outputs are saved, as the artifacts endpoint reports
+it, and a json output read back."""
 
 from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+import _stage9_helpers as H
 from aa_recipe_manager import api
+from aa_recipe_manager.server.app import create_app
 from aa_recipe_manager.server.echogram import EchogramService
 
-from .conftest import FIXTURES, HEADERS, run_session, start, wait_for
+from .conftest import BASE_URL, FIXTURES, HEADERS, run_session, start, wait_for
 
 ENDED = {"completed", "failed", "cancelled", "interrupted"}
 SERVED = EchogramService().available
@@ -142,3 +147,99 @@ def test_relative_cache_dirs_resolve_beside_the_recipe(
     found = artifacts(client, sid, "bump").json()
     assert found["held_by"] == ["user"]
     assert Path(found["artifacts"][0]["url"]).is_relative_to(project / "cache")
+
+
+def artifact_json(client, sid: str, step: str, output: str):
+    return client.get(f"/api/sessions/{sid}/steps/{step}/artifacts/{output}/json")
+
+
+def saved_table(tmp_path) -> Path:
+    """A user cache holding table.yaml's stats step."""
+    cache = tmp_path / "cache"
+    api.execute(
+        FIXTURES / "table.yaml", user_cache_dir=cache, outputs_dir=tmp_path / "outputs"
+    )
+    return cache
+
+
+def test_reads_a_saved_table(run_client, tmp_path):
+    sid = run_session(run_client, "table.yaml", tmp_path / "cache")
+    run = wait_for(
+        run_client, start(run_client, sid, mode="to", targets=["stats"])["id"], ENDED
+    )
+    assert run["status"] == "completed"
+
+    response = artifact_json(run_client, sid, "stats", "table")
+    assert response.status_code == 200, response.text
+    found = response.json()
+    assert set(found) == {"step_id", "step_hash", "output", "tier", "data"}
+    assert (found["step_id"], found["output"], found["tier"]) == (
+        "stats", "table", "user"
+    )
+    assert found["data"] == H.stats_table()
+    preview = run_client.get(f"/api/sessions/{sid}/preview").json()
+    hashes = {step["step_id"]: step["step_hash"] for step in preview["steps"]}
+    assert found["step_hash"] == hashes["stats"]
+
+
+def test_nothing_saved_is_404(client, tmp_path):
+    sid = run_session(client, "table.yaml", tmp_path / "cache")
+    response = artifact_json(client, sid, "stats", "table")
+    assert response.status_code == 404
+    body = response.json()
+    assert (body["error"], body["step_id"]) == ("ArtifactNotFound", "stats")
+    assert "no saved 'table'" in body["message"]
+
+
+def test_unknown_output_step_and_session(client, tmp_path):
+    sid = run_session(client, "table.yaml", saved_table(tmp_path))
+    response = artifact_json(client, sid, "stats", "nope")
+    assert response.status_code == 404
+    body = response.json()
+    assert body["error"] == "ArtifactNotFound"
+    assert "has no output 'nope'" in body["message"]
+
+    response = artifact_json(client, sid, "stat", "table")
+    assert response.status_code == 404
+    assert response.json()["error"] == "StepNotFound"
+
+    response = artifact_json(client, "20260101-000000-abcdef", "stats", "table")
+    assert response.status_code == 404
+    assert response.json()["error"] == "SessionNotFound"
+
+
+def test_too_large_is_413(config, tmp_path):
+    client = TestClient(
+        create_app(replace(config, max_artifact_json_bytes=16)), base_url=BASE_URL
+    )
+    sid = run_session(client, "table.yaml", saved_table(tmp_path))
+    response = artifact_json(client, sid, "stats", "table")
+    assert response.status_code == 413
+    body = response.json()
+    assert (body["error"], body["step_id"]) == ("ArtifactTooLarge", "stats")
+    assert body["details"] == {"limit": 16}
+    assert "larger than 16 bytes" in body["message"]
+
+
+def test_mapped_step_is_400(client, tmp_path):
+    cache = tmp_path / "cache"
+    api.execute(
+        FIXTURES / "mapped.yaml",
+        user_cache_dir=cache,
+        outputs_dir=tmp_path / "outputs",
+        targets=["proc2"],
+        checkpoint_steps=["seg"],
+    )
+    sid = run_session(client, "mapped.yaml", cache)
+    response = artifact_json(client, sid, "proc2", "out")
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"] == "ValueError"
+    assert "proc2 is mapped" in body["message"]
+
+
+def test_artifact_json_checks_the_host(config):
+    client = TestClient(create_app(config), base_url="http://evil:8765")
+    response = artifact_json(client, "20260101-000000-abcdef", "stats", "table")
+    assert response.status_code == 403
+    assert response.json()["error"] == "forbidden_host"

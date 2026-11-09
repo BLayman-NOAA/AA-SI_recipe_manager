@@ -1,8 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { ApiError } from '../api/client';
 import { echogramCandidate, findStep } from '../api/graph';
 import { useCurrentSession, useRecoverWhenServerAnswers, useSessions } from '../api/queries';
+import { selectStep } from '../diagram/locate';
 import { useEchogramStore } from '../echogram/store';
 import { EchogramWatcher } from '../echogram/useEchogramStaleness';
 import { useEditingStore } from '../editing/store';
@@ -12,6 +12,7 @@ import { useRunStore } from '../runs/store';
 import { RunControlsContext, useRunControls, useStartQueuedRun } from '../runs/useRunControls';
 import { useFollowRuns } from '../runs/useRunEvents';
 import { useSessionStore } from '../state/session';
+import { useTabs } from '../state/tabs';
 import { useView } from '../state/view';
 import { dueFiles, resetEditors, useYamlEditors, useYamlSender } from '../yaml/editors';
 import { useCommands } from './commands';
@@ -23,20 +24,11 @@ import { buildMenus, type Commands } from './menus';
 import { ShellDialogs } from './ShellDialogs';
 import { installShortcuts } from './shortcuts';
 import { StatusBar } from './StatusBar';
+import { TabStrip } from './TabStrip';
 import { Toolbar } from './Toolbar';
 
 /** The page title, as index.html sets it. */
 const APP_TITLE = 'AA-SI Recipe Manager';
-
-/** Forget a remembered session the server no longer has. */
-function useDropMissingSession() {
-  const session = useCurrentSession();
-  const setSid = useSessionStore((state) => state.setSid);
-  const missing = session.error instanceof ApiError && session.error.status === 404;
-  useEffect(() => {
-    if (missing) setSid(null);
-  }, [missing, setSid]);
-}
 
 /**
  * Clear the diagram scope (selection, expanded steps and boxes, drill, find) when the session
@@ -51,6 +43,21 @@ function useResetScopeOnSessionChange() {
   }, [sid]);
 }
 
+/**
+ * Select the step a tab was opened for once its session is loaded. A passive
+ * effect, so it runs after useResetScopeOnSessionChange cleared the old scope.
+ */
+function useSelectPendingStep() {
+  const pending = useTabs((state) => state.pendingSelection);
+  const sid = useSessionStore((state) => state.sid);
+  const graph = useCurrentSession().data?.graph;
+  useEffect(() => {
+    if (!pending || pending.sid !== sid || !graph) return;
+    selectStep(useView, graph, pending.step);
+    useTabs.getState().clearSelection();
+  }, [pending, sid, graph]);
+}
+
 /** Point the run store at the open session, dropping another session's runs. */
 function useResetRunsOnSessionChange(sid: string | null) {
   useLayoutEffect(() => {
@@ -58,10 +65,10 @@ function useResetRunsOnSessionChange(sid: string | null) {
   }, [sid]);
 }
 
-/** Point the echogram layers at the open session, restoring the ones it had. */
+/** Bring the open session to the front of the echogram, which keeps every tab's layers. */
 function useResetEchogramOnSessionChange(sid: string | null) {
   useLayoutEffect(() => {
-    useEchogramStore.getState().resetFor(sid);
+    useEchogramStore.getState().activate(sid);
   }, [sid]);
 }
 
@@ -109,7 +116,7 @@ function useGlobalShortcuts(commands: Commands) {
   );
 }
 
-/** The application window: menus, toolbar, panes and status bar. */
+/** The application window: menus, session tabs, toolbar, panes and status bar. */
 export function Shell() {
   // The one set of run controls: toolbar, menus, shortcuts and the diagram share its pending state.
   const run = useRunControls();
@@ -134,9 +141,9 @@ export function Shell() {
   const docsUrl = useDocsUrl();
   const docsEnv = useMemo<DocsEnv>(() => ({ docsUrl, linkTarget: '_blank', pages: {} }), [docsUrl]);
 
-  useDropMissingSession();
   useRecoverWhenServerAnswers();
   useResetScopeOnSessionChange();
+  useSelectPendingStep();
   useResetRunsOnSessionChange(sid);
   useResetEchogramOnSessionChange(sid);
   useFollowRuns(sid);
@@ -184,6 +191,7 @@ export function Shell() {
       <RunControlsContext.Provider value={run}>
         <div className="rc-shell">
           <MenuBar menus={menus} />
+          <TabStrip />
           <Toolbar run={run} onFit={commands.fit} onToggleDirection={commands.toggleDirection} />
           <DockLayout />
           <StatusBar />

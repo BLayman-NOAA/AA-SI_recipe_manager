@@ -13,14 +13,15 @@ export type PaneId =
   | 'runs'
   | 'outputs'
   | 'problems'
+  | 'stats'
   | 'echogram';
 
 export type PaneDirection = 'left' | 'right' | 'above' | 'below' | 'within';
 
-/** Placement relative to another pane, or along an edge of the whole layout. */
+/** Placement relative to another pane. */
 export interface PanePlacement {
   direction: PaneDirection;
-  reference?: PaneId;
+  reference: PaneId;
 }
 
 export interface PaneDef {
@@ -30,24 +31,31 @@ export interface PaneDef {
   /** Added without becoming the active tab of its group. */
   inactive?: boolean;
   initialWidth?: number;
+  /** Width as a share of the whole layout, where the layout has a size. */
+  widthShare?: number;
   initialHeight?: number;
 }
 
-/** Panes in the order the default layout adds them. */
+/**
+ * Panes in the order the default layout adds them: two rows that resize apart,
+ * the diagram, echogram and inspector above Recipes and Logs. The inspector
+ * takes its width out of the echogram, so the echogram starts wider than it ends.
+ */
 export const PANES: PaneDef[] = [
   { id: 'diagram', title: 'Diagram' },
   { id: 'yaml', title: 'YAML', placement: { reference: 'diagram', direction: 'within' }, inactive: true },
-  { id: 'recipes', title: 'Recipes', placement: { reference: 'diagram', direction: 'left' }, initialWidth: 280 },
-  { id: 'ops', title: 'Ops', placement: { reference: 'recipes', direction: 'below' } },
-  { id: 'inspector', title: 'Inspector', placement: { reference: 'diagram', direction: 'right' }, initialWidth: 340 },
+  { id: 'recipes', title: 'Recipes', placement: { reference: 'diagram', direction: 'below' }, initialHeight: 220 },
+  { id: 'echogram', title: 'Echogram', placement: { reference: 'diagram', direction: 'right' }, widthShare: 0.65 },
+  { id: 'inspector', title: 'Inspector', placement: { reference: 'echogram', direction: 'right' }, initialWidth: 290 },
   { id: 'inputs', title: 'Inputs', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
   { id: 'runSettings', title: 'Run Settings', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
   { id: 'runConfig', title: 'Run Config', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
-  { id: 'logs', title: 'Logs', placement: { direction: 'below' }, initialHeight: 220 },
+  { id: 'ops', title: 'Ops', placement: { reference: 'inspector', direction: 'within' }, inactive: true },
+  { id: 'logs', title: 'Logs', placement: { reference: 'recipes', direction: 'right' }, widthShare: 2 / 3 },
   { id: 'runs', title: 'Runs', placement: { reference: 'logs', direction: 'within' }, inactive: true },
   { id: 'outputs', title: 'Outputs', placement: { reference: 'logs', direction: 'within' }, inactive: true },
   { id: 'problems', title: 'Problems', placement: { reference: 'logs', direction: 'within' } },
-  { id: 'echogram', title: 'Echogram', placement: { reference: 'logs', direction: 'right' }, initialWidth: 420 },
+  { id: 'stats', title: 'Statistics', placement: { reference: 'logs', direction: 'within' }, inactive: true },
 ];
 
 export const PANE_IDS: PaneId[] = PANES.map((pane) => pane.id);
@@ -73,7 +81,7 @@ export function placementFor(id: PaneId, open: ReadonlySet<string>): PanePlaceme
   let placement = paneDef(id).placement;
   const seen = new Set<string>([id]);
   while (placement) {
-    if (!placement.reference || open.has(placement.reference)) return placement;
+    if (open.has(placement.reference)) return placement;
     if (seen.has(placement.reference)) return null;
     seen.add(placement.reference);
     placement = paneDef(placement.reference).placement;

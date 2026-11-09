@@ -1,0 +1,122 @@
+/* The statistics pane. Bar fills are the echogram labels layer's colours;
+   everything else uses the --rc-* tokens. */
+
+.rc-stats {
+  padding: 4px 6px;
+}
+
+.rc-stats-refreshing .rc-stats-view {
+  opacity: 0.6;
+}
+
+.rc-stats-output {
+  width: auto;
+}
+
+.rc-stats-title {
+  font-weight: 600;
+}
+
+.rc-stats-summary {
+  margin: 2px 0 8px;
+  color: var(--rc-muted);
+  overflow-wrap: anywhere;
+}
+
+.rc-stats-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.rc-stats-legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rc-stats-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.rc-stats-swatch-noise {
+  box-sizing: border-box;
+  border: 1.5px solid var(--rc-muted);
+}
+
+.rc-stats-counts {
+  width: auto;
+  margin-bottom: 4px;
+}
+
+.rc-table td.rc-stats-number {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.rc-stats-chart {
+  overflow-x: auto;
+}
+
+.rc-stats-svg {
+  display: block;
+  font-size: 11px;
+}
+
+.rc-stats-grid {
+  stroke: var(--rc-line);
+  stroke-width: 1;
+}
+
+.rc-stats-baseline {
+  stroke: var(--rc-muted);
+  stroke-width: 1;
+}
+
+.rc-stats-tick,
+.rc-stats-axis-label {
+  fill: var(--rc-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-stats-category {
+  fill: var(--rc-fg);
+}
+
+.rc-stats-hit {
+  fill: transparent;
+}
+
+.rc-stats-noise {
+  stroke: var(--rc-muted);
+  stroke-width: 1.5;
+}
+
+.rc-stats-mark:hover .rc-stats-bar {
+  filter: brightness(1.2);
+}
+
+.rc-stats-err {
+  fill: none;
+  stroke: var(--rc-fg);
+  stroke-width: 1;
+}
+
+.rc-stats-values {
+  margin: 2px 0 10px;
+}
+
+.rc-stats-values > summary {
+  color: var(--rc-muted);
+  cursor: pointer;
+}
+
+.rc-stats-values .rc-table {
+  width: auto;
+}

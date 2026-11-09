@@ -1,8 +1,9 @@
 op: query_ncei_data
 cache_key: query_ncei_data  # pinned cache identity - keep stable across op renames
 description: >
-  Query an NCEI acoustic data catalog for file listings within a time window.
-  Returns a list of result records (file metadata), not the files themselves.
+  Query an NCEI acoustic data catalog for file listings within a time window,
+  checked against the archive's own file listing. Returns a list of result
+  records (file metadata), not the files themselves.
 category: data_retrieval
 inputs: {}
 outputs:
@@ -59,6 +60,26 @@ params:
       analysis's files alone.
     required: false
     default: []
+  listing:
+    type: str
+    description: >
+      Whether to check the catalog against the archive's file listing. "auto"
+      uses the listing where they disagree and warns, "catalog" never reads the
+      archive, "bucket" always uses the listing.
+    notes: >
+      The catalog can lack files the archive holds; in late 2026 it lost about
+      59% of its rows across all cruises. "auto" and "bucket" fail the step when
+      the catalog or the archive cannot be read, since a short list would be
+      checkpointed under the normal hash; "catalog" is the way through an archive
+      outage. A listing knows only file names, so it
+      needs a CRUISE_NAME or DATASET_NAME filter and no per-file filter such as
+      FREQUENCY. Other queries come from the catalog alone: "auto" warns if the
+      catalog is short for the cruise and "bucket" raises. A file taken from the
+      listing has a minimal record, with no track geometry or other catalog
+      attributes. Set only when overriding the default, since a param a recipe
+      sets enters the step hash.
+    required: false
+    default: auto
 implementations:
   - key: default
     callable_path: aa_si_utils.data_retrieval.query_ncei_data

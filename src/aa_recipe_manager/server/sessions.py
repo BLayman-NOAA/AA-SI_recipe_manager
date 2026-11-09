@@ -1071,10 +1071,13 @@ class SessionStore:
         A session with a journal continues its working copy, which restores
         copy files gone missing from the journal. A schema 1 session (from
         before editing) has neither, and gets a working copy of the files as
-        they are now.
+        they are now. A session whose ``session.json`` was removed is dropped
+        from memory and not found, so nothing writes its folder again.
         """
-        if sid in self._sessions:
-            return self._sessions[sid]
+        session = self._sessions.get(sid)
+        if session is not None and (session.folder / SESSION_FILE).is_file():
+            return session
+        self._sessions.pop(sid, None)
         folder = self._folder(sid)
         record = read_json(folder / SESSION_FILE)
         if record is None:

@@ -162,6 +162,39 @@ def test_delete(client, config):
     assert client.delete(f"/api/sessions/{sid}", headers=HEADERS).status_code == 404
 
 
+def test_session_removed_on_disk_is_gone(client, config, headers):
+    sid = open_session(client, "with_sub.yaml")["id"]
+    folder = config.state_dir / "sessions" / sid
+    shutil.rmtree(folder)
+
+    response = client.get(f"/api/sessions/{sid}")
+    assert response.status_code == 404
+    assert response.json()["error"] == "SessionNotFound"
+    operation = {"kind": "set_param", "step": "leaf_add", "name": "k", "value": 7}
+    response = client.post(
+        f"/api/sessions/{sid}/edits", json={"operations": [operation]}, headers=headers
+    )
+    assert response.status_code == 404
+    assert response.json()["error"] == "SessionNotFound"
+    assert client.post(f"/api/sessions/{sid}/sync", headers=headers).status_code == 404
+    assert not folder.exists()
+    assert client.get("/api/sessions").json() == []
+
+
+def test_session_without_its_record_is_gone(client, config, headers):
+    sid = open_session(client, "with_sub.yaml")["id"]
+    folder = config.state_dir / "sessions" / sid
+    (folder / "session.json").unlink()
+
+    operation = {"kind": "set_param", "step": "leaf_add", "name": "k", "value": 7}
+    response = client.post(
+        f"/api/sessions/{sid}/edits", json={"operations": [operation]}, headers=headers
+    )
+    assert response.status_code == 404
+    assert not (folder / "session.json").exists()
+    assert client.get(f"/api/sessions/{sid}").status_code == 404
+
+
 def test_unknown_session_is_404(client):
     response = client.get("/api/sessions/20260101-000000-abcdef")
     assert response.status_code == 404

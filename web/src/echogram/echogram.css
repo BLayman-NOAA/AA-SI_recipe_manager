@@ -56,6 +56,26 @@
   font-weight: 400;
 }
 
+.rc-echogram-line-style {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.rc-echogram-line-style .rc-input {
+  width: auto;
+  padding: 1px 2px;
+}
+
+.rc-echogram-swatch {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--rc-line);
+  background: none;
+  cursor: pointer;
+}
+
 .rc-echogram-chooser,
 .rc-echogram-offer {
   display: flex;

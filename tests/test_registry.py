@@ -201,6 +201,7 @@ EXPECTED_BUILTIN_OPS = {
     "run_hdbscan",
     "embed_clustering_results",
     "assign_clusters_to_all_points",
+    "cluster_statistics",
     "plot_clustering_report",
     "log_seafloor_detection_stats",
     "compute_per_cell_statistics",
@@ -502,8 +503,16 @@ class TestBuiltinLoader:
         assert aux_impl.param_map == {"ds_ml": "ds_ml_ready"}
 
         normalize_impl = reg.get_implementation("normalize_ml_data")
-        assert normalize_impl.callable_path == "aa_si_ml.ml.normalize_data"
+        assert normalize_impl.callable_path == "aa_si_ml.ml.normalize_ml_data_step"
         assert normalize_impl.param_map == {"ds_ml": "ds_ml_ready"}
+        assert normalize_impl.output_map == {
+            "ds_normalized": "['ds_normalized']",
+            "normalizer": "['normalizer']",
+        }
+
+        stats_impl = reg.get_implementation("cluster_statistics")
+        assert stats_impl.callable_path == "aa_si_ml.ml.cluster_statistics_table"
+        assert stats_impl.output_map == {"table": "__return__"}
 
         run_impl = reg.get_implementation("run_hdbscan")
         assert run_impl.callable_path == "aa_si_ml.ml.run_hdbscan"

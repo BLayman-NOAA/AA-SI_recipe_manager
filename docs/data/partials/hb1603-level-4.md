@@ -199,7 +199,7 @@
     ```python
     from aa_si_ml.ml import reshape_data_for_ml
     from aa_si_ml.ml import add_auxiliary_features
-    from aa_si_ml.ml import normalize_data
+    from aa_si_ml.ml import normalize_ml_data_step
     from aa_si_ml.ml import run_hdbscan
     from aa_si_ml.ml import assign_clusters_by_prediction
     from aa_si_ml.ml import embed_clustering_results
@@ -225,13 +225,15 @@
     )
 
     # normalize_ml: Normalize ML features in the flattened Dataset.
-    normalize_ml_ds_normalized = normalize_data(
+    _result = normalize_ml_data_step(
         ds_ml_ready=add_aux_features_ds_ml_ready,
         method='flatten',
         dataset_name='ml_dataset',
         normalization_name='normalized_flatten_mean_centered',
         shift_positive=False,
     )
+    normalize_ml_ds_normalized = _result['ds_normalized']
+    normalizer = _result['normalizer']
 
     # run_hdbscan: Run HDBSCAN unsupervised clustering on normalized feature data.
     _result = run_hdbscan(

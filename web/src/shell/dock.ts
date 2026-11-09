@@ -6,6 +6,7 @@ import type {
   SerializedGridObject,
   SerializedPopoutGroup,
 } from 'dockview-react';
+import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { readStoredJson, writeStored } from '../state/storage';
 import { PANES, PANE_IDS, isPaneId, paneDef, placementFor, type PaneId } from './panes';
@@ -17,6 +18,14 @@ interface DockState {
 }
 
 export const useDock = create<DockState>(() => ({ api: null, open: [] }));
+
+/** Whether the pane around a component is on screen; true outside the dock. */
+export const PaneVisibleContext = createContext(true);
+
+/** Whether this pane is on screen, not an inactive tab of its group. */
+export function usePaneVisible(): boolean {
+  return useContext(PaneVisibleContext);
+}
 
 /** Where the serialized Dockview layout is saved, per browser. */
 export const LAYOUT_KEY = 'rc.dock';
@@ -40,13 +49,11 @@ function addPane(api: DockviewApi, id: PaneId, activate: boolean): void {
     component: id,
     title: pane.title,
     inactive: !activate,
-    initialWidth: pane.initialWidth,
+    initialWidth: pane.widthShare && api.width ? Math.round(api.width * pane.widthShare) : pane.initialWidth,
     initialHeight: pane.initialHeight,
   };
-  if (placement?.reference) {
+  if (placement) {
     options.position = { referencePanel: placement.reference, direction: placement.direction };
-  } else if (placement && placement.direction !== 'within') {
-    options.position = { direction: placement.direction };
   }
   api.addPanel(options);
 }
@@ -207,12 +214,12 @@ export function showPane(id: PaneId): void {
   }
 }
 
-/** Close a pane when it is open, otherwise show it. */
+/** Close a pane when it is on screen, otherwise show it; an inactive tab comes to the front. */
 export function togglePane(id: PaneId): void {
   const api = useDock.getState().api;
   if (!api) return;
   const panel = api.getPanel(id);
-  if (panel) {
+  if (panel?.api.isVisible) {
     api.removePanel(panel);
   } else {
     showPane(id);

@@ -16,8 +16,8 @@ export function eventsUrl(runId: string, after: number): string {
  * Subscribe to a run's events from the last seq the store holds.
  *
  * The stream ends after run_finished; the source is closed then, since
- * EventSource would otherwise reconnect forever, and the previews and the
- * runs list are refetched.
+ * EventSource would otherwise reconnect forever, and the previews, the
+ * runs list and the saved artifacts are refetched.
  */
 export function useRunEvents(runId: string | null) {
   const client = useQueryClient();
@@ -43,7 +43,7 @@ export function useRunEvents(runId: string | null) {
       ended = true;
       source.close();
       flush();
-      // A replayed older run changes nothing the previews or the runs list show.
+      // A replayed older run changes nothing the previews, runs list or saved artifacts show.
       const store = useRunStore.getState();
       if (store.current?.runId !== runId) return;
       store.finish(runId);
@@ -51,6 +51,8 @@ export function useRunEvents(runId: string | null) {
       if (sid) {
         void client.invalidateQueries({ queryKey: queryKeys.previews(sid) });
         void client.invalidateQueries({ queryKey: queryKeys.runs(sid) });
+        void client.invalidateQueries({ queryKey: queryKeys.allArtifacts(sid) });
+        void client.invalidateQueries({ queryKey: queryKeys.allArtifactJson(sid) });
       }
     };
 

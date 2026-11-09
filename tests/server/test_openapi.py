@@ -34,6 +34,7 @@ PATHS = {
     "/api/sessions/{sid}/save-as",
     "/api/schema/recipe",
     "/api/sessions/{sid}/steps/{step}/artifacts",
+    "/api/sessions/{sid}/steps/{step}/artifacts/{output}/json",
     "/api/sessions/{sid}/runs",
     "/api/sessions/{sid}/preview",
     "/api/runs/{rid}",
@@ -54,6 +55,9 @@ def test_export_is_json_with_every_route(tmp_path):
     assert "RunResponse" in document["components"]["schemas"]
     assert "PreviewResponse" in document["components"]["schemas"]
     assert "StepArtifactsResponse" in document["components"]["schemas"]
+    assert "ArtifactJsonResponse" in document["components"]["schemas"]
+    read = document["paths"]["/api/sessions/{sid}/steps/{step}/artifacts/{output}/json"]
+    assert "413" in read["get"]["responses"]
     events = document["paths"]["/api/runs/{rid}/events"]["get"]["responses"]["200"]
     assert "text/event-stream" in events["content"]
     found = document["paths"]["/api/sessions/{sid}/steps/{step}/artifacts"]["get"]

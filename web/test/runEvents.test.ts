@@ -75,6 +75,7 @@ describe('useRunEvents', () => {
     expect(state.last?.steps.scaled.status).toBe('computed');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['preview', SID] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runs', SID] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['session', SID, 'artifacts'] });
   });
 
   it('ignores a replayed event and does nothing without a run', () => {

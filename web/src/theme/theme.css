@@ -225,6 +225,94 @@
   background: var(--rc-line);
 }
 
+/* Session tabs, between the menu bar and the toolbar */
+
+.rc-session-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 4px;
+  overflow-x: auto;
+  background: var(--rc-panel);
+  border-bottom: 1px solid var(--rc-line);
+  user-select: none;
+}
+
+.rc-session-tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 2px;
+  border-bottom: 2px solid transparent;
+  color: var(--rc-muted);
+}
+
+.rc-session-tab:hover {
+  background: var(--rc-raised);
+}
+
+.rc-session-tab-front {
+  border-bottom-color: var(--rc-accent);
+  color: var(--rc-fg);
+}
+
+.rc-session-tab-title {
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.rc-session-tab-dirty {
+  margin-left: 2px;
+  color: var(--rc-warning);
+}
+
+.rc-session-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.rc-session-tab-dot-active {
+  background: var(--rc-accent);
+}
+
+.rc-session-tab-dot-completed {
+  background: var(--rc-ok);
+}
+
+.rc-session-tab-dot-failed {
+  background: var(--rc-error);
+}
+
+.rc-session-tab-dot-stopped {
+  background: var(--rc-warning);
+}
+
+.rc-session-tab-close {
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--rc-faint);
+  cursor: pointer;
+}
+
+.rc-session-tab-close:hover {
+  background: var(--rc-line);
+  color: var(--rc-fg);
+}
+
+.rc-session-tab-close svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
 /* Toolbar */
 
 .rc-toolbar {

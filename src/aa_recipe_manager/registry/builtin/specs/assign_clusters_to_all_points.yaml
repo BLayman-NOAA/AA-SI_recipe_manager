@@ -114,6 +114,21 @@ params:
       which is skipped when no model reaches it.
     required: false
     default: true
+  predict_all:
+    type: bool
+    description: >
+      Predict a label for every point of ds_normalized from the model and
+      keep none of the fitted labels. For labelling a Dataset the model was
+      not fitted on.
+    notes: >
+      The Dataset must be on the model's feature scale: normalize it with a
+      normalize_ml_data step whose normalizer input is wired to the
+      normalizer output of the normalize_ml_data step that fed run_hdbscan.
+      clustering_results still supplies the result's metadata, but its sample
+      indices are ignored, so it need not belong to this Dataset. The result
+      records label_source 'approximate_predict' and n_fitted 0.
+    required: false
+    default: false
 implementations:
   - key: default
     callable_path: aa_si_ml.ml.assign_clusters_by_prediction

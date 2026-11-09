@@ -8,6 +8,7 @@ import { Diagram } from '../src/diagram/Diagram';
 import { RecipesPane } from '../src/recipes/RecipesPane';
 import { StatusBar } from '../src/shell/StatusBar';
 import { useSessionStore } from '../src/state/session';
+import { openTab, useTabs } from '../src/state/tabs';
 import { errorResponse, makeSession, mockApi, renderWithClient, testQueryClient } from './helpers';
 
 const SID = '20261013-153012-a1b2c3';
@@ -20,6 +21,7 @@ const HEALTH = {
 };
 
 beforeEach(() => {
+  useTabs.setState({ sids: [], pendingSelection: null });
   useSessionStore.getState().setSid(SID);
 });
 
@@ -66,10 +68,12 @@ describe('a session that fails to load', () => {
     await waitFor(() => expect(screen.getByText('session: with_sub (read only)')).toBeInTheDocument());
   });
 
-  it('is dropped when the server no longer has it', async () => {
+  it('is dropped, with its tab, when the server no longer has it', async () => {
     mockApi({ 'GET /api/health': HEALTH, [`GET /api/sessions/${SID}`]: () => errorResponse(404, 'No session') });
+    openTab(SID);
     render(<App client={testQueryClient()} />);
     await waitFor(() => expect(useSessionStore.getState().sid).toBeNull());
+    expect(useTabs.getState().sids).toEqual([]);
   });
 });
 

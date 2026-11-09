@@ -14,11 +14,13 @@ import { useRunControlsContext } from '../runs/useRunControls';
 import { useDock } from '../shell/dock';
 import { useSessionStore } from '../state/session';
 import { readStored, writeStored } from '../state/storage';
+import { openTab } from '../state/tabs';
 import { useView } from '../state/view';
 import { Chooser } from './Chooser';
 import './echogram.css';
 import { getGpuContext } from './gpu';
 import { LayerList } from './LayerList';
+import { isLineChoice } from './layers';
 import { useEchogramStore } from './store';
 import { spawnDecodeWorker } from './worker';
 
@@ -173,7 +175,7 @@ function MakeCheckpoint({ step }: { step: string }) {
 }
 
 /** The offer to run to a step that is not saved, and draw it when the run finishes. */
-function RunOffer({ step, memoryOnly }: { step: string; memoryOnly: boolean }) {
+function RunOffer({ sid, step, memoryOnly }: { sid: string; step: string; memoryOnly: boolean }) {
   const { canRun, runToHere } = useRunControlsContext();
   const store = useEchogramStore.getState();
   return (
@@ -183,7 +185,7 @@ function RunOffer({ step, memoryOnly }: { step: string; memoryOnly: boolean }) {
         className="rc-button rc-small rc-primary"
         disabled={!canRun}
         title={canRun ? undefined : 'A run can start once the recipe is valid and no run is going'}
-        onClick={() => runToHere(step, (runId) => store.runStarted(step, runId))}
+        onClick={() => runToHere(step, (runId) => store.runStarted(sid, step, runId))}
       >
         Run to {step} and show
       </button>
@@ -201,6 +203,7 @@ export function EchogramPane() {
   const sid = useSessionStore((state) => state.sid);
   const graph = useCurrentSession().data?.graph;
   const layers = useEchogramStore((state) => state.layers);
+  const titles = useEchogramStore((state) => state.titles);
   const choice = useEchogramStore((state) => state.choice);
   const pendingRun = useEchogramStore((state) => state.pendingRun);
   const message = useEchogramStore((state) => state.message);
@@ -216,10 +219,17 @@ export function EchogramPane() {
           <Sources count={layers.length} choosing={choice?.step ?? null}>
             <LayerList
               layers={layers}
-              onSelect={(layer) => selectStep(useView, graph, layer.step)}
+              front={sid}
+              titles={titles}
+              onSelect={(layer) =>
+                layer.sid === sid ? selectStep(useView, graph, layer.step) : openTab(layer.sid, layer.step)
+              }
               onRefresh={(layer) => void store.refresh(layer.id)}
               onRemove={(layer) => store.remove(layer.id)}
-              onRun={(layer) => runToHere(layer.step, (runId) => store.runStarted(layer.step, runId, layer.id))}
+              onRun={(layer) =>
+                runToHere(layer.step, (runId) => store.runStarted(layer.sid, layer.step, runId, layer.id))
+              }
+              onLineStyle={(layer, style) => store.setLineStyle(layer.id, style)}
               canRun={canRun}
             />
             {choice && (
@@ -228,7 +238,8 @@ export function EchogramPane() {
                 step={choice.step}
                 choices={choice.choices}
                 selected={choice.selected}
-                onAdd={(picked) => void store.addChoice(picked)}
+                lines={choice.choices.filter(isLineChoice)}
+                onAdd={store.addChoice}
                 onDone={store.cancelChoice}
               />
             )}
@@ -237,7 +248,7 @@ export function EchogramPane() {
         {busy && <div className="rc-muted">Looking up {busy}...</div>}
         {message && <div className="rc-echogram-message">{message}</div>}
         {pendingRun && pendingRun.runId === null && (
-          <RunOffer step={pendingRun.step} memoryOnly={pendingRun.memoryOnly ?? false} />
+          <RunOffer sid={pendingRun.sid} step={pendingRun.step} memoryOnly={pendingRun.memoryOnly ?? false} />
         )}
         {idle && gpu.kind !== 'unavailable' && (
           <div className="rc-empty">

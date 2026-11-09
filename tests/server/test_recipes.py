@@ -32,7 +32,9 @@ def test_fixture_recipes_are_listed(client):
         "failing.yaml",
         "paths.yaml",
         "sv.yaml",
+        "sv_line.yaml",
         "sv_mapped.yaml",
+        "table.yaml",
         "sub/chain.yaml",
         "sub/leaf.yaml",
     }
@@ -67,7 +69,9 @@ def test_scan_skips_config_files_hidden_folders_and_non_recipes(tmp_path):
         "failing.yaml",
         "paths.yaml",
         "sv.yaml",
+        "sv_line.yaml",
         "sv_mapped.yaml",
+        "table.yaml",
         "sub/chain.yaml",
         "sub/leaf.yaml",
     }
@@ -78,7 +82,7 @@ def test_overlapping_roots_list_a_file_once(config):
     app = create_app(replace(config, recipe_roots=roots))
     client = TestClient(app, base_url=BASE_URL)
     paths = [entry["path"] for entry in client.get("/api/recipes").json()["recipes"]]
-    assert len(paths) == len(set(paths)) == 11
+    assert len(paths) == len(set(paths)) == 13
 
 
 def test_unparsable_yaml_is_listed_with_its_error(tmp_path):

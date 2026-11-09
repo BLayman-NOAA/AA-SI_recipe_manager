@@ -14,6 +14,7 @@ from aa_recipe_manager.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures" / "client_recipes"
 FLAT = str(FIXTURES / "flat.yaml")
+TABLE = str(FIXTURES / "table.yaml")
 
 
 def _saved_bump(tmp_path) -> Path:
@@ -112,3 +113,58 @@ def test_mapped_rows_name_instance_and_item(cli_runner, tmp_path):
     assert [row.split()[3:5] for row in rows] == [
         ["#0", "10"], ["#1", "20"], ["#2", "30"],
     ]
+
+
+def _saved_table(tmp_path) -> Path:
+    cache = tmp_path / "cache"
+    api.execute(TABLE, user_cache_dir=cache, outputs_dir=tmp_path / "outputs")
+    return cache
+
+
+def test_read_prints_the_table(cli_runner, tmp_path):
+    cache = _saved_table(tmp_path)
+    result = cli_runner.invoke(
+        main,
+        ["artifacts", TABLE, "stats", "--user-cache-dir", str(cache),
+         "--read", "table"],
+    )
+    assert result.exit_code == 0, result.output
+    table = json.loads(result.output)
+    assert table["schema"] == "aa-table/1"
+    assert table == api.artifact_json(
+        TABLE, "stats", "table", user_cache_dir=cache
+    ).data
+
+
+def test_read_json_wraps_the_record(cli_runner, tmp_path):
+    cache = _saved_table(tmp_path)
+    result = cli_runner.invoke(
+        main,
+        ["artifacts", TABLE, "stats", "--user-cache-dir", str(cache),
+         "--read", "table", "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    read = json.loads(result.output)
+    assert set(read) == {"step_id", "step_hash", "output", "tier", "url", "data"}
+    assert (read["step_id"], read["tier"]) == ("stats", "user")
+
+
+def test_read_missing_exits_1(cli_runner, tmp_path):
+    result = cli_runner.invoke(
+        main,
+        ["artifacts", TABLE, "stats", "--user-cache-dir", str(tmp_path / "c"),
+         "--read", "table"],
+    )
+    assert result.exit_code == 1
+    assert "stats has no saved 'table' at its current hash" in result.output
+
+
+def test_read_too_large_exits_1(cli_runner, tmp_path):
+    cache = _saved_table(tmp_path)
+    result = cli_runner.invoke(
+        main,
+        ["artifacts", TABLE, "stats", "--user-cache-dir", str(cache),
+         "--read", "table", "--max-bytes", "16"],
+    )
+    assert result.exit_code == 1
+    assert "larger than 16 bytes" in result.output

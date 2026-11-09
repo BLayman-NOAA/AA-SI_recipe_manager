@@ -1,6 +1,38 @@
 {
   "components": {
     "schemas": {
+      "ArtifactJsonResponse": {
+        "properties": {
+          "data": {
+            "title": "Data"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "step_hash": {
+            "title": "Step Hash",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "step_hash",
+          "output",
+          "tier",
+          "data"
+        ],
+        "title": "ArtifactJsonResponse",
+        "type": "object"
+      },
       "ArtifactModel": {
         "properties": {
           "created_at": {
@@ -5498,6 +5530,127 @@
           }
         },
         "summary": "Step Artifacts",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/sessions/{sid}/steps/{step}/artifacts/{output}/json": {
+      "get": {
+        "description": "One json output of a step at its current hash, for the statistics pane.\n\nAn artifact larger than the server's ``max_artifact_json_bytes`` is\nrefused with 413.",
+        "operationId": "artifact_json_api_sessions__sid__steps__step__artifacts__output__json_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "step",
+            "required": true,
+            "schema": {
+              "title": "Step",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "output",
+            "required": true,
+            "schema": {
+              "title": "Output",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactJsonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Artifact Json",
         "tags": [
           "Sessions"
         ]

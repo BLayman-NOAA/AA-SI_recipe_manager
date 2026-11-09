@@ -4,15 +4,18 @@
 
 The entry a recipe's current parameters hash to is looked up in each tier, and
 for a mapped or swept step each instance's entry, as the plan preview predicts
-them. Only sidecars are read; nothing is written or loaded.
+them. Only sidecars are read, except by :func:`artifact_json`, which reads back
+one json output of a plain step. Nothing is written.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from aa_recipe_manager.exceptions import ArtifactNotFound, ArtifactTooLarge
 from aa_recipe_manager.executor.checkpoint import (
     check_step_ids,
     compute_step_fingerprints,
@@ -21,7 +24,7 @@ from aa_recipe_manager.executor.engine.context import build_run_context
 from aa_recipe_manager.executor.engine.tasks import instance_cache_readable
 from aa_recipe_manager.parallel import derive_instance_hash, group_mapped_chains
 from aa_recipe_manager.preview import Prober, chain_discriminators, source_label
-from aa_recipe_manager.storage import is_remote_url
+from aa_recipe_manager.storage import StorageLocation, is_remote_url
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -33,6 +36,10 @@ if TYPE_CHECKING:
     )
     from aa_recipe_manager.executor.tiered import TieredCheckpointStore
     from aa_recipe_manager.model.types import PipelineDAG
+
+
+#: Largest json artifact :func:`artifact_json` reads by default, in bytes.
+DEFAULT_MAX_JSON_BYTES = 1 << 20
 
 
 @dataclass
@@ -131,6 +138,31 @@ class StepArtifacts:
         return "\n".join(lines)
 
 
+@dataclass
+class ArtifactJson:
+    """One json artifact of a step, read back.
+
+    Attributes:
+        step_id: The step.
+        step_hash: The step's current hash.
+        output: The output name.
+        tier: The cache tier it was read from.
+        url: Where it was read from.
+        data: The parsed value.
+    """
+
+    step_id: str
+    step_hash: str
+    output: str
+    tier: str
+    url: str
+    data: Any
+
+    def to_dict(self) -> dict[str, Any]:
+        """The answer as a JSON ready dict."""
+        return asdict(self)
+
+
 def step_artifacts(
     dag: PipelineDAG,
     step_id: str,
@@ -196,6 +228,124 @@ def step_artifacts(
     else:
         _find_entry(result, dag, store)
     return result
+
+
+def artifact_json(
+    dag: PipelineDAG,
+    step_id: str,
+    output: str,
+    *,
+    inputs: dict[str, Any] | None = None,
+    user_cache_dir: str | Path | None = None,
+    survey_cache_dir: str | Path | None = None,
+    storage_options: dict[str, Any] | None = None,
+    fingerprint_cache: MutableMapping[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
+    max_bytes: int = DEFAULT_MAX_JSON_BYTES,
+) -> ArtifactJson:
+    """Read back one json output of a plain step at its current hash.
+
+    Args:
+        dag: The pipeline.
+        step_id: The step.
+        output: The output to read.
+        inputs: Pipeline input values.
+        user_cache_dir: The user cache tier root.
+        survey_cache_dir: The survey cache tier root.
+        storage_options: fsspec options for remote tiers and inputs.
+        fingerprint_cache: Path fingerprints kept between calls.
+        base_dir: Directory that relative local paths are fingerprinted under.
+        max_bytes: Largest artifact read.
+
+    Returns:
+        The :class:`ArtifactJson`.
+
+    Raises:
+        UnknownStepError: ``step_id`` is not a step of the recipe.
+        ArtifactNotFound: The step has no such output, or none is saved.
+        ArtifactTooLarge: The artifact is larger than ``max_bytes``.
+        ValueError: The step is mapped or swept, or the output is not json.
+    """
+    check_step_ids(dag, [step_id], "artifact json")
+    node = dag.nodes[step_id]
+    if node.is_mapped or node.is_swept:
+        raise ValueError(
+            f"{step_id} is mapped: reading one table per instance is not supported"
+        )
+    if output not in node.spec.outputs:
+        raise ArtifactNotFound(f"{step_id} has no output '{output}'", step_id, output)
+    found = step_artifacts(
+        dag,
+        step_id,
+        inputs=inputs,
+        user_cache_dir=user_cache_dir,
+        survey_cache_dir=survey_cache_dir,
+        storage_options=storage_options,
+        fingerprint_cache=fingerprint_cache,
+        base_dir=base_dir,
+    )
+    records = [r for r in found.artifacts if r.output == output]
+    if not records:
+        message = f"{step_id} has no saved '{output}' at its current hash"
+        if found.note:
+            message += f" ({found.note})"
+        raise ArtifactNotFound(message, step_id, output)
+    [record] = records
+    data = read_json_artifact(record, storage_options, max_bytes, step_id=step_id)
+    return ArtifactJson(
+        step_id=step_id,
+        step_hash=found.step_hash,
+        output=output,
+        tier=record.tier,
+        url=record.url,
+        data=data,
+    )
+
+
+def read_json_artifact(
+    record: ArtifactInfo,
+    storage_options: dict[str, Any] | None = None,
+    max_bytes: int = DEFAULT_MAX_JSON_BYTES,
+    *,
+    step_id: str = "",
+) -> Any:
+    """Parse a json artifact, refusing one larger than ``max_bytes``.
+
+    At most ``max_bytes + 1`` bytes are read, local or remote.
+
+    Args:
+        record: The artifact.
+        storage_options: fsspec options for a remote tier.
+        max_bytes: Largest artifact read.
+        step_id: The step, for error messages.
+
+    Returns:
+        The parsed value.
+
+    Raises:
+        ValueError: ``record.format`` is not ``json``.
+        ArtifactNotFound: The file is gone.
+        ArtifactTooLarge: The file is larger than ``max_bytes``.
+    """
+    name = f"{step_id}.{record.output}" if step_id else record.output
+    if record.format != "json":
+        raise ValueError(f"{name} is saved as {record.format or 'unknown'}, not json")
+    loc = StorageLocation.parse(record.url, storage_options)
+    try:
+        with loc.open("rb") as fh:
+            raw = fh.read(max_bytes + 1)
+    except FileNotFoundError as exc:
+        raise ArtifactNotFound(
+            f"{name} at {record.url} is gone", step_id, record.output
+        ) from exc
+    if len(raw) > max_bytes:
+        raise ArtifactTooLarge(
+            f"{name} at {record.url} is larger than {max_bytes} bytes",
+            step_id,
+            record.output,
+            max_bytes,
+        )
+    return json.loads(raw.decode("utf-8"))
 
 
 def _find_entry(

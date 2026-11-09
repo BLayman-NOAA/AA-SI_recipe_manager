@@ -1,17 +1,21 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RecipesResponse, SessionSummary } from '../src/api/models';
+import { restoredLayer } from '../src/echogram/layers';
+import { useEchogramStore } from '../src/echogram/store';
 import {
   groupRecipes,
   latestSessionFor,
   parentsOf,
   sessionFolder,
   shortPath,
+  tabOn,
 } from '../src/recipes/recipeList';
 import { RecipesPane } from '../src/recipes/RecipesPane';
 import { useSessionStore } from '../src/state/session';
-import { makeSession, mockApi, renderWithClient } from './helpers';
+import { useTabs } from '../src/state/tabs';
+import { apiErrorResponse, makeSession, mockApi, renderWithClient } from './helpers';
 
 const RECIPES: RecipesResponse = {
   roots: ['C:/work/a', 'C:/work/b'],
@@ -67,6 +71,10 @@ const SESSION: SessionSummary = {
   title: 'dive_analysis',
 };
 
+beforeEach(() => {
+  useTabs.setState({ sids: [], pendingSelection: null });
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   useSessionStore.getState().setSid(null);
@@ -96,6 +104,16 @@ describe('recipe list helpers', () => {
     expect(parentsOf('C:/work/a/sub/chain.yaml', RECIPES.recipes).map((r) => r.name)).toEqual([
       'client_with_sub',
     ]);
+  });
+
+  it('finds the first open tab on a recipe, in strip order', () => {
+    const newer = { ...SESSION, id: 'newer', created: '2026-10-13T12:00:00Z' };
+    const other = { ...SESSION, id: 'other', origin: 'C:/other.yaml' };
+    const sessions = [newer, SESSION, other];
+    expect(tabOn(sessions, ['other', 'older', 'newer'], SESSION.origin)?.id).toBe('older');
+    expect(tabOn(sessions, ['newer', 'older'], SESSION.origin)?.id).toBe('newer');
+    expect(tabOn(sessions, ['other', 'gone'], SESSION.origin)).toBeUndefined();
+    expect(tabOn([], ['older'], SESSION.origin)).toBeUndefined();
   });
 });
 
@@ -151,6 +169,32 @@ describe('RecipesPane', () => {
 
     await user.click(within(recipeRow).getByRole('button', { name: 'New session' }));
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+    expect(useTabs.getState().sids).toEqual(['older', makeSession().id]);
+    expect(useSessionStore.getState().sid).toBe(makeSession().id);
+  });
+
+  it('focuses a tab already open on the recipe before its newest session, without a POST', async () => {
+    const user = userEvent.setup();
+    const newer = { ...SESSION, id: 'newer', created: '2026-10-13T12:00:00Z' };
+    const fetchMock = serve([newer, SESSION]);
+    useTabs.setState({ sids: ['older', 'other'] });
+    useSessionStore.getState().setSid('other');
+    renderWithClient(<RecipesPane />);
+    const recipeRow = (await screen.findByText('HB1603/dive_analysis.yaml')).closest('li')!;
+    await user.click(within(recipeRow).getByRole('button', { name: 'Open' }));
+    expect(useSessionStore.getState().sid).toBe('older');
+    expect(useTabs.getState().sids).toEqual(['older', 'other']);
+    expect(posts(fetchMock)).toHaveLength(0);
+  });
+
+  it('reopens a recent session in a tab', async () => {
+    const user = userEvent.setup();
+    serve([SESSION]);
+    renderWithClient(<RecipesPane />);
+    await user.click(await screen.findByRole('button', { name: 'Reopen' }));
+    expect(useTabs.getState().sids).toEqual(['older']);
+    expect(useSessionStore.getState().sid).toBe('older');
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeDisabled();
   });
 
   it('shows a recipe that does not parse with its message and no Open', async () => {
@@ -171,5 +215,57 @@ describe('RecipesPane', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete session' }));
     expect(confirm).toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('deletes a session after a confirm naming its layers, closing its tab and removing them', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockApi({
+      'GET /api/recipes': RECIPES,
+      'GET /api/sessions': [SESSION],
+      'DELETE /api/sessions/older': null,
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    useTabs.setState({ sids: ['older'] });
+    useSessionStore.getState().setSid('older');
+    const saved = { sid: 'older', step: 'sv', output: 'ds_Sv', variable: 'Sv', label: 'sv', stepHash: 'h', addedAt: 0 };
+    useEchogramStore.setState({ layers: [restoredLayer(saved), restoredLayer({ ...saved, sid: 'x' })] });
+    renderWithClient(<RecipesPane />);
+    await user.click(await screen.findByRole('button', { name: 'Delete session' }));
+    expect(confirm).toHaveBeenCalledWith(
+      'Delete the session "dive_analysis"? Its saved inputs and settings are removed, and 1 echogram layer with them.',
+    );
+    await waitFor(() => expect(useEchogramStore.getState().layers.map((layer) => layer.sid)).toEqual(['x']));
+    expect(fetchMock.mock.calls.some(([url, init]) => url === '/api/sessions/older' && init?.method === 'DELETE')).toBe(true);
+    expect(useTabs.getState().sids).toEqual([]);
+    expect(useSessionStore.getState().sid).toBeNull();
+    useEchogramStore.setState({ layers: [] });
+  });
+
+  it("keeps the session's tab and layers and says why when the delete is refused", async () => {
+    const user = userEvent.setup();
+    const message = "Session 'older' has an unfinished run r1; cancel it first.";
+    mockApi({
+      'GET /api/recipes': RECIPES,
+      'GET /api/sessions': [SESSION],
+      'DELETE /api/sessions/older': () => apiErrorResponse(409, 'ActiveRunExists', message),
+    });
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    useTabs.setState({ sids: ['older'] });
+    useSessionStore.getState().setSid('older');
+    const saved = { sid: 'older', step: 'sv', output: 'ds_Sv', variable: 'Sv', label: 'sv', stepHash: 'h', addedAt: 0 };
+    useEchogramStore.setState({ layers: [restoredLayer(saved)] });
+    renderWithClient(<RecipesPane />);
+    await user.click(await screen.findByRole('button', { name: 'Delete session' }));
+    expect(
+      await screen.findByText(
+        'Could not delete dive_analysis: a run is going in it. Cancel the run or wait for it to finish.',
+      ),
+    ).toHaveClass('rc-field-error');
+    expect(screen.queryByText(/unfinished run/)).toBeNull();
+    expect(useTabs.getState().sids).toEqual(['older']);
+    expect(useSessionStore.getState().sid).toBe('older');
+    expect(useEchogramStore.getState().layers.map((layer) => layer.sid)).toEqual(['older']);
+    useEchogramStore.setState({ layers: [] });
   });
 });

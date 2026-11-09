@@ -26,6 +26,7 @@ const FORBIDDEN_FILES = [
   /^src\/recipes\//,
   /^src\/echogram\//,
   /^src\/editing\//,
+  /^src\/stats\//,
 ];
 
 const IMPORT = /^\s*(import|export)\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]/gm;

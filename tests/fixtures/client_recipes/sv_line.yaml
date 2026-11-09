@@ -1,0 +1,47 @@
+# One saved Sv dataset with two line variables, for the echogram pane's lines.
+recipe:
+  name: client_sv_line
+  version: "1.0"
+  description: Make a small gridded Sv dataset, add two depth lines and save it.
+  schema_version: "1"
+
+steps:
+  - id: start
+    op: custom
+    custom_spec:
+      description: Return the constant 7.
+      callable_path: _stage9_helpers.const7
+      outputs:
+        v: {type: int}
+      output_map: {v: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: sv
+    op: custom
+    checkpoint: always
+    inputs:
+      x: ${start.v}
+    custom_spec:
+      description: A synthetic Sv dataset starting x minutes in.
+      callable_path: _stage9_helpers.sv_dataset
+      inputs:
+        x: {type: int}
+      outputs:
+        ds_Sv: {type: Dataset}
+      output_map: {ds_Sv: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}
+
+  - id: lines
+    op: custom
+    checkpoint: always
+    inputs:
+      ds: ${sv.ds_Sv}
+    custom_spec:
+      description: The Sv dataset with two depth lines along ping_time.
+      callable_path: _stage9_helpers.sv_with_lines
+      inputs:
+        ds: {type: Dataset}
+      outputs:
+        ds: {type: Dataset}
+      output_map: {ds: __return__}
+      dependency: {name: pytest, version: ">=7.0", source: pypi}

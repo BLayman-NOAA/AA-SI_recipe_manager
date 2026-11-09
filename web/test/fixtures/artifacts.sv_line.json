@@ -1,0 +1,118 @@
+{
+ "step_id": "lines",
+ "step_hash": "de337b73a8904cfb372f8021e1829c4d70ff089b79f49743fba336d0c9fbb7de",
+ "fanned_out": false,
+ "held_by": [
+  "user"
+ ],
+ "instances": null,
+ "found": 1,
+ "marker": false,
+ "note": null,
+ "artifacts": [
+  {
+   "output": "ds",
+   "url": "C:/cache/sv_line/lines/de337b73/010655-6b8649/zarr/ds.zarr",
+   "format": "zarr",
+   "tier": "user",
+   "step_hash": "de337b73a8904cfb372f8021e1829c4d70ff089b79f49743fba336d0c9fbb7de",
+   "instance_index": null,
+   "item": null,
+   "created_at": "2026-11-04T01:06:58.853997+00:00",
+   "run_id": "010655-6b8649",
+   "size_bytes": null
+  }
+ ],
+ "echogram": {
+  "available": true,
+  "reason": null,
+  "resolution": {
+   "mode": "artifacts",
+   "step": "lines",
+   "fannedOut": false,
+   "stepHash": "de337b73a8904cfb372f8021e1829c4d70ff089b79f49743fba336d0c9fbb7de",
+   "status": "found",
+   "outputs": [
+    {
+     "name": "ds",
+     "format": "zarr",
+     "kind": "dataset",
+     "variables": [
+      {
+       "name": "Sv",
+       "kind": "mvbs",
+       "dims": [
+        "channel",
+        "ping_time",
+        "range_sample"
+       ],
+       "channels": 2,
+       "samples": 20
+      },
+      {
+       "name": "line_a",
+       "kind": "line",
+       "dims": [
+        "ping_time"
+       ],
+       "channels": null,
+       "samples": null,
+       "verticalReference": "depth",
+       "units": "m",
+       "longName": "line a"
+      },
+      {
+       "name": "line_b",
+       "kind": "line",
+       "dims": [
+        "ping_time"
+       ],
+       "channels": null,
+       "samples": null,
+       "verticalReference": "range",
+       "units": "m",
+       "longName": "line b"
+      }
+     ],
+     "default": "Sv"
+    }
+   ],
+   "output": "ds",
+   "createdAt": "2026-11-04T01:06:58.853997+00:00",
+   "entries": 1,
+   "kind": "dataset",
+   "var": "Sv",
+   "instances": [
+    {
+     "id": "de337b73a8904cfb372f8021e1829c4d70ff089b79f49743fba336d0c9fbb7de",
+     "item": null,
+     "index": null,
+     "store": "C:/cache/sv_line/lines/de337b73/010655-6b8649/zarr/ds.zarr",
+     "tier": "user",
+     "stamp": "010655-6b8649@2026-11-04T01:06:58.853997+00:00",
+     "var": "Sv",
+     "dims": [
+      "channel",
+      "ping_time",
+      "range_sample"
+     ],
+     "shape": [
+      2,
+      12,
+      20
+     ],
+     "start": 1717200420000000000,
+     "end": 1717200431000000000,
+     "pings": 12,
+     "channels": 2,
+     "samples": 20,
+     "bytes": 1336,
+     "mount": "81b92253735829a7"
+    }
+   ],
+   "skipped": [],
+   "empty": 0,
+   "bytes": 1336
+  }
+ }
+}

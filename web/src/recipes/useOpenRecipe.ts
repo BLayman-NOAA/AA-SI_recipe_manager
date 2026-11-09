@@ -1,4 +1,4 @@
-/** Opening a recipe: reuse its newest session, or start one, once per request. */
+/** Opening a recipe: focus its tab, reuse its newest session, or start one, once per request. */
 import { useRef } from 'react';
 import {
   useCurrentSession,
@@ -7,8 +7,8 @@ import {
   useOpenSession,
   useSessions,
 } from '../api/queries';
-import { useSessionStore } from '../state/session';
-import { latestSessionFor } from './recipeList';
+import { openTab, useTabs } from '../state/tabs';
+import { latestSessionFor, tabOn } from './recipeList';
 
 export interface OpenRecipe {
   /** Open a recipe; `fresh` starts a new session even when one exists. */
@@ -22,7 +22,7 @@ export function useOpenRecipe(): OpenRecipe {
   const openSession = useOpenSession();
   const sessions = useSessions();
   const current = useCurrentSession().data;
-  const setSid = useSessionStore((state) => state.setSid);
+  const sids = useTabs((state) => state.sids);
   const opening = useOpeningPath();
   const busy = useRef(false);
   const error = useMutationError(openSession);
@@ -32,9 +32,10 @@ export function useOpenRecipe(): OpenRecipe {
     // A double click sends two clicks and a dblclick; only the first counts.
     if (busy.current || pending) return;
     if (!fresh && current?.origin === path) return;
-    const existing = fresh ? undefined : latestSessionFor(sessions.data ?? [], path);
+    const list = sessions.data ?? [];
+    const existing = fresh ? undefined : (tabOn(list, sids, path) ?? latestSessionFor(list, path));
     if (existing) {
-      setSid(existing.id);
+      openTab(existing.id);
       return;
     }
     busy.current = true;

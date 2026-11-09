@@ -355,3 +355,18 @@ const ECHOGRAM_TYPES: ReadonlySet<string> = new Set(['Dataset', 'DataArray', 'Da
 export function echogramCandidate(step: StepNode): boolean {
   return step.outputs.some((output) => output.type !== null && ECHOGRAM_TYPES.has(output.type));
 }
+
+/** Output types the statistics pane may be able to show as a table. */
+const TABLE_TYPES: ReadonlySet<string> = new Set(['dict']);
+
+/** The outputs of a step that may hold a table. */
+export function tableOutputs(step: StepNode): string[] {
+  return step.outputs
+    .filter((output) => output.type !== null && TABLE_TYPES.has(output.type))
+    .map((output) => output.name);
+}
+
+/** The step has an output the statistics pane may show. */
+export function tableCandidate(step: StepNode): boolean {
+  return tableOutputs(step).length > 0;
+}

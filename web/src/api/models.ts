@@ -89,3 +89,5 @@ export function fileEditable(session: Pick<SessionDocument, 'read_only' | 'files
 
 export type StepArtifacts = Schemas['StepArtifactsResponse'];
 export type Artifact = Schemas['ArtifactModel'];
+/** One json output of a step read back; `data` is whatever the step returned. */
+export type ArtifactJson = Schemas['ArtifactJsonResponse'];

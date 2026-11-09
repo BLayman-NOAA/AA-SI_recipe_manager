@@ -23,7 +23,9 @@ RECIPES = [
     "failing.yaml",
     "paths.yaml",
     "sv.yaml",
+    "sv_line.yaml",
     "sv_mapped.yaml",
+    "table.yaml",
 ]
 
 
@@ -48,6 +50,15 @@ def test_fixture_hashes_are_stable():
         "Fixture step hashes changed. Regenerate expected_hashes.json only when "
         "changing a hash is the point of the change."
     )
+
+
+def test_sv_line_shares_sv_hashes():
+    def hashes(name):
+        found = api.step_hashes(FIXTURES / name, base_dir=FIXTURES)
+        return {k: v.step_hash for k, v in found.items()}
+
+    lined, plain = hashes("sv_line.yaml"), hashes("sv.yaml")
+    assert {k: lined[k] for k in ("start", "sv")} == plain
 
 
 def test_with_sub_include_tree():

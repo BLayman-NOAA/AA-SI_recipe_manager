@@ -1,8 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { DockviewApi } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
+import { includeChain } from '../src/diagram/locate';
+import { restoredLayer } from '../src/echogram/layers';
+import { useEchogramStore } from '../src/echogram/store';
+import { useEditingStore } from '../src/editing/store';
+import { ApiError } from '../src/api/client';
+import { deleteFailureText, deleteSessionMessage } from '../src/shell/commands';
 import { buildMenus, itemTooltip, tabMenuItems, type Commands, type MenuState } from '../src/shell/menus';
 
 import { PANES, placementFor } from '../src/shell/panes';
@@ -10,6 +16,7 @@ import {
   LAYOUT_KEY,
   POPOUT_URL,
   addPopoutWindow,
+  applyDefaultLayout,
   dockedLayout,
   onPopoutWindows,
   persistLayout,
@@ -22,8 +29,9 @@ import { Dialog } from '../src/shell/Dialog';
 import { useDialogs } from '../src/shell/dialogs';
 import { installShortcuts, matchShortcut, type KeyInput } from '../src/shell/shortcuts';
 import { useSessionStore } from '../src/state/session';
+import { openTab, useTabs } from '../src/state/tabs';
 import { useView } from '../src/state/view';
-import { editableSession, mockApi, testQueryClient } from './helpers';
+import { apiErrorResponse, editableSession, mockApi, testQueryClient, withSubGraph } from './helpers';
 
 const MENUS = ['File', 'Edit', 'Recipe', 'Run', 'View', 'Cache', 'Help'];
 
@@ -107,6 +115,7 @@ afterEach(() => {
 describe('menu bar', () => {
   beforeEach(() => {
     useView.getState().resetScope();
+    useDialogs.getState().close();
   });
 
   it('renders the seven menus', () => {
@@ -185,6 +194,51 @@ describe('menu bar', () => {
     await waitFor(() => expect(useDock.getState().open).toContain('problems'));
   });
 
+  it('gives the two rows of the default layout their own widths', async () => {
+    renderApp();
+    await waitFor(() => expect(useDock.getState().open).toHaveLength(PANES.length));
+    const api = useDock.getState().api!;
+    api.layout(1920, 1000);
+    applyDefaultLayout(api);
+    const width = (id: string) => api.getPanel(id)!.group.width;
+    const height = (id: string) => api.getPanel(id)!.group.height;
+    expect(width('inspector')).toBe(290);
+    expect(width('echogram')).toBe(958);
+    expect(width('diagram')).toBe(672);
+    expect(width('recipes')).toBe(640);
+    expect(width('logs')).toBe(1280);
+    expect(height('recipes')).toBe(220);
+    expect(height('logs')).toBe(220);
+    expect(height('diagram')).toBe(780);
+  });
+
+  it('groups the default layout: the diagram, echogram and inspector above recipes and logs', async () => {
+    renderApp();
+    await waitFor(() => expect(useDock.getState().open).toHaveLength(PANES.length));
+    const api = useDock.getState().api!;
+    const groups = api.groups.map((group) => group.panels.map((panel) => panel.id).sort());
+    expect(groups).toHaveLength(5);
+    expect(groups).toEqual(
+      expect.arrayContaining([
+        ['diagram', 'yaml'],
+        ['recipes'],
+        ['echogram'],
+        ['logs', 'outputs', 'problems', 'runs', 'stats'],
+        ['inputs', 'inspector', 'ops', 'runConfig', 'runSettings'],
+      ]),
+    );
+    const columns = (node: { type: string; data: unknown }): unknown =>
+      node.type === 'leaf'
+        ? (node.data as { views: string[] }).views[0]
+        : (node.data as { type: string; data: unknown }[]).map(columns);
+    expect(columns(api.toJSON().grid.root)).toEqual([
+      [
+        ['diagram', 'echogram', 'inspector'],
+        ['recipes', 'logs'],
+      ],
+    ]);
+  });
+
   it('puts the Run Config pane beside Run Settings and toggles it from the View menu', async () => {
     const user = userEvent.setup();
     expect(placementFor('runConfig', new Set(['inspector']))).toEqual({ reference: 'inspector', direction: 'within' });
@@ -193,14 +247,53 @@ describe('menu bar', () => {
     const api = useDock.getState().api!;
     expect(api.getPanel('runConfig')!.group.id).toBe(api.getPanel('runSettings')!.group.id);
 
+    // Run Config starts as an inactive tab: the first toggle brings it to the front, the next closes it.
     await user.click(screen.getByRole('button', { name: 'View' }));
     const toggle = screen.getByRole('menuitemcheckbox', { name: /^Run Config/ });
     expect(toggle).toHaveAttribute('aria-checked', 'true');
     await user.click(toggle);
+    expect(api.getPanel('runConfig')!.api.isVisible).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /^Run Config/ }));
     await waitFor(() => expect(useDock.getState().open).not.toContain('runConfig'));
     await user.click(screen.getByRole('button', { name: 'View' }));
     await user.click(screen.getByRole('menuitemcheckbox', { name: /^Run Config/ }));
     await waitFor(() => expect(useDock.getState().open).toContain('runConfig'));
+  });
+
+  it('brings a pane on an inactive tab to the front from the View menu rather than closing it', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await waitFor(() => expect(useDock.getState().open).toHaveLength(PANES.length));
+    const api = useDock.getState().api!;
+    expect(api.getPanel('stats')!.api.isVisible).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    const toggle = screen.getByRole('menuitemcheckbox', { name: /^Statistics/ });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(toggle);
+    expect(useDock.getState().open).toContain('stats');
+    expect(api.getPanel('stats')!.api.isVisible).toBe(true);
+    expect(api.getPanel('problems')!.api.isVisible).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /^Statistics/ }));
+    await waitFor(() => expect(useDock.getState().open).not.toContain('stats'));
+  });
+
+  it('closes a menu on Escape without clearing the diagram selection', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    useView.getState().select({ kind: 'step', id: 'total' });
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    expect(screen.getByRole('menu', { name: 'View' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu', { name: 'View' })).toBeNull();
+    expect(useView.getState().selected).toEqual({ kind: 'step', id: 'total' });
+
+    // With no menu open, Escape clears the selection as before.
+    await user.keyboard('{Escape}');
+    expect(useView.getState().selected).toBeNull();
   });
 
   it('restores the saved layout after a reload', async () => {
@@ -494,10 +587,11 @@ describe('buildMenus', () => {
 describe('panes', () => {
   it('places a pane by its reference, falling back up the chain', () => {
     const all = new Set(PANES.map((pane) => pane.id));
-    expect(placementFor('ops', all)).toEqual({ reference: 'recipes', direction: 'below' });
-    expect(placementFor('ops', new Set(['diagram']))).toEqual({ reference: 'diagram', direction: 'left' });
+    expect(placementFor('ops', all)).toEqual({ reference: 'inspector', direction: 'within' });
+    expect(placementFor('ops', new Set(['diagram']))).toEqual({ reference: 'diagram', direction: 'right' });
+    expect(placementFor('logs', all)).toEqual({ reference: 'recipes', direction: 'right' });
     expect(placementFor('yaml', new Set())).toBeNull();
-    expect(placementFor('logs', new Set())).toEqual({ direction: 'below' });
+    expect(placementFor('logs', new Set())).toBeNull();
   });
 });
 
@@ -562,8 +656,10 @@ describe('pane windows', () => {
 
     fireEvent.contextMenu(tab('Logs'));
     expect(screen.getByRole('menu', { name: 'Pane' })).toBeInTheDocument();
+    useView.getState().select({ kind: 'step', id: 'total' });
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByRole('menu', { name: 'Pane' })).toBeNull();
+    expect(useView.getState().selected).toEqual({ kind: 'step', id: 'total' });
   });
 
   it('shows a closed pane before opening it in a new window', async () => {
@@ -820,6 +916,148 @@ describe('shortcuts', () => {
       stop();
       textarea.remove();
     }
+  });
+});
+
+describe('session tabs in the shell', () => {
+  const SID = editableSession().id;
+  const summary = { id: SID, title: 'with_sub', origin: 'C:/recipes/with_sub.yaml', created: '2026-10-13T15:30:12Z' };
+
+  beforeEach(() => {
+    useView.getState().resetScope();
+    useDialogs.getState().close();
+    useTabs.setState({ sids: [], pendingSelection: null });
+    openTab(SID);
+  });
+
+  afterEach(() => {
+    useTabs.setState({ sids: [], pendingSelection: null });
+    useSessionStore.getState().setSid(null);
+    useEchogramStore.setState({ layers: [], gpu: 'unknown' });
+  });
+
+  function renderTabbedApp(routes: Parameters<typeof mockApi>[0] = {}) {
+    const fetchMock = mockApi({
+      'GET /api/health': { status: 'ok', version: '9.8.7', dev: true, state_dir: '/state', docs_url: 'https://docs.example.org/' },
+      'GET /api/sessions': [summary],
+      'GET /api/recipes': { roots: [], recipes: [] },
+      'GET /api/ops': { schema: 1, counts: { ops: 0, implementations: 0, sources_resolved: 0 }, categories: [], ops: [] },
+      [`GET /api/sessions/${SID}`]: editableSession(),
+      [`GET /api/sessions/${SID}/runs`]: [],
+      [`POST /api/sessions/${SID}/sync`]: { session: editableSession(), reloaded: [], conflicts: [], entries: [] },
+      [`DELETE /api/sessions/${SID}`]: null,
+      ...routes,
+    });
+    render(<App client={testQueryClient()} />);
+    return fetchMock;
+  }
+
+  /** Put a layer of the session in the echogram once the pane has given up on WebGPU, as jsdom has none. */
+  async function addLayer() {
+    await waitFor(() => expect(useEchogramStore.getState().gpu).toBe('unavailable'));
+    const saved = { sid: SID, step: 'seed', output: 'ds_Sv', variable: 'Sv', label: 'seed', stepHash: 'h', addedAt: 0 };
+    act(() => useEchogramStore.setState({ layers: [restoredLayer(saved)] }));
+  }
+
+  const deleted = (fetchMock: ReturnType<typeof mockApi>) =>
+    fetchMock.mock.calls.some(([url, init]) => url === `/api/sessions/${SID}` && init?.method === 'DELETE');
+
+  it('shows the strip between the menu bar and the toolbar', async () => {
+    renderTabbedApp();
+    const tab = await screen.findByRole('tab', { name: 'with_sub' });
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+    const strip = screen.getByRole('tablist', { name: 'Sessions' });
+    expect(strip.previousElementSibling).toBe(screen.getByRole('menubar'));
+    expect(strip.nextElementSibling).toHaveClass('rc-toolbar');
+  });
+
+  it('deletes the session after a confirm naming its layer, removing the layer and the tab', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderTabbedApp();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await screen.findByRole('tab', { name: 'with_sub' });
+    await addLayer();
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.click(screen.getByRole('menuitem', { name: /^Delete Session/ }));
+    expect(confirm).toHaveBeenCalledWith(deleteSessionMessage('with_sub', 1));
+    expect(deleteSessionMessage('with_sub', 1)).toBe(
+      'Delete the session "with_sub"? Its saved inputs and settings are removed, and 1 echogram layer with them.',
+    );
+    await waitFor(() => expect(useEchogramStore.getState().layers).toEqual([]));
+    expect(deleted(fetchMock)).toBe(true);
+    expect(useTabs.getState().sids).toEqual([]);
+    expect(useSessionStore.getState().sid).toBeNull();
+    expect(screen.queryByRole('tablist', { name: 'Sessions' })).toBeNull();
+    confirm.mockRestore();
+  });
+
+  it('keeps the session, its layer and its tab when the confirm is cancelled', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderTabbedApp();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await screen.findByRole('tab', { name: 'with_sub' });
+    await addLayer();
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.click(screen.getByRole('menuitem', { name: /^Delete Session/ }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(deleted(fetchMock)).toBe(false);
+    expect(useEchogramStore.getState().layers.map((layer) => layer.sid)).toEqual([SID]);
+    expect(screen.getByRole('tab', { name: 'with_sub' })).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it('keeps the session, its layer and its tab when the server refuses the delete, saying why in the status bar', async () => {
+    const user = userEvent.setup();
+    const message = `Session '${SID}' has an unfinished run r1; cancel it first.`;
+    renderTabbedApp({ [`DELETE /api/sessions/${SID}`]: () => apiErrorResponse(409, 'ActiveRunExists', message) });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await screen.findByRole('tab', { name: 'with_sub' });
+    await addLayer();
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.click(screen.getByRole('menuitem', { name: /^Delete Session/ }));
+    const refusal = 'Could not delete with_sub: a run is going in it. Cancel the run or wait for it to finish.';
+    expect((await screen.findByText(refusal)).closest('.rc-statusbar')).not.toBeNull();
+    expect(screen.queryByText(/unfinished run/)).toBeNull();
+    expect(useEchogramStore.getState().layers.map((layer) => layer.sid)).toEqual([SID]);
+    expect(screen.getByRole('tab', { name: 'with_sub' })).toBeInTheDocument();
+    expect(useSessionStore.getState().sid).toBe(SID);
+    confirm.mockRestore();
+    useEditingStore.getState().reset();
+  });
+
+  it('selects the step a tab was opened for once its session is in front and loaded', async () => {
+    const other = { id: 'B', title: 'other', origin: 'C:/recipes/other.yaml', created: '2026-10-13T15:31:12Z' };
+    openTab(SID, 'leaf_add');
+    renderTabbedApp({
+      'GET /api/sessions': [summary, other],
+      'GET /api/sessions/B': () => new Promise(() => {}),
+      'GET /api/sessions/B/runs': [],
+    });
+    await waitFor(() => expect(useView.getState().selected).toEqual({ kind: 'step', id: 'leaf_add' }));
+    expect(useView.getState().drill).toEqual(includeChain(withSubGraph, 'leaf_add'));
+    expect(useView.getState().drill.length).toBeGreaterThan(0);
+    expect(useTabs.getState().pendingSelection).toBeNull();
+
+    act(() => openTab('B', 'seed'));
+    await screen.findByRole('tab', { name: 'other' });
+    expect(useView.getState().selected).toBeNull();
+    expect(useTabs.getState().pendingSelection).toEqual({ sid: 'B', step: 'seed' });
+  });
+
+  it('says nothing of layers when the session has none', () => {
+    expect(deleteSessionMessage('with_sub', 0)).toBe(
+      'Delete the session "with_sub"? Its saved inputs and settings are removed.',
+    );
+    expect(deleteSessionMessage('with_sub', 2)).toContain('and 2 echogram layers with them.');
+  });
+
+  it("says a refused delete's other reasons with the server's message", () => {
+    expect(deleteFailureText('with_sub', new ApiError(500, 'InternalError', 'Disk full.'))).toBe(
+      'Could not delete with_sub: Disk full.',
+    );
+    expect(deleteFailureText('with_sub', new ApiError(409, 'ActiveRunExists', `Session 'x' has run r1.`))).toBe(
+      'Could not delete with_sub: a run is going in it. Cancel the run or wait for it to finish.',
+    );
   });
 });
 

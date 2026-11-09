@@ -81,6 +81,11 @@ def test_docs_url_always_ends_in_a_slash(tmp_path):
         "cancel_grace_seconds: soon\n",
         "cancel_grace_seconds: -1\n",
         "cancel_grace_seconds: true\n",
+        "max_artifact_json_bytes: 0\n",
+        "max_artifact_json_bytes: -1\n",
+        "max_artifact_json_bytes: true\n",
+        "max_artifact_json_bytes: big\n",
+        "max_artifact_json_bytes: 2.5\n",
     ],
 )
 def test_server_yaml_values_are_type_checked(tmp_path, text):
@@ -103,3 +108,14 @@ def test_cancel_grace_seconds_from_server_yaml(tmp_path):
         "cancel_grace_seconds: 2.5\n", encoding="utf-8"
     )
     assert ServerConfig.load(tmp_path).cancel_grace_seconds == 2.5
+
+
+def test_max_artifact_json_bytes_from_server_yaml(tmp_path, monkeypatch):
+    assert ServerConfig().max_artifact_json_bytes == 1 << 20
+    (tmp_path / "server.yaml").write_text(
+        "max_artifact_json_bytes: 4096\n", encoding="utf-8"
+    )
+    config = ServerConfig.load(tmp_path)
+    assert config.max_artifact_json_bytes == 4096
+    monkeypatch.setenv(*next(iter(config.to_env().items())))
+    assert ServerConfig.from_env().max_artifact_json_bytes == 4096

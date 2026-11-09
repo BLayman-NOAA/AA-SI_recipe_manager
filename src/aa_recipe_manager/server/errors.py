@@ -17,6 +17,8 @@ from starlette.responses import JSONResponse
 
 from aa_recipe_manager.api import (
     AmbiguousImplementationError,
+    ArtifactNotFound,
+    ArtifactTooLarge,
     ImplementationNotFoundError,
     RecipeParseError,
     RecipeValidationError,
@@ -102,6 +104,7 @@ NOT_FOUND = (
     RecipeNotFound,
     RunNotFound,
     StepNotFound,
+    ArtifactNotFound,
     FileNotFoundError,
 )
 #: Requests that clash with a run's state.
@@ -169,6 +172,9 @@ def translate_error(exc: Exception) -> tuple[int, dict[str, Any]]:
         status = 404
     elif isinstance(exc, PathNotAllowed):
         status = 403
+    elif isinstance(exc, ArtifactTooLarge):
+        status = 413
+        details = {"limit": exc.limit}
     elif isinstance(exc, ValueError):
         status = 400
     else:
@@ -207,6 +213,7 @@ def install_handlers(app: FastAPI) -> None:
         *CONFLICT,
         *NOT_FOUND,
         PathNotAllowed,
+        ArtifactTooLarge,
         ValueError,
         Exception,
     ):

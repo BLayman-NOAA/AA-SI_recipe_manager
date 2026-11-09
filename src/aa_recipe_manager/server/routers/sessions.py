@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: NOAA Fisheries
 """Sessions: open a recipe, read and edit its files, set inputs and run settings.
 
-Also the run config file a session uses (choose, create, save), and where a
-session's step outputs are saved, for the echogram pane.
+Also the run config file a session uses (choose, create, save), where a
+session's step outputs are saved, for the echogram pane, and a saved json
+output read back, for the statistics pane.
 """
 
 from __future__ import annotations
@@ -13,10 +14,12 @@ from fastapi import APIRouter, Request, Response
 from aa_recipe_manager import api
 from aa_recipe_manager.server.errors import ActiveRunExists, StepNotFound
 from aa_recipe_manager.server.models import (
+    ArtifactJsonResponse,
     ChooseConfigRequest,
     CreateConfigRequest,
     EditRequest,
     EditResponse,
+    ErrorResponse,
     FileTextResponse,
     HistoryRequest,
     OpenSessionRequest,
@@ -219,3 +222,32 @@ def step_artifacts(
         storage_options=arguments["storage_options"],
     )
     return found
+
+
+@router.get(
+    "/{sid}/steps/{step}/artifacts/{output}/json",
+    response_model=ArtifactJsonResponse,
+    responses={413: {"model": ErrorResponse}},
+)
+def artifact_json(sid: str, step: str, output: str, request: Request):
+    """One json output of a step at its current hash, for the statistics pane.
+
+    An artifact larger than the server's ``max_artifact_json_bytes`` is
+    refused with 413.
+    """
+    arguments = store(request).cache_args(sid)
+    arguments.pop("outputs_dir")
+    limit = request.app.state.config.max_artifact_json_bytes
+    try:
+        found = api.artifact_json(
+            step_id=step, output=output, max_bytes=limit, **arguments
+        )
+    except api.UnknownStepError as error:
+        raise StepNotFound(str(error), step) from error
+    return {
+        "step_id": found.step_id,
+        "step_hash": found.step_hash,
+        "output": found.output,
+        "tier": found.tier,
+        "data": found.data,
+    }

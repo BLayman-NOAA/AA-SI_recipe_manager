@@ -79,8 +79,11 @@ export function MenuBar({ menus }: MenuBarProps) {
     const onPointer = (event: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(event.target as Node)) setOpenId(null);
     };
+    // The document sees the key before the window's shortcuts, so Escape closes only the menu.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenId(null);
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setOpenId(null);
     };
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);

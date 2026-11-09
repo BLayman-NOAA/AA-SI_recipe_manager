@@ -3140,7 +3140,7 @@
       "category": "ml_preprocessing",
       "implementation": {
         "key": "default",
-        "callable_path": "aa_si_ml.ml.normalize_data",
+        "callable_path": "aa_si_ml.ml.normalize_ml_data_step",
         "dependency": "aa-si-ml"
       },
       "include": "inc:sub_recipes/processing_lvl_4.yaml",
@@ -3162,6 +3162,15 @@
           "required": true,
           "description": "Flattened ML Dataset to normalize, from reshape_for_ml or add_auxiliary_features. Auxiliary columns are on unrelated scales (metres, seconds, a coefficient of variation); per_group_methods handles them.",
           "value": "${add_aux_features.ds_ml_ready}",
+          "many": false,
+          "semantic": null
+        },
+        {
+          "name": "normalizer",
+          "type": "object",
+          "required": false,
+          "description": "Fitted normalizer from an earlier normalize_ml_data step. When wired, nothing is fitted: its scaling is applied to this Dataset.",
+          "value": null,
           "many": false,
           "semantic": null
         }
@@ -3245,6 +3254,14 @@
           "name": "ds_normalized",
           "type": "Dataset",
           "description": "Dataset with normalized feature values",
+          "disposed": false,
+          "many": false,
+          "semantic": null
+        },
+        {
+          "name": "normalizer",
+          "type": "object",
+          "description": "The fitted scaling, for a later normalize_ml_data step to apply to another Dataset.",
           "disposed": false,
           "many": false,
           "semantic": null
@@ -4170,6 +4187,17 @@
       "group": "group:0"
     },
     {
+      "id": "out:normalize_ml.normalizer",
+      "kind": "output",
+      "label": "normalize_ml.normalizer",
+      "type": "object",
+      "declared": false,
+      "from": {
+        "step": "normalize_ml",
+        "output": "normalizer"
+      }
+    },
+    {
       "id": "out:run_hdbscan.background_label",
       "kind": "output",
       "label": "run_hdbscan.background_label",
@@ -5044,6 +5072,15 @@
       "target_input": null,
       "label": "other_params",
       "type": "dict"
+    },
+    {
+      "source": "normalize_ml",
+      "target": "out:normalize_ml.normalizer",
+      "kind": "exit",
+      "source_output": "normalizer",
+      "target_input": null,
+      "label": "normalizer",
+      "type": "object"
     },
     {
       "source": "run_hdbscan",

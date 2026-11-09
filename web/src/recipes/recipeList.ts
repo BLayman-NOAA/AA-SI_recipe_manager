@@ -67,6 +67,12 @@ export function latestSessionFor(
     .sort((a, b) => b.created.localeCompare(a.created))[0];
 }
 
+/** The session of the first open tab, in strip order, opened from a recipe file. */
+export function tabOn(sessions: SessionSummary[], sids: string[], path: string): SessionSummary | undefined {
+  const byId = new Map(sessions.map((session) => [session.id, session]));
+  return sids.map((sid) => byId.get(sid)).find((session) => session?.origin === path);
+}
+
 /**
  * Where a session's recipe lives: its folder relative to its recipe root, or
  * the last two folders of its origin when the recipe is not in the list.

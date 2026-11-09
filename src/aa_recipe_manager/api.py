@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from aa_recipe_manager.exceptions import (
     AmbiguousImplementationError,
+    ArtifactNotFound,  # noqa: F401  (re-exported)
+    ArtifactTooLarge,  # noqa: F401  (re-exported)
     DependencyConflictError,
     DependencyVersionError,
     ImplementationNotFoundError,
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
 
     from aa_recipe_manager.artifacts import (  # noqa: F401  (re-exported)
         ArtifactInfo,
+        ArtifactJson,
         StepArtifacts,
     )
     from aa_recipe_manager.config import RunConfig
@@ -57,6 +60,7 @@ if TYPE_CHECKING:
 #: Names re-exported from modules imported on first use.
 _LAZY_EXPORTS = {
     "ArtifactInfo": "aa_recipe_manager.artifacts",
+    "ArtifactJson": "aa_recipe_manager.artifacts",
     "StepArtifacts": "aa_recipe_manager.artifacts",
 }
 
@@ -1415,6 +1419,67 @@ def step_artifacts(
         fingerprint_cache=fingerprint_cache,
         base_dir=base_dir,
         instance_probe_limit=instance_probe_limit,
+    )
+
+
+def artifact_json(
+    recipe: str | Path | Recipe,
+    step_id: str,
+    output: str,
+    *,
+    inputs: dict[str, Any] | None = None,
+    user_cache_dir: str | Path | None = None,
+    survey_cache_dir: str | Path | None = None,
+    storage_options: dict[str, Any] | None = None,
+    fingerprint_cache: dict[tuple[str, str], Any] | None = None,
+    base_dir: str | Path | None = None,
+    max_bytes: int = 1 << 20,
+) -> ArtifactJson:
+    """Read back one json output of a plain step at its current hash.
+
+    The output is looked up as :func:`step_artifacts` finds it, in the first
+    tier that holds the step, and parsed. At most ``max_bytes + 1`` bytes are
+    read, local or remote.
+
+    Args:
+        recipe: Recipe file path or pre-loaded Recipe object.
+        step_id: The step.
+        output: The output to read.
+        inputs: Pipeline input values.
+        user_cache_dir: The user cache tier root. Without it nothing is held.
+        survey_cache_dir: The survey cache tier root.
+        storage_options: fsspec options for remote tiers and inputs.
+        fingerprint_cache: A dict kept between calls that holds file and
+            folder fingerprints, so remote folders are listed once.
+        base_dir: Directory that relative local paths in the recipe are
+            checked and fingerprinted under (default: the working directory).
+        max_bytes: Largest artifact read.
+
+    Returns:
+        An :class:`ArtifactJson` with the parsed value in ``data``.
+
+    Raises:
+        UnknownStepError: ``step_id`` is not a step of the recipe.
+        ArtifactNotFound: The step has no such output, or none is saved.
+        ArtifactTooLarge: The artifact is larger than ``max_bytes``.
+        ValueError: The step is mapped or swept, or the output is not json.
+    """
+    from aa_recipe_manager.artifacts import artifact_json as _artifact_json
+
+    dag = _load_dag(
+        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+    )
+    return _artifact_json(
+        dag,
+        step_id,
+        output,
+        inputs=inputs,
+        user_cache_dir=user_cache_dir,
+        survey_cache_dir=survey_cache_dir,
+        storage_options=storage_options,
+        fingerprint_cache=fingerprint_cache,
+        base_dir=base_dir,
+        max_bytes=max_bytes,
     )
 
 
