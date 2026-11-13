@@ -12,6 +12,8 @@ import {
   IconButton,
   Spinner,
   stateClass,
+  Waiting,
+  WAITING_TITLE,
   useDiagram,
   type ViewNodeProps,
 } from './common';
@@ -42,18 +44,19 @@ export function badgeClass(badge: StepBadge | null): string {
 }
 
 /**
- * The marks drawn over a step's corner: a spinner while it runs, instance
- * progress, the S, U or M letter and the saved indicator. They sit outside
- * the node's flow, so a change never resizes the node (which would lay the
- * diagram out again).
+ * The marks drawn over a step's corner: an hourglass while it waits in the
+ * run, a spinner while it runs, instance progress, the S, U or M letter and
+ * the saved indicator. They sit outside the node's flow, so a change never
+ * resizes the node (which would lay the diagram out again).
  */
 function RunMarks({ badge }: { badge: StepBadge }) {
   const letter = tierLetter(badge);
   const saved = badge.saved;
   const running = badge.actual === 'running';
-  if (!running && !badge.progress && !letter && !saved && !badge.willSave) return null;
+  if (!running && !badge.waiting && !badge.progress && !letter && !saved && !badge.willSave) return null;
   return (
     <div className="rc-run-marks">
+      {badge.waiting && <Waiting />}
       {running && <Spinner />}
       {badge.progress && (
         <span className="rc-run-mark rc-run-progress" title="Instances done">
@@ -121,6 +124,7 @@ export function checkpointLook(checkpoint: GraphStep['checkpoint']): {
 /** The step's tooltip for its run status, when the status needs one. */
 function statusTitle(badge: StepBadge): string | undefined {
   if (badge.actual === 'failed') return 'Failed: click to open its log';
+  if (badge.waiting) return WAITING_TITLE;
   if (skippedCached(badge)) return SKIPPED_CACHED_TITLE;
   if (notNeeded(badge)) return NOT_NEEDED_TITLE;
   return undefined;

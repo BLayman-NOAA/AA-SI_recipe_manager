@@ -176,6 +176,7 @@
           range_bin: "4m"
           ping_time_bin: "4s"
           nan_threshold: 0.95
+          range_var: "depth"
 
       - id: plot_mvbs
         op: plot_sv_echogram
@@ -236,7 +237,7 @@
     from aa_si_ml.ml import remove_noise
     from aa_si_visualization.echogram import plot_sv_echogram
     from aa_si_utils.utils import mask_sparse_bins
-    from echopype.commongrid import compute_MVBS
+    from aa_si_utils.utils import compute_mvbs
     from aa_si_ml.ml import compute_per_cell_statistics
     from aa_si_ml.ml import reshape_data_for_ml
     from aa_si_ml.ml import add_auxiliary_features
@@ -251,6 +252,7 @@
     time_min = None  # TODO: set this value  # str
     time_max = None  # TODO: set this value  # str
     crop_max_range_m = None  # TODO: set this value  # float
+    mvbs_range_var_max = None  # TODO: set this value  # str
     echodata = None  # TODO: set this value  # echodata
     seafloor_depth = None  # TODO: set this value  # dataarray
 
@@ -456,6 +458,7 @@
         ds_Sv=remove_noise_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
         nan_threshold=0.95,
     )
 
@@ -465,10 +468,12 @@
 
     # compute_mvbs: Compute Mean Volume Backscattering Strength by averaging Sv
     # over range and time bins.
-    ds_MVBS = compute_MVBS(
+    ds_MVBS = compute_mvbs(
         ds_Sv=rechunk_before_mvbs_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
+        range_var_max=mvbs_range_var_max,
     )
 
     # compute_cell_stats: Compute statistics within each MVBS cell (such as the
@@ -477,6 +482,8 @@
         ds_Sv=remove_noise_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
+        range_var_max=mvbs_range_var_max,
         statistics=['cv'],
     )
 

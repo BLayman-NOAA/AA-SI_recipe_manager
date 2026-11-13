@@ -387,6 +387,49 @@ describe('Diagram', () => {
       await waitFor(() => expect(mark()).toBeNull());
     });
 
+    it('marks the steps the run going has not got to, until each starts', async () => {
+      const store = useRunStore.getState();
+      store.resetFor(SID);
+      store.begin('r1');
+      store.apply('r1', [
+        {
+          seq: 1,
+          time: 1,
+          kind: 'plan',
+          run_id: 'x',
+          data: {
+            steps: {
+              seed: { hash: 'h-seed', planned: 'compute', tier: null },
+              total: { hash: 'h-total', planned: 'compute', tier: null },
+            },
+            blockers: [],
+          },
+        },
+      ]);
+      renderWithClient(<Diagram />);
+      await laidOut();
+      const waiting = (id: string) => within(nodeElement(id)).queryByRole('img', { name: 'Waiting in this run' });
+      await waitFor(() => expect(waiting('seed')).not.toBeNull());
+      expect(waiting('total')).not.toBeNull();
+      expect(screen.getByLabelText('Legend')).toHaveTextContent('Waiting in this run');
+
+      act(() =>
+        useRunStore.getState().apply('r1', [
+          { seq: 2, time: 2, kind: 'step_started', run_id: 'x', data: { step: 'seed', index: 1, total: 2, instances: null, chain: null } },
+        ]),
+      );
+      await waitFor(() => expect(waiting('seed')).toBeNull());
+      expect(within(nodeElement('seed')).getByRole('img', { name: 'Running' })).toBeInTheDocument();
+      expect(waiting('total')).not.toBeNull();
+
+      act(() =>
+        useRunStore.getState().apply('r1', [
+          { seq: 3, time: 3, kind: 'run_finished', run_id: 'x', data: { status: 'cancelled', executed: [], skipped: [], pruned: [], untargeted: [] } },
+        ]),
+      );
+      await waitFor(() => expect(waiting('total')).toBeNull());
+    });
+
     it('does not render again for a batch of log events', async () => {
       const store = useRunStore.getState();
       store.resetFor(SID);
@@ -485,6 +528,7 @@ describe('DiagramView', () => {
       surveyBacked: false,
       onDisk: true,
       partly: null,
+      waiting: false,
       note: null,
     };
 

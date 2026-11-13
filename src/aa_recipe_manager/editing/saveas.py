@@ -243,9 +243,9 @@ def plan_elsewhere(
         WorkspaceError: A file to write is one of this recipe's, or the
             target is a run config.
     """
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
-    registry = load_builtin_registry()
+    registry = load_registry(recipe_ops(workspace.recipe))
     old_dir, new_dir = workspace.base_dir, target.parent
     documents = workspace.live_documents()
     places = [target, *(new_dir / workspace.label(d) for d in documents[1:])]

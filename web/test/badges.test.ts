@@ -137,6 +137,33 @@ describe('stepBadges', () => {
     expect(badges.chain_inc.predicted).toBe('survey');
   });
 
+  it('marks the steps the run going will get to and has not started', () => {
+    const plan = event(1, 'plan', {
+      steps: {
+        seed: { hash: 'hash-seed', planned: 'load', tier: 'user' },
+        chain_inc: { hash: 'hash-chain_inc', planned: 'compute', tier: null },
+        leaf_add: { hash: 'hash-leaf_add', planned: 'pruned', tier: null },
+        total: { hash: 'hash-total', planned: 'compute', tier: null },
+      },
+      blockers: [],
+    });
+    const started = event(2, 'step_started', { step: 'seed', index: 1, total: 3, instances: null, chain: null });
+    const waiting = (events: RunEvent[]) =>
+      Object.entries(stepBadges(withSubGraph, PREVIEW, runMarks(reduceEvents(initialRunState('r'), events))))
+        .filter(([, badge]) => badge.waiting)
+        .map(([id]) => id);
+
+    // Nothing waits before the plan names the steps.
+    expect(waiting([event(1, 'run_started', { recipe: 'client_with_sub' })])).toEqual([]);
+    // A loaded step waits too; a step the run leaves out does not.
+    expect(waiting([plan])).toEqual(['seed', 'chain_inc', 'total']);
+    expect(waiting([plan, started])).toEqual(['chain_inc', 'total']);
+    const done = event(3, 'step_finished', { step: 'seed', disposition: 'hit-user-cache', tier: 'user', hash: 'hash-seed', index: 1, total: 3 });
+    expect(waiting([plan, started, done])).toEqual(['chain_inc', 'total']);
+    const end = event(4, 'run_finished', { status: 'cancelled', executed: ['seed'], skipped: [], pruned: [], untargeted: [] });
+    expect(waiting([plan, started, done, end])).toEqual([]);
+  });
+
   it('marks the steps the recipe checkpoints', () => {
     const graph = structuredClone(withSubGraph);
     const total = graph.nodes.find((node) => node.id === 'total');

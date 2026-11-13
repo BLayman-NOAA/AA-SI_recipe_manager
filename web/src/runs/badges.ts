@@ -35,7 +35,21 @@ export interface StepBadge {
   onDisk: boolean;
   /** Some instances of a fanned out step are held and not all, as "2 of 3". */
   partly: { count: number; of: number | null } | null;
+  /** The run going will compute or load the step, and has not started it yet. */
+  waiting: boolean;
   note: string | null;
+}
+
+/** What a run plans for the steps it will get to: compute, load, or find already done. */
+const PLANNED_TO_RUN: ReadonlySet<StepRunState['planned']> = new Set(['compute', 'load', 'marker']);
+
+/**
+ * Whether a step waits in a run that is going. Known only once the run's plan
+ * names the step, so nothing waits before the plan arrives, and never a step
+ * the run leaves out.
+ */
+export function waitingInRun(actual: StepRunState | undefined, live: boolean): boolean {
+  return live && actual?.status === 'queued' && PLANNED_TO_RUN.has(actual.planned);
 }
 
 /** Map a planned disposition of either vocabulary (the preview's or the plan event's) to a mark. */
@@ -206,6 +220,7 @@ export function stepBadges(graph: Graph, preview: Preview | null, run: RunMarks 
       surveyBacked: Boolean(ahead?.held_by.includes('survey')),
       onDisk: savedOnDisk(ahead, actual, startPreview.get(node.id), run?.targets?.includes(node.id) ?? false),
       partly: partlyHeld(ahead),
+      waiting: waitingInRun(actual, live),
       note: planned?.note ?? null,
     };
   }

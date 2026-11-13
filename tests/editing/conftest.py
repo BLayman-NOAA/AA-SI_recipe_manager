@@ -22,7 +22,7 @@ UC1 = EXAMPLES / "HB1603" / "UC1"
 HAVE_EXAMPLES = EXAMPLES.is_dir()
 
 #: Folders whose YAML files are run outputs or demo caches, not recipes.
-SKIPPED_FOLDERS = {"outputs", "demo"}
+SKIPPED_FOLDERS = {"outputs", "demo", "run"}
 
 
 def _yaml_files(root: Path) -> list[Path]:

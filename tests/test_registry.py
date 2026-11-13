@@ -470,7 +470,7 @@ class TestBuiltinLoader:
         assert ep_detect_impl.output_map == {"seafloor_depth": "__return__"}
 
         compute_mvbs_impl = reg.get_implementation("compute_mvbs")
-        assert compute_mvbs_impl.callable_path == "echopype.commongrid.compute_MVBS"
+        assert compute_mvbs_impl.callable_path == "aa_si_utils.utils.compute_mvbs"
         assert compute_mvbs_impl.output_map == {"ds_MVBS": "__return__"}
 
         plot_sv_impl = reg.get_implementation("plot_sv_echogram")

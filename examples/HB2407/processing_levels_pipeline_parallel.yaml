@@ -108,6 +108,8 @@ steps:
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}
       nan_threshold: 0.6
+      # Level 2 masks compute_sv's Sv, which carries no depth.
+      range_var: "echo_range"
 
 
   - id: plot_mvbs

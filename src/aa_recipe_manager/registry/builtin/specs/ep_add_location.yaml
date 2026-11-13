@@ -1,0 +1,65 @@
+op: ep_add_location
+cache_key: ep_add_location  # pinned cache identity - keep stable across op renames
+description: >
+  Add ``latitude`` and ``longitude`` at each ping to an Sv Dataset, interpolated
+  from the raw file's position fixes with echopype.
+notes: >
+  This step wraps echopype.consolidate.add_location: repeated fix times are
+  dropped first, keeping the first, and the fixes are interpolated onto
+  ``ping_time``.
+
+  A file with no usable fixes, which echopype rejects, gets ``latitude`` and
+  ``longitude`` filled with NaN and a warning by default, so a survey merged
+  from files with and without position still lines up. Set ``missing`` to
+  ``error`` to fail instead.
+category: consolidate
+inputs:
+  ds_Sv:
+    type: Dataset
+    description: Sv dataset to add position to, typically from compute_sv.
+  echodata:
+    type: EchoData
+    description: The raw file's EchoData, which holds the position fixes.
+outputs:
+  ds_Sv:
+    type: Dataset
+    description: Input Sv dataset with ``latitude`` and ``longitude`` along ping_time.
+    expected_variables:
+      - latitude
+      - longitude
+params:
+  nmea_sentence:
+    type: str
+    description: >
+      NMEA sentence type to take position from, such as ``GGA``. Unset uses
+      every sentence type the file recorded.
+    notes: >
+      Mixing sentence types can repeat fix times at different resolutions;
+      echopype then keeps the first fix for each time.
+    required: false
+    default: null
+  datagram_type:
+    type: str
+    description: >
+      EK datagram to take position from, ``MRU1`` or ``IDX``. Unset uses the
+      NMEA fixes.
+    required: false
+    default: null
+  missing:
+    type: str
+    description: >
+      What to do for a file with no usable position fixes: ``nan`` fills
+      latitude and longitude with NaN, ``error`` fails the step.
+    required: false
+    default: "nan"
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.add_location
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      ds_Sv: __return__

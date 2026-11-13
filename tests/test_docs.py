@@ -343,9 +343,12 @@ def test_source_resolution_for_installed_package():
     assert location.resolved is True
     assert location.repo_relative_path == "echopype/calibrate/api.py"
     assert location.ref == f"v{importlib.metadata.version('echopype')}"
-    assert location.github_url.startswith(
-        "https://github.com/OSOceanAcoustics/echopype/blob/"
-    )
+    # echopype moved from OSOceanAcoustics to echostack-org; the link follows
+    # whichever repository the installed version's metadata names.
+    assert location.github_url.startswith((
+        "https://github.com/OSOceanAcoustics/echopype/blob/",
+        "https://github.com/echostack-org/echopype/blob/",
+    ))
 
 
 @pytest.mark.slow

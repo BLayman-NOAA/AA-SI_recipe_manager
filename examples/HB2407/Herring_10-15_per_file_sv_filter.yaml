@@ -143,6 +143,7 @@ steps:
       range_bin: "2m"
       ping_time_bin: "2s"
       nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+      range_var: "depth"
 
   - id: plot_mvbs
     op: plot_sv_echogram

@@ -70,18 +70,11 @@ function useDocumentMoves(element: RefObject<HTMLElement | null>): number {
   return moves;
 }
 
-/** Copy the styles EchogramGL adds to the main page into another document lacking them. */
-function shareStyles(target: Document): void {
-  if (target === document) return;
-  for (const style of document.head.querySelectorAll('style[id]')) {
-    if (!target.getElementById(style.id)) target.head.append(target.importNode(style, true));
-  }
-}
-
 /**
  * Create the panel in the host element once WebGPU answers, and hand it to the
- * store. A WebGPU canvas may not survive a move to another window, so when the
- * host moves to another document the panel is made again there.
+ * store. A panel belongs to the window it was made in: it draws on that
+ * window's frames and adds its styles to that document. So when the host moves
+ * to another document the panel is made again there.
  */
 function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
   const [gpu, setGpu] = useState<GpuState>({ kind: 'starting' });
@@ -107,7 +100,6 @@ function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
           onLayersChange: store.onPanelLayersChange,
           onViewChange: store.settingsChanged,
         });
-        shareStyles(container.ownerDocument);
         setGpu({ kind: 'ready' });
         void store.attach(panel);
       })
@@ -204,6 +196,7 @@ export function EchogramPane() {
   const graph = useCurrentSession().data?.graph;
   const layers = useEchogramStore((state) => state.layers);
   const titles = useEchogramStore((state) => state.titles);
+  const bare = useEchogramStore((state) => state.bare);
   const choice = useEchogramStore((state) => state.choice);
   const pendingRun = useEchogramStore((state) => state.pendingRun);
   const message = useEchogramStore((state) => state.message);
@@ -221,11 +214,13 @@ export function EchogramPane() {
               layers={layers}
               front={sid}
               titles={titles}
+              bare={bare}
               onSelect={(layer) =>
                 layer.sid === sid ? selectStep(useView, graph, layer.step) : openTab(layer.sid, layer.step)
               }
               onRefresh={(layer) => void store.refresh(layer.id)}
               onRemove={(layer) => store.remove(layer.id)}
+              onAddLayer={(layer) => void store.addLayer(layer.id)}
               onRun={(layer) =>
                 runToHere(layer.step, (runId) => store.runStarted(layer.sid, layer.step, runId, layer.id))
               }

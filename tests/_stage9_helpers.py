@@ -224,6 +224,59 @@ def count_items(values: list) -> int:
     return len(values)
 
 
+def keep_above(x: int, floor: int = 15) -> int | None:
+    """Return ``x``, or None when it is not above ``floor``: an empty instance."""
+    return x if x > floor else None
+
+
+def add_total(x: int, values: list[int]) -> int:
+    """Add the sum of a whole folded list to ``x``."""
+    return x + sum(values)
+
+
+def small_dataset(x: int) -> Any:
+    """A two-sample dataset along ``t`` holding ``x`` and ``x + 1``."""
+    import numpy as np
+    import xarray as xr
+
+    return xr.Dataset(
+        {"v": ("t", np.array([x, x + 1], dtype=float), {"units": "m"})},
+        coords={"t": np.array([2 * x, 2 * x + 1])},
+    )
+
+
+def concat_small(datasets: list, dim: str = "t") -> Any:
+    """Concatenate datasets along ``dim``."""
+    import xarray as xr
+
+    return xr.concat(list(datasets), dim=dim)
+
+
+def only_first(x: int) -> dict[str, int]:
+    """A result dict holding ``first`` but not ``second``."""
+    return {"first": x}
+
+
+def label(text: str) -> str:
+    """Return ``text``: a step whose output is a string param."""
+    return text
+
+
+def total_of(ds: Any) -> float:
+    """Sum of a dataset's ``v``."""
+    return float(ds["v"].sum())
+
+
+#: Values passed to ``record``, for checking what a generated flow computed.
+RECORDED: list[Any] = []
+
+
+def record(value: Any) -> Any:
+    """Keep ``value`` in RECORDED and return it."""
+    RECORDED.append(value)
+    return value
+
+
 def console_note(x: int) -> int:
     """Print a line straight to the terminal, past the run log."""
     from aa_recipe_manager.executor.console import console_print

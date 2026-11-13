@@ -44,6 +44,23 @@ function fakePanel() {
   return panel;
 }
 
+/** Panel settings over sv and another source, with a window and the given layers. */
+function view(layers: ViewSettings['layers']): ViewSettings {
+  return {
+    version: 2,
+    sources: [{ id: SV_ID, store: 'u' }, { id: 'other', store: 'v' }],
+    layers,
+    level: 'auto',
+    pixelsPerPing: 1,
+    colormap: 'magma',
+    filter: 'nearest',
+    xUnit: 'time',
+    yUnit: 'depth',
+    aspect: { mode: 'free', exaggeration: 1 },
+    window: { x: [0, 10], y: [0, 50] },
+  };
+}
+
 const store = () => useEchogramStore.getState();
 const layer = (id: string) => store().layers.find((entry) => entry.id === id);
 
@@ -101,6 +118,7 @@ beforeEach(() => {
     bySession: {},
     titles: {},
     lines: {},
+    bare: [],
   });
   useTabs.setState({ sids: [SID, 'T'], pendingSelection: null });
   store().activate(SID);
@@ -436,11 +454,60 @@ describe('a drawn layer', () => {
     expect(store().layers).toEqual([]);
   });
 
-  it('goes when the user removes its last layer in the panel', async () => {
+  it('keeps its row when the user removes its last layer in the panel, and says so until a layer comes back', async () => {
     const panel = await shown();
     store().onPanelLayersChange([{ id: 0, source: 'other' } as never]);
-    await vi.waitFor(() => expect(panel.removeSource).toHaveBeenCalledWith(SV_ID));
+    expect(store().bare).toEqual([SV_ID]);
+    expect(layer(SV_ID)?.state).toBe('shown');
+    expect(panel.removeSource).not.toHaveBeenCalled();
+
+    store().onPanelLayersChange([{ id: 0, source: SV_ID } as never]);
+    expect(store().bare).toEqual([]);
+  });
+
+  it('adds a layer of its source on top, on the first free channel, leaving the view where it is', async () => {
+    const panel = await shown();
+    store().onPanelLayersChange([]);
+    const below = { id: 'o', source: 'other', channel: 0 };
+    const taken = { id: `${SV_ID}-layer`, source: SV_ID, channel: 0 };
+    panel.settingsObject = view([below, taken]);
+    await store().addLayer(SV_ID);
+    expect(panel.applySettings).toHaveBeenCalledTimes(1);
+    const applied = panel.applySettings.mock.calls[0][0];
+    expect(applied).toEqual({
+      ...view([below, taken, { id: `${SV_ID}-layer-1`, source: SV_ID, channel: 1, color: { colormap: 'magma' } }]),
+      window: undefined,
+    });
+  });
+
+  it('adds a labels layer on the cluster palette', async () => {
+    const grid = 'S/embed_results/ds_normalized/ml_dataset_hdbscan_results_grid';
+    mockApi({
+      'GET /api/sessions/S/steps/embed_results/artifacts': embed,
+      'GET /api/sessions/S/steps/embed_results/artifacts?output=ds_normalized&var=ml_dataset_hdbscan_results_grid':
+        withResolution(embed, { var: 'ml_dataset_hdbscan_results_grid' }),
+    });
+    const panel = fakePanel();
+    await store().attach(panel);
+    await store().show(SID, 'embed_results');
+    await store().addChoice(store().choice!.choices[0]);
+    await settle();
+    store().onPanelLayersChange([]);
+    expect(store().bare).toEqual([grid]);
+    panel.settingsObject = view([]);
+    await store().addLayer(grid);
+    expect(panel.applySettings.mock.calls[0][0].layers).toEqual([
+      { id: `${grid}-layer-1`, source: grid, channel: 0, color: { palette: 'cluster' } },
+    ]);
+  });
+
+  it('is removed with its source from the list while it has no layer', async () => {
+    const panel = await shown();
+    store().onPanelLayersChange([]);
+    store().remove(SV_ID);
+    expect(store().bare).toEqual([]);
     expect(store().layers).toEqual([]);
+    await vi.waitFor(() => expect(panel.removeSource).toHaveBeenCalledWith(SV_ID));
   });
 
   it('waits for its own panel calls, then reads the newest stack the panel reported', async () => {
@@ -463,15 +530,18 @@ describe('a drawn layer', () => {
     expect(store().layers).toHaveLength(1);
     expect(panel.removeSource).not.toHaveBeenCalled();
 
+    expect(store().bare).toEqual([]);
+
     release = hold();
-    const removed = store().refresh(SV_ID);
+    const bared = store().refresh(SV_ID);
     await vi.waitFor(() => expect(panel.retry).toHaveBeenCalledTimes(2));
     store().onPanelLayersChange([]);
-    expect(store().layers).toHaveLength(1);
+    expect(store().bare).toEqual([]);
     release();
-    await removed;
-    await vi.waitFor(() => expect(store().layers).toEqual([]));
-    expect(panel.removeSource).toHaveBeenCalledWith(SV_ID);
+    await bared;
+    await vi.waitFor(() => expect(store().bare).toEqual([SV_ID]));
+    expect(store().layers).toHaveLength(1);
+    expect(panel.removeSource).not.toHaveBeenCalled();
   });
 
   it('stays when the panel still has a layer reading it', async () => {
@@ -540,6 +610,30 @@ describe('sessions and reloads', () => {
     expect(reloaded.sourceIds).toEqual([SV_ID]);
     expect(reloaded.applySettings.mock.calls[0][0]).toMatchObject({ layers: [{ source: SV_ID, channel: 1 }] });
     expect(layer(SV_ID)?.state).toBe('shown');
+  });
+
+  it('restores a source saved without a layer as one without a layer', async () => {
+    mockApi({ [SV]: svMapped, [SV_CHOSEN]: svMapped });
+    const panel = fakePanel();
+    await store().attach(panel);
+    await store().show(SID, 'sv');
+    await settle();
+    store().onPanelLayersChange([]);
+    panel.settingsObject = view([]);
+    store().captureSettings();
+    expect(saved()).not.toHaveProperty('bare');
+
+    store().detach();
+    useEchogramStore.setState({ layers: [], settings: null });
+    const reloaded = fakePanel();
+    // The panel opens a source with a layer of its own, which the saved settings replace.
+    reloaded.settingsObject = view([{ id: `${SV_ID}-layer`, source: SV_ID, channel: 0 }]);
+    store().restore();
+    await store().attach(reloaded);
+    expect(reloaded.applySettings.mock.calls[0][0].layers).toEqual([]);
+    expect(store().bare).toEqual([]);
+    store().onPanelLayersChange([]);
+    expect(store().bare).toEqual([SV_ID]);
   });
 
   it("imports the front session's layers from the key it had before, once", () => {
@@ -1115,10 +1209,11 @@ describe('lines', () => {
     expect(layer(FIT_ID)).toMatchObject({ state: 'shown', error: null });
     expect(panel.sourceIds).toEqual([SV_ID]);
 
-    // The panel's own removal of the value's last layer does the same.
+    // A value whose last layer the user removed in the panel still holds the lines.
     store().onPanelLayersChange([]);
-    await vi.waitFor(() => expect(layer(FIT_ID)).toMatchObject({ state: 'error', error: NEEDS_VALUE }));
-    expect(layer(SV_ID)).toBeUndefined();
+    expect(store().bare).toEqual([SV_ID]);
+    expect(layer(FIT_ID)).toMatchObject({ state: 'shown', error: null });
+    expect(handed(panel)).toHaveLength(instances.length);
   });
 
   it('says so when a refresh finds the step no longer has the line', async () => {

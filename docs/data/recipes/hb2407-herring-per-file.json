@@ -226,6 +226,17 @@
       "declared_in": "sub_recipes/processing_lvl_2_per_file.yaml"
     },
     {
+      "id": "in:mvbs_range_var_max",
+      "kind": "input",
+      "label": "inputs.mvbs_range_var_max",
+      "type": "str",
+      "declared": true,
+      "required": false,
+      "default": null,
+      "description": "Deepest value the MVBS and cell grids cover, such as \"260m\". Unset reads it from the data.",
+      "declared_in": "sub_recipes/processing_lvl_3.yaml"
+    },
+    {
       "id": "in:mvbs_chunk_ping_time",
       "kind": "input",
       "label": "inputs.mvbs_chunk_ping_time",
@@ -2322,8 +2333,8 @@
           "units": null,
           "description": "Meter-valued variable to bin along: 'echo_range' (from the transducer face) or 'depth' (from the surface; the dataset must carry depth). Must match compute_mvbs and compute_per_cell_statistics.",
           "default": "echo_range",
-          "set": false,
-          "value": null,
+          "set": true,
+          "value": "depth",
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off"
@@ -2413,8 +2424,8 @@
       "category": "processing",
       "implementation": {
         "key": "default",
-        "callable_path": "echopype.commongrid.compute_MVBS",
-        "dependency": "echopype"
+        "callable_path": "aa_si_utils.utils.compute_mvbs",
+        "dependency": "aa-si-utils"
       },
       "include": "inc:sub_recipes/processing_lvl_3.yaml",
       "document": "sub_recipes/processing_lvl_3.yaml",
@@ -2470,8 +2481,8 @@
           "units": null,
           "description": "Meter-valued variable to bin along: 'echo_range' (from the transducer face) or 'depth' (from the surface; the dataset must carry depth, which ep_add_depth adds).",
           "default": "echo_range",
-          "set": false,
-          "value": null,
+          "set": true,
+          "value": "depth",
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off"
@@ -2482,8 +2493,8 @@
           "units": "m",
           "description": "Deepest value the bins cover, as a unit string (e.g. '2100m'). Unset reads the maximum from the data; supplying it keeps the step lazy.",
           "default": null,
-          "set": false,
-          "value": null,
+          "set": true,
+          "value": "${inputs.mvbs_range_var_max}",
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off"
@@ -2656,8 +2667,8 @@
           "units": null,
           "description": "Meter-valued variable to bin along: 'echo_range' (from the transducer face) or 'depth' (from the surface; the dataset must carry depth). Must match mask_sparse_bins and compute_mvbs.",
           "default": "echo_range",
-          "set": false,
-          "value": null,
+          "set": true,
+          "value": "depth",
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off"
@@ -2668,8 +2679,8 @@
           "units": "m",
           "description": "Deepest value the cells cover, as a unit string (e.g. '1810m'), matching compute_mvbs. Unset reads the extent from the data. Pin it whenever the results will be merged.",
           "default": null,
-          "set": false,
-          "value": null,
+          "set": true,
+          "value": "${inputs.mvbs_range_var_max}",
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off"
@@ -4741,6 +4752,15 @@
       "type": "Dataset"
     },
     {
+      "source": "in:mvbs_range_var_max",
+      "target": "compute_mvbs",
+      "kind": "param",
+      "source_output": "mvbs_range_var_max",
+      "target_input": "range_var_max",
+      "label": "mvbs_range_var_max -> range_var_max",
+      "type": "str"
+    },
+    {
       "source": "remove_noise",
       "target": "compute_cell_stats",
       "kind": "data",
@@ -4748,6 +4768,15 @@
       "target_input": "ds_Sv",
       "label": "ds_Sv",
       "type": "Dataset"
+    },
+    {
+      "source": "in:mvbs_range_var_max",
+      "target": "compute_cell_stats",
+      "kind": "param",
+      "source_output": "mvbs_range_var_max",
+      "target_input": "range_var_max",
+      "label": "mvbs_range_var_max -> range_var_max",
+      "type": "str"
     },
     {
       "source": "compute_mvbs",
@@ -5658,7 +5687,8 @@
         "sv_clean_unmasked": "${remove_noise.ds_Sv}",
         "range_bin": "4m",
         "ping_time_bin": "4s",
-        "nan_threshold": 0.95
+        "nan_threshold": 0.95,
+        "range_var": "depth"
       },
       "map_over": null,
       "bindings": {
@@ -5705,6 +5735,20 @@
             "step": "mask_sparse",
             "slot": "params.nan_threshold"
           }
+        ],
+        "range_var": [
+          {
+            "step": "mask_sparse",
+            "slot": "params.range_var"
+          },
+          {
+            "step": "compute_mvbs",
+            "slot": "params.range_var"
+          },
+          {
+            "step": "compute_cell_stats",
+            "slot": "params.range_var"
+          }
         ]
       },
       "inputs": [
@@ -5735,6 +5779,20 @@
           "required": false,
           "default": 0.6,
           "description": "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
+        },
+        {
+          "name": "range_var",
+          "type": "str",
+          "required": false,
+          "default": "depth",
+          "description": "Variable the sparse mask, MVBS and cell statistics bin on: \"depth\" (below the surface) or \"echo_range\" (from the transducer face)."
+        },
+        {
+          "name": "mvbs_range_var_max",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "description": "Deepest value the MVBS and cell grids cover, such as \"260m\". Unset reads it from the data."
         },
         {
           "name": "mvbs_chunk_ping_time",

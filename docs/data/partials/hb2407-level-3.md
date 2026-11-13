@@ -48,6 +48,21 @@
         type: float
         default: 0.6
         description: "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
+      # "depth" needs ep_add_depth upstream.
+      range_var:
+        type: str
+        default: "depth"
+        description: >
+          Variable the sparse mask, MVBS and cell statistics bin on: "depth" (below
+          the surface) or "echo_range" (from the transducer face).
+      # Must clear the range crop plus the transducer depth, or the deepest bins
+      # are dropped.
+      mvbs_range_var_max:
+        type: str
+        required: false
+        description: >
+          Deepest value the MVBS and cell grids cover, such as "260m". Unset reads
+          it from the data.
       mvbs_chunk_ping_time:
         type: int
         default: 1000
@@ -65,6 +80,7 @@
         params:
           range_bin: ${inputs.range_bin}
           ping_time_bin: ${inputs.ping_time_bin}
+          range_var: ${inputs.range_var}
           nan_threshold: ${inputs.nan_threshold}
 
       # A separate rechunk step because mask_sparse_bins loads Sv into memory;
@@ -84,6 +100,8 @@
         params:
           range_bin: ${inputs.range_bin}
           ping_time_bin: ${inputs.ping_time_bin}
+          range_var: ${inputs.range_var}
+          range_var_max: ${inputs.mvbs_range_var_max}
 
       - id: compute_cell_stats
         op: compute_per_cell_statistics
@@ -92,6 +110,8 @@
         params:
           range_bin: ${inputs.range_bin}
           ping_time_bin: ${inputs.ping_time_bin}
+          range_var: ${inputs.range_var}
+          range_var_max: ${inputs.mvbs_range_var_max}
           statistics:
             - cv
     ```
@@ -103,7 +123,7 @@
     ```python
     from aa_si_utils.utils import mask_sparse_bins
     from aa_si_utils.utils import rechunk_dataset
-    from echopype.commongrid import compute_MVBS
+    from aa_si_utils.utils import compute_mvbs
     from aa_si_ml.ml import compute_per_cell_statistics
 
     # mask_sparse: Remove spatiotemporal bins with fewer valid samples than a
@@ -112,6 +132,7 @@
         ds_Sv=remove_noise_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
         nan_threshold=0.95,
     )
 
@@ -121,10 +142,12 @@
 
     # compute_mvbs: Compute Mean Volume Backscattering Strength by averaging Sv
     # over range and time bins.
-    ds_MVBS = compute_MVBS(
+    ds_MVBS = compute_mvbs(
         ds_Sv=rechunk_before_mvbs_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
+        range_var_max=mvbs_range_var_max,
     )
 
     # compute_cell_stats: Compute statistics within each MVBS cell (such as the
@@ -133,6 +156,8 @@
         ds_Sv=remove_noise_ds_Sv,
         range_bin='4m',
         ping_time_bin='4s',
+        range_var='depth',
+        range_var_max=mvbs_range_var_max,
         statistics=['cv'],
     )
     ```

@@ -65,11 +65,15 @@ class CodeGenerator:
         self._register_defaults()
 
     def _register_defaults(self) -> None:
+        from aa_recipe_manager.generator.backends.echodataflow import (
+            EchodataflowBackend,
+        )
         from aa_recipe_manager.generator.backends.notebook import NotebookBackend
         from aa_recipe_manager.generator.backends.script import ScriptBackend
 
         self.register_backend("notebook", NotebookBackend())
         self.register_backend("script", ScriptBackend())
+        self.register_backend("echodataflow", EchodataflowBackend())
 
     def register_backend(self, name: str, backend: CodeGeneratorBackend) -> None:
         self._backends[name] = backend

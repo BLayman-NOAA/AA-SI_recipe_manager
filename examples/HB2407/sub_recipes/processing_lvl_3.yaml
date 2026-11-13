@@ -23,6 +23,17 @@ inputs:
     type: float
     default: 0.6
     description: "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
+  # "depth" needs ep_add_depth upstream.
+  range_var:
+    type: str
+    default: "depth"
+    description: "Variable the sparse mask, MVBS and cell statistics bin on: \"depth\" (below the surface) or \"echo_range\" (from the transducer face)."
+  # Must clear the range crop plus the transducer depth, or the deepest bins
+  # are dropped.
+  mvbs_range_var_max:
+    type: str
+    required: false
+    description: "Deepest value the MVBS and cell grids cover, such as \"260m\". Unset reads it from the data."
   # A separate rechunk step sets it because mask_sparse_bins loads Sv into
   # memory; standalone, it survives that step being removed or reordered.
   mvbs_chunk_ping_time:
@@ -42,6 +53,7 @@ steps:
     params:
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
       nan_threshold: ${inputs.nan_threshold}
 
   - id: rechunk_before_mvbs
@@ -59,6 +71,8 @@ steps:
     params:
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.mvbs_range_var_max}
 
   - id: compute_cell_stats
     op: compute_per_cell_statistics
@@ -67,5 +81,7 @@ steps:
     params:
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.mvbs_range_var_max}
       statistics:
         - cv

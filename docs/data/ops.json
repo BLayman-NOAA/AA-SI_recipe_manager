@@ -3,9 +3,9 @@
   "generator": "aa-recipe-manager 0.1.0",
   "source_links": true,
   "counts": {
-    "ops": 55,
-    "implementations": 54,
-    "sources_resolved": 53
+    "ops": 56,
+    "implementations": 55,
+    "sources_resolved": 54
   },
   "categories": [
     "annotation",
@@ -156,8 +156,8 @@
             "qualname": "add_auxiliary_features",
             "signature": "add_auxiliary_features(ds_ml_ready, dataset_name='ml_data_clean', features=None, echodata=None, ds_sv=None, seafloor_depth=None)",
             "doc": "Append auxiliary coordinate-derived features to the flattened ML dataset.\n\nSlots between :func:`reshape_data_for_ml` and :func:`normalize_data` in\nthe pipeline.  Built-in feature names are ``'depth'``,\n``'ping_time_seconds'``, ``'seafloor_depth'``, ``'altitude'``, and\n``'cell_cv'``.  User-defined features are supported via callable dicts.\n\nArgs:\n    ds_ml_ready (xr.Dataset): Dataset produced by\n        :func:`reshape_data_for_ml`.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    features (list or None): Features to append.  Each element is\n        either a ``str`` naming a built-in feature or a ``dict`` of\n        the form ``{'name': str, 'func': callable}`` for a\n        user-defined feature.  The callable receives\n        ``(ds_ml_ready, ping_indices, range_indices)`` and must\n        return a 1-D :class:`numpy.ndarray` of shape\n        ``(n_samples,)``.  When ``None`` the function is a no-op.\n    echodata: EchoData object providing\n        ``echodata[\"Vendor_specific\"][\"detected_seafloor_depth\"]``\n        (dims ``channel × ping_time``), from which the seafloor line is\n        taken as the mean across channels.  Required when\n        ``'seafloor_depth'`` or ``'altitude'`` is requested and\n        ``seafloor_depth`` is not supplied.  Ignored when it is.\n    ds_sv (xr.Dataset or None): Dataset returned by\n        :func:`compute_per_cell_statistics`, containing pre-computed\n        per-MVBS-cell statistics (e.g. ``cell_cv``).  Required when\n        ``'cell_cv'`` is requested.\n    seafloor_depth: Pre-detected seafloor line as a 1-D\n        ``(ping_time,)`` :class:`xarray.DataArray`, e.g. the output of a\n        ``detect_seafloor`` step.  Takes precedence over *echodata*, so\n        the seafloor used by the ML features is the same line chosen by\n        whichever detection method the pipeline ran, rather than a\n        channel mean recomputed here.  A list/tuple of per-segment\n        DataArrays is also accepted and concatenated along ``ping_time``\n        in the order given, which is the shape a per-file ``map_over``\n        step's output takes.  A ``channel`` dimension, if present, is\n        averaged away for backward compatibility.\n\n        Vertical reference: ``'altitude'`` is a difference\n        (``seafloor - sample``), so a constant offset shared by both\n        terms cancels and the frame does not matter as long as they\n        agree.  They normally do: ``detect_seafloor`` promotes its line\n        to surface-referenced only when its ``ds_Sv`` carries ``depth``,\n        which is the same condition under which ``depth`` reaches this\n        dataset, and ``'altitude'`` prefers ``depth`` over\n        ``echo_range`` to pair with it.\n\nReturns:\n    xr.Dataset: Dataset with auxiliary features appended to\n    ``dataset_name``.\n\nRaises:\n    ValueError: If a requested built-in feature cannot be computed\n        from the available data.",
-            "line": 829,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L829",
+            "line": 828,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L828",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -419,14 +419,14 @@
             "qualname": "add_line_overlay",
             "signature": "add_line_overlay(ds, line_file_path=None, line_name='line', file_format='auto', vertical_reference='surface', min_status=None, max_gap_s=None, edge_extend_s=0.0, depth_offset_m=0.0, min_coverage=0.0, file_time_start=None, file_time_end=None, long_name=None, window=None, window_key=None)",
             "doc": "Attach a depth-versus-time line from a file to a Dataset.\n\nOne entry point over the two line formats this workflow meets. Which one a\nfile is decides itself from the extension, so a recipe names the file and\nnot the reader.\n\nThe two formats do not carry the same thing, and the difference shows in\nwhat gets added:\n\n``.evl``\n    An Echoview line export, one line per file. Adds a single variable\n    named exactly *line_name*. This is the format seabed exports and\n    individual dive lines arrive in, so a dive profile with its two\n    confidence bounds is three files and three calls.\n\n``.csv``\n    The R-written click file, which carries a whole dive profile at once.\n    Adds four variables from the one file, *line_name* used as a prefix:\n    ``{line_name}_depth`` (the raw click depths), ``{line_name}_fit`` (the\n    LOESS-smoothed curve), and ``{line_name}_lower_ci`` /\n    ``{line_name}_upper_ci``.\n\nSo *line_name* is an exact name for an EVL and a prefix for a CSV. That\nasymmetry is in the data rather than in this function: one file holds one\nline, the other holds four.\n\nThe alignment arguments below (*vertical_reference* through\n*file_time_end*) apply to ``.evl`` only. A CSV carries its own timestamps\nand is joined on nearest ping within 30 seconds.\n\nTwo ways to say which file. ``line_file_path`` is the direct form.\n``window`` takes a mapping and reads the path out of it under\n*window_key*, which is what a mapped fan-out needs: ``${_item}`` is an\nall-or-nothing token with no attribute access, so a step mapped over a list\nof window dicts cannot pull the path out of the item as its own param. A\nwindow also supplies *file_time_start* / *file_time_end* when those are not\ngiven directly.\n\nA dive profile is three separate ``.evl`` exports, so attaching a whole one\nfrom a window is three calls differing only in *window_key* and\n*line_name*. The click ``.csv`` form carries all three plus the raw click\ndepths in a single file, and needs only one.\n\nArgs:\n    ds (xr.Dataset): Dataset to attach to, supplying the target\n        ``ping_time``. Not modified in place.\n    line_file_path (str | Path | list | None): Line file. For ``.evl`` this\n        may also be a folder or list to select from with *file_time_start*\n        / *file_time_end*. May be a remote fsspec URL. Mutually exclusive\n        with *window*; exactly one is required.\n    line_name (str): Variable name for an EVL, variable prefix for a CSV.\n    file_format (str): ``\"auto\"`` (default), ``\"evl\"`` or ``\"csv\"``.\n        ``\"auto\"`` reads ``.evl`` as EVL and anything else as CSV.\n    vertical_reference (str): EVL only. ``\"surface\"`` (default) or\n        ``\"transducer\"``.\n    min_status (int | None): EVL only. Drop points below this Echoview\n        status.\n    max_gap_s (float | None): EVL only. Widest hole to interpolate across.\n    edge_extend_s (float | None): EVL only. Seconds past the line's ends to\n        hold the end depths.\n    depth_offset_m (float): EVL only. Constant metres added to the line.\n    min_coverage (float): EVL only. Fraction of pings that must get a\n        finite depth.\n    file_time_start (str | datetime | None): EVL only. Window lower bound\n        for selecting line files out of a folder.\n    file_time_end (str | datetime | None): EVL only. Window upper bound.\n    long_name (str | None): EVL only. ``long_name`` attribute for the added\n        variable.\n    window (Mapping | None): Mapping carrying the line path under\n        *window_key*, plus optional ``start`` / ``end`` bounds and a\n        ``label``. Extra keys are ignored.\n    window_key (str | None): Key the line path is read from. Required when\n        *window* is given, since a window normally carries several lines\n        and there is no sensible default among them.\n\nReturns:\n    xr.Dataset: A copy of *ds* with the line variable(s) added.\n\nRaises:\n    TypeError: If *window* is given and is not a mapping.\n    ValueError: If both or neither of *line_file_path* and *window* are\n        given, if *window_key* is missing or absent from the window, or if\n        *file_format* is not \"auto\", \"evl\" or \"csv\".",
-            "line": 1804,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1804",
+            "line": 2028,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2028",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -517,14 +517,14 @@
             "qualname": "apply_mask_to_sv",
             "signature": "apply_mask_to_sv(ds_Sv, mask, fill_value=nan)",
             "doc": "Apply a boolean mask to the Sv variable in a dataset.\n\nFine-resolution Sv goes through ``echopype.mask.apply_mask``, which records\nits own provenance. That function checks the mask against ``ping_time`` and\n``range_sample`` specifically, so it rejects a gridded product: MVBS binned\non depth carries a ``depth`` dimension and no ``range_sample`` at all.\nMasking a grid is the same operation on a different axis, so it falls back\nto ``where`` rather than being an error.\n\nArgs:\n    ds_Sv (xr.Dataset): Sv dataset to mask.\n    mask (xr.DataArray): Boolean mask (True = keep, False = exclude).\n    fill_value: Value to assign where mask is False (default: ``np.nan``).\n\nReturns:\n    xr.Dataset: Masked copy of *ds_Sv*.",
-            "line": 2286,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2286",
+            "line": 2510,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2510",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -741,8 +741,8 @@
             "qualname": "assign_clusters_by_prediction",
             "signature": "assign_clusters_by_prediction(ds_normalized, clustering_results, clustering_model, dataset_name, normalization_name, ml_result_name=None, batch_size=200000, keep_model=True, predict_all=False)",
             "doc": "Extend a subsampled clustering to every point in the dataset.\n\n:func:`run_hdbscan` clusters at most ``sample_size`` points, and the rest\nreceive no label at all, so they come back NaN once the result is regridded.\nThis projects the fitted structure onto the unlabelled points with\n``hdbscan.approximate_predict`` and returns a result covering every sample\nindex, which :func:`embed_clustering_results` then embeds as usual.\n\nPoints the fit did see keep their fitted label rather than a predicted one:\nthe fit is the more authoritative answer where it exists, and only the\nremainder is being filled in. Predicted points that fall outside every\ncluster get -1, the same noise label the fit uses.\n\nThe fitted model is required and cannot come from ``clustering_results``:\n:func:`_clustering_result_to_dataset` drops the model when it converts a\nresult for checkpointing, recording only ``model_type`` and\n``model_available``. Wire ``clustering_model`` straight from the\n``run_hdbscan`` step that produced the result.\n\n``keep_model=False`` returns None on the ``clustering_model`` port. The\nmodel only serves the hierarchy plot downstream, and a checkpoint of this\nstep would otherwise have to pickle it; with the port empty every output\ncheckpoints as Zarr or JSON.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalized ML dataset the clustering was run\n        against, supplying the full feature matrix.\n    clustering_results (xr.Dataset | dict): Result from run_hdbscan, holding\n        the fitted labels and the sample indices they belong to.\n    clustering_model (hdbscan.HDBSCAN): The fitted model from the same\n        run_hdbscan step, fitted with ``prediction_data=True``.\n    dataset_name (str): Base ML dataset name, matching reshape_for_ml.\n    normalization_name (str): Normalized feature set name, matching\n        normalize_ml_data.\n    ml_result_name (str or None): Name the extended result is stored under.\n        Defaults to the name already on *clustering_results*.\n    batch_size (int): Rows predicted per approximate_predict call.\n        Defaults to 200000.\n    keep_model (bool): Pass the model through on ``clustering_model``.\n        False returns None there so the step checkpoints without pickle.\n    predict_all (bool): Predict a label for every row of *ds_normalized*\n        and keep none of the fitted labels. For labelling a dataset the\n        model was not fitted on, normalized with the same\n        FittedNormalizer. Defaults to False.\n\nReturns:\n    dict: With keys 'clustering_results' (an xr.Dataset covering every\n    sample index), 'clustering_model' (passed through unchanged), and\n    'cluster_labels' (sorted non-noise labels present in the result).\n\nRaises:\n    ValueError: If *clustering_model* is None, or if the stored result\n        references sample indices the normalized dataset does not have.",
-            "line": 2613,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2613",
+            "line": 2616,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2616",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -1379,14 +1379,14 @@
             "qualname": "build_range_grid",
             "signature": "build_range_grid(ds_Sv: xarray.core.dataset.Dataset, spacing_m: float, max_range_m: float | None = None, range_var: str = 'echo_range') -> xarray.core.dataarray.DataArray",
             "doc": "Build a uniformly spaced range grid to resample every channel onto.\n\n``echopype.commongrid.resample_to_geometry`` takes its target geometry as a\nDataArray rather than a number, so a recipe cannot express one in a params\nblock.  This produces that array, letting a step supply the grid as a wired\ninput.\n\nTwo things follow from choosing the spacing.  A multi-frequency sonar can\nsample each channel at a different interval, so putting them all on one\ngrid is what makes sample-level arithmetic across channels valid.  And\nsince the grid sets the range axis length, coarsening it is the lever on\nthe cost of anything that scales with pings times range samples.\n\nArgs:\n    ds_Sv: Calibrated Sv dataset supplying the range extent to cover.\n    spacing_m: Distance between adjacent target samples, in metres.\n    max_range_m: Deepest range to cover. Defaults to the deepest finite\n        value in ``range_var``. Capping it below the data's own extent\n        drops the samples past it, which is worth doing when the sonar\n        recorded well past anything of interest.\n    range_var: Meter-valued variable describing the source geometry.\n\nReturns:\n    Target ranges in metres on a ``range_sample`` dimension, named\n    ``echo_range``, ready to pass as ``target_grid``.\n\nRaises:\n    ValueError: If spacing_m is not positive, range_var holds no finite\n        values, or max_range_m is below the first sample.",
-            "line": 716,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L716",
+            "line": 940,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L940",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -1506,8 +1506,8 @@
             "qualname": "cluster_statistics_table",
             "signature": "cluster_statistics_table(ds_normalized, ml_result_name, dataset_name, sv_data_var='Sv', compute_pairwise_diffs=True)",
             "doc": "Per-cluster statistics as a JSON table (schema ``aa-table/1``).\n\nWraps :func:`extract_cluster_statistics`. Each row is a cluster or the\nnoise group (``group_id`` -1) with its sample count and share, then the\nmean, std, min and max of every feature. Columns carrying a feature\nstatistic are tagged with ``feature`` and ``stat``; ``features`` lists\neach feature with its display label and kind ('sv' or 'difference').\n\nArgs:\n    ds_normalized (xr.Dataset): Dataset holding the embedded cluster\n        labels and the source Sv variable.\n    ml_result_name (str): Name of the embedded clustering result.\n    dataset_name (str): Base ML dataset name.\n    sv_data_var (str): Sv variable the statistics are taken from, or\n        'ml_features' for the flattened ML features. Defaults to 'Sv'.\n    compute_pairwise_diffs (bool): Add each channel's difference from the\n        second-lowest frequency as a feature. Defaults to True.\n\nReturns:\n    dict: JSON-serialisable table with keys 'schema', 'title',\n    'description', 'group_column', 'columns', 'features', 'rows' and\n    'source'.",
-            "line": 2067,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2067",
+            "line": 2070,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2070",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -1600,14 +1600,14 @@
             "qualname": "combine_masks",
             "signature": "combine_masks(masks, mode='and')",
             "doc": "Combine a list of boolean masks using logical AND or OR.",
-            "line": 2043,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2043",
+            "line": 2267,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2267",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -1713,14 +1713,14 @@
             "qualname": "combine_raw_stores",
             "signature": "combine_raw_stores(raw_stores, ping_time_chunk=1000)",
             "doc": "Combine per-file stores or in-memory EchoData objects into a single EchoData.\n\nArgs:\n    raw_stores: List of store path strings (zarr/netcdf) produced by\n        ``read_raw_files_to_stores``, or a list of in-memory EchoData\n        objects (for ``intermediate_format=\"none\"`` mode).\n\n        A **list of such lists** is also accepted and flattened one level.\n        That is the shape a ``collect`` fan-in produces when the read step\n        is parallelized with ``map_over``: each mapped instance reads one\n        raw file and returns a one-element list, so the collected value is\n        ``[[store_0], [store_1], ...]``. Accepting both shapes lets the same\n        recipe step serve the whole-survey and per-file-parallel forms.\n        Order is preserved, which matters because ``ep.combine_echodata``\n        expects its inputs in time order.\n    ping_time_chunk: Target chunk length along ``ping_time`` for the combined\n        object (default: ``DEFAULT_PING_TIME_CHUNK``).  Controls the chunking\n        of the downstream zarr checkpoint.\n\nReturns:\n    EchoData: Combined EchoData object (lazily backed for file-based inputs).",
-            "line": 2993,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2993",
+            "line": 3221,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L3221",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -1787,7 +1787,8 @@
           "default": null,
           "many": false,
           "expected_variables": [
-            "Sv"
+            "Sv",
+            "ping_count"
           ],
           "expected_coords": [
             "ping_time",
@@ -1903,16 +1904,16 @@
         {
           "key": "default",
           "default": true,
-          "callable_path": "echopype.commongrid.compute_MVBS",
+          "callable_path": "aa_si_utils.utils.compute_mvbs",
           "version": null,
           "tested_versions": [],
           "setup": null,
           "teardown": null,
           "dependency": {
-            "name": "echopype",
-            "version": ">=0.6.0",
-            "source": "pypi",
-            "url": null
+            "name": "aa-si-utils",
+            "version": ">=0.1.0",
+            "source": "git",
+            "url": "https://github.com/BLayman-NOAA/AA-SI_Utils.git"
           },
           "param_map": [],
           "output_map": [
@@ -1922,25 +1923,25 @@
             }
           ],
           "source": {
-            "callable_path": "echopype.commongrid.compute_MVBS",
+            "callable_path": "aa_si_utils.utils.compute_mvbs",
             "resolved": true,
-            "module": "echopype.commongrid.api",
-            "qualname": "compute_MVBS",
-            "signature": "compute_MVBS(ds_Sv: xarray.core.dataset.Dataset, range_var: Literal['echo_range', 'depth'] = 'echo_range', range_bin: str = '20m', ping_time_bin: str = '20s', method: str = 'map-reduce', reindex: bool = False, skipna: bool = True, fill_value: float = nan, closed: Literal['left', 'right'] = 'left', range_var_max: str = None, **flox_kwargs)",
-            "doc": "Compute Mean Volume Backscattering Strength (MVBS)\nbased on intervals of range (``echo_range``) or depth (``depth``)\nand ``ping_time`` specified in physical units.\n\nOutput of this function differs from that of ``compute_MVBS_index_binning``, which computes\nbin-averaged Sv according to intervals of ``echo_range`` and ``ping_time`` specified as\nindex number.\n\nParameters\n----------\nds_Sv : xr.Dataset\n    dataset containing Sv and ``echo_range`` [m]\nrange_var: {'echo_range', 'depth'}, default 'echo_range'\n    The variable to use for range binning.\n    Must be one of ``echo_range`` or ``depth``.\n    Note that ``depth`` is only available if the input dataset contains\n    ``depth`` as a data variable.\nrange_bin : str, default '20m'\n    bin size along ``echo_range`` or ``depth`` in meters.\nping_time_bin : str, default '20s'\n    bin size along ``ping_time``\nmethod: str, default 'map-reduce'\n    The flox strategy for reduction of dask arrays only.\n    See flox `documentation <https://flox.readthedocs.io/en/latest/implementation.html>`_\n    for more details.\nreindex: bool, default False\n    If False, reindex after the blockwise stage. If True, reindex at the blockwise stage.\n    Generally, `reindex=False` results in less memory at the cost of computation speed.\n    Can only be used when method='map-reduce'.\n    See flox `documentation <https://flox.readthedocs.io/en/latest/implementation.html>`_\n    for more details.\nskipna: bool, default True\n    If true, the mean operation skips NaN values.\n    Else, the mean operation includes NaN values.\nfill_value: float, default np.nan\n    Fill value when no group data exists to aggregate.\nclosed: {'left', 'right'}, default 'left'\n    Which side of bin interval is closed.\nrange_var_max: str, default None\n    Range variable maximum. Can be true range variable maximum or the maximum depth the\n    user wishes to regrid to. If known, users can pass in range variable maximum to\n    ensure that `compute_MVBS` can lazily run without any computation.\n**flox_kwargs\n    Additional keyword arguments to be passed\n    to flox reduction function.\n\nReturns\n-------\nA dataset containing bin-averaged Sv",
-            "line": 30,
-            "github_url": "https://github.com/OSOceanAcoustics/echopype/blob/v0.11.1/echopype/commongrid/api.py#L30",
-            "repo": "OSOceanAcoustics/echopype",
-            "ref": "v0.11.1",
-            "repo_relative_path": "echopype/commongrid/api.py",
-            "origin": "metadata",
-            "installed_version": "0.11.1",
-            "note": null
+            "module": "aa_si_utils.utils",
+            "qualname": "compute_mvbs",
+            "signature": "compute_mvbs(ds_Sv: xarray.core.dataset.Dataset, range_var: str = 'echo_range', range_bin: str = '20m', ping_time_bin: str = '20s', method: str = 'map-reduce', reindex: bool = False, skipna: bool = True, fill_value: float = nan, closed: str = 'left', range_var_max: str | None = None) -> xarray.core.dataset.Dataset",
+            "doc": "Compute MVBS and record how many pings each time bin holds.\n\nThe binning and averaging are ``echopype.commongrid.compute_MVBS``, with\nthe same arguments.  The result also carries ``ping_count`` along\n``ping_time``.  When MVBS is computed per file, a file boundary inside a\ntime bin makes both files emit that bin, and :func:`concat_datasets` uses\nthe count to weight the two parts by the pings each one averaged.\n\nArgs:\n    ds_Sv: Sv dataset to average.\n    range_var: Variable to bin along, ``\"echo_range\"`` or ``\"depth\"``.\n    range_bin: Range bin size as a string (e.g. ``\"2m\"``).\n    ping_time_bin: Time bin size as a string (e.g. ``\"10s\"``).\n    method: Flox reduction strategy for dask arrays.\n    reindex: Reindex at the blockwise stage rather than after it.\n    skipna: Skip NaN values when averaging.\n    fill_value: Value for bins holding no data.\n    closed: Which side of each bin is closed, ``\"left\"`` or ``\"right\"``.\n    range_var_max: Deepest value the bins cover (e.g. ``\"1810m\"``).  None\n        reads it from the data, which computes a lazy dataset.\n\nReturns:\n    xr.Dataset: MVBS dataset with ``ping_count`` added.",
+            "line": 314,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L314",
+            "repo": "BLayman-NOAA/AA-SI_Utils",
+            "ref": "main",
+            "repo_relative_path": "src/aa_si_utils/utils.py",
+            "origin": "git",
+            "installed_version": "0.1.0",
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
-      "search": "compute_mvbs processing compute mean volume backscattering strength by averaging sv over range and time bins. returns a gridded mvbs dataset. ds_sv cleaned sv dataset to average, normally from mask_sparse_bins so sparse bins are already nan and do not pull the means toward the noise floor. ds_mvbs gridded mvbs dataset range_bin depth bin size for averaging (e.g. '2m') ping_time_bin ping-time bin size for averaging (e.g. '10s') range_var meter-valued variable to bin along: 'echo_range' (from the transducer face) or 'depth' (from the surface; the dataset must carry depth, which ep_add_depth adds). range_var_max deepest value the bins cover, as a unit string (e.g. '2100m'). unset reads the maximum from the data; supplying it keeps the step lazy. closed which side of each bin interval is closed: 'left' or 'right' skipna skip nan values when averaging. when false, any nan in a bin makes the whole bin nan, so masked data collapses. fill_value value for bins holding no data. unset keeps echopype's default, nan. method flox reduction strategy for dask arrays, normally 'map-reduce'. any other value needs reindex set to null in the same params block. reindex reindex at the blockwise stage rather than after it. false uses less memory and more time. only meaningful when method is 'map-reduce'. echopype.commongrid.compute_mvbs echopype",
-      "notes": "This step is echopype.commongrid.compute_MVBS called directly, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
+      "search": "compute_mvbs processing compute mean volume backscattering strength by averaging sv over range and time bins. returns a gridded mvbs dataset. ds_sv cleaned sv dataset to average, normally from mask_sparse_bins so sparse bins are already nan and do not pull the means toward the noise floor. ds_mvbs gridded mvbs dataset range_bin depth bin size for averaging (e.g. '2m') ping_time_bin ping-time bin size for averaging (e.g. '10s') range_var meter-valued variable to bin along: 'echo_range' (from the transducer face) or 'depth' (from the surface; the dataset must carry depth, which ep_add_depth adds). range_var_max deepest value the bins cover, as a unit string (e.g. '2100m'). unset reads the maximum from the data; supplying it keeps the step lazy. closed which side of each bin interval is closed: 'left' or 'right' skipna skip nan values when averaging. when false, any nan in a bin makes the whole bin nan, so masked data collapses. fill_value value for bins holding no data. unset keeps echopype's default, nan. method flox reduction strategy for dask arrays, normally 'map-reduce'. any other value needs reindex set to null in the same params block. reindex reindex at the blockwise stage rather than after it. false uses less memory and more time. only meaningful when method is 'map-reduce'. aa_si_utils.utils.compute_mvbs aa-si-utils",
+      "notes": "The binning is echopype.commongrid.compute_MVBS, so the bin edges and the averaging (in the linear domain, converted back to dB) are echopype's.\nThe result also carries ping_count, the number of pings in each time bin. When this step is mapped per file, a file boundary inside a time bin makes both files emit that bin, and merge_datasets with on_duplicate \"mean\" weights the two parts by it.\nEvery sample is assigned to a bin by the value of its range variable rather than by its range_sample index, so channels recorded at different sample intervals land in the same physical bins. This is what makes MVBS safe for arithmetic across channels on data whose channels do not share a geometry.\nThe flox_kwargs passthrough echopype accepts is not exposed, since a params block can only supply named arguments.",
       "used_by": [
         {
           "recipe": "hb1603-level-3",
@@ -2113,8 +2114,8 @@
             "qualname": "compute_per_cell_statistics",
             "signature": "compute_per_cell_statistics(ds_Sv, range_bin='2m', ping_time_bin='10s', statistics=None, data_var='Sv', range_var='echo_range', range_var_max=None, cells_only=False)",
             "doc": "Compute per-MVBS-cell statistics from fine-resolution Sv data.\n\nMust be called **before** :func:`mask_sparse_bins` and\n:func:`echopype.commongrid.compute_MVBS` using identical ``range_bin``,\n``ping_time_bin`` and ``range_var`` values so that the resulting cell grid\naligns exactly with the MVBS grid.\n\nResults are stored as new DataArrays inside a copy of *ds_Sv* with\ndistinct dimension names (``cell_ping_time``, ``cell_echo_range``) so\nthey do not conflict with the fine-resolution Sv dimensions.  Pass\nthe returned dataset to :func:`add_auxiliary_features` via the\n``ds_sv`` parameter to absorb the statistics into the ML feature\nmatrix.\n\nCurrently supported statistics:\n\n* ``'cv'`` — coefficient of variation (std / mean) computed in linear\n  space per ``(channel, time_bin, range_bin)`` cell.  Stored as\n  ``cell_cv``.\n\nArgs:\n    ds_Sv (xr.Dataset): Fine-resolution Sv dataset produced by\n        ``echopype.calibrate.compute_Sv``.\n    range_bin (str): Range bin size matching the downstream\n        ``compute_MVBS`` call (e.g. ``\"2m\"``).\n    ping_time_bin (str): Ping-time bin size matching the downstream\n        ``compute_MVBS`` call (e.g. ``\"10s\"``).\n    statistics (list[str] or None): Statistics to compute.  Defaults\n        to ``['cv']``.\n    data_var (str): Name of the Sv variable in *ds_Sv*.\n        Defaults to ``'Sv'``.\n    range_var (str): Meter-valued variable to bin along, matching the\n        downstream ``compute_MVBS`` call.  ``'echo_range'`` measures from\n        the transducer face, ``'depth'`` from the surface and requires the\n        dataset to carry a depth variable.  Defaults to ``'echo_range'``.\n        The cell dimension names do not change with it.\n    range_var_max (str or None): Deepest value the cells cover, as a unit\n        string (e.g. ``\"1810m\"``), matching the downstream ``compute_MVBS``\n        call.  When None the extent is read from the data, which forces a\n        compute on a lazy dataset AND lets each dataset choose its own cell\n        grid length.  That is fine for one merged dataset and wrong for a\n        fan-out: per-file results binned to their own extents concatenate by\n        outer-joining ``cell_echo_range`` and NaN-padding the short ones.\n        Pin it to the same value ``compute_MVBS`` is pinned to whenever the\n        results will be merged.\n    cells_only (bool): Return only the statistic DataArrays instead of a\n        copy of *ds_Sv* carrying them.  The default keeps the source\n        variables, which is what a single-dataset call wants.  Set it when\n        the results are checkpointed or merged: the fine-resolution Sv would\n        otherwise be written a second time, and concatenating on\n        ``cell_ping_time`` would drag ``ping_time`` and ``range_sample``\n        into the join, which across files with differing range_sample\n        lengths outer-joins and NaN-pads them.\n\nReturns:\n    xr.Dataset: Copy of *ds_Sv* with one new DataArray per statistic\n    (e.g. ``cell_cv``), each with dims\n    ``(channel, cell_ping_time, cell_echo_range)``.\n\nRaises:\n    ValueError: If an unknown statistic name is requested.",
-            "line": 479,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L479",
+            "line": 478,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L478",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -2402,14 +2403,14 @@
             "qualname": "compute_transducer_depth",
             "signature": "compute_transducer_depth(echodata, ds_Sv, datum_correction_m=0.0, use_heave=True, heave_sign=1.0, interp_method='linear')",
             "doc": "Per-ping transducer depth (m below surface) from the EK Platform group.\n\nReads the Platform group directly rather than going through echopype's own\nplatform vertical offsets, which get the sign wrong on both EK families for\ndifferent reasons. Pass the result to ``add_depth`` as ``depth_offset``.\n\nOn an EK80 drop keel vessel the transducers ride on a retractable keel and\n``drop_keel_offset`` records how far it was lowered, while the\n``transducer_offset_z`` and ``water_level`` fields\n``add_depth(use_platform_vertical_offsets=True)`` reads are left at zero;\nechopype carries ``drop_keel_offset`` for provenance and never reads it.\nAn EK60 file has no ``drop_keel_offset`` at all, and echopype maps the ER60\nper-ping transducer depth into ``water_level``, which its formula then\nsubtracts: the transducer comes out above the water surface, and every\ndepth is short by twice the draft.\n\nThe static position is per file and heave is per ping, giving\n``static offset + datum_correction_m + heave_sign * vertical_offset``.\nHeave is interpolated onto ``ds_Sv``'s ping_time here so that add_depth\npasses the result straight through instead of resampling it again with\nnearest neighbour.\n\nArgs:\n    echodata (EchoData): Source EchoData supplying the Platform group.\n    ds_Sv (xr.Dataset): Sv dataset supplying the target ``ping_time``.\n    datum_correction_m (float): Metres added to ``drop_keel_offset`` to\n        reach depth below the water surface, for when the recorded offset\n        is measured from a hull datum rather than the waterline. Positive\n        pushes the transducer deeper.\n    use_heave (bool): Add the per-ping ``vertical_offset`` (heave) term.\n        False holds the static keel depth on every ping.\n    heave_sign (float): Sign applied to ``vertical_offset``. The default\n        ``1.0`` was determined empirically on HB2407 (EK80, Henry B.\n        Bigelow) by correlating raw heave against the hand-verified EVL\n        seabed line: combining EVL depth with a heave_sign=+1 transducer\n        depth left a residual std of 0.14 m against 0.75 m for -1.0, a\n        5x difference (see AA-SI_recipe_manager/example_recipes/HB2407).\n        echopype's own platform-vertical-offsets formula uses -1.0, but\n        that formula is referenced from transducer_offset_z/water_level\n        (a hull datum), not drop_keel_offset, so there is no reason to\n        expect the same sign to carry over — re-verify on new\n        vessels/instrument setups the same way rather than assuming.\n    interp_method (str): Interpolation used to put heave on ``ping_time``.\n\nReturns:\n    xr.DataArray: Transducer depth in metres, dims ``(\"ping_time\",)``,\n    named ``transducer_depth``.",
-            "line": 1093,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1093",
+            "line": 1317,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1317",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -2515,14 +2516,14 @@
             "qualname": "create_frequency_mask",
             "signature": "create_frequency_mask(ds_Sv, frequencies_to_mask=None)",
             "doc": "Create a boolean mask that excludes selected frequency channels.\n\nThe decision is one boolean per channel. It is combined with a lazy\nall-true template rather than broadcast directly, because\n``broadcast_like`` against a dask-backed Sv returns a *numpy* array of the\nfull three-dimensional shape: a handful of booleans materialized into tens\nof megabytes, which then travels by value inside every downstream dask\ngraph and back to the client for every mapped instance.",
-            "line": 2015,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2015",
+            "line": 2239,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2239",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -2645,14 +2646,14 @@
             "qualname": "create_seafloor_mask",
             "signature": "create_seafloor_mask(ds_Sv, seafloor_depth, seafloor_buffer_m=0.0, range_var=None)",
             "doc": "Create a boolean mask that keeps samples above the detected seafloor.\n\nThe comparison is metres-vs-metres at every ``(channel, ping_time,\nrange_sample)`` cell. Both sides of the comparison must use the same\nvertical reference. ``range_var`` selects which meter-valued variable on\n``ds_Sv`` to compare against:\n\n* ``\"depth\"`` (metres below surface) — pair with a surface-referenced\n  ``seafloor_depth`` line.\n* ``\"echo_range\"`` (metres along beam from transducer) — pair with a\n  transducer-referenced ``seafloor_depth`` line.\n\nWhen ``range_var`` is ``None`` (default), it auto-selects ``\"depth\"`` if\nthat variable is present on ``ds_Sv`` (i.e., ``add_depth`` was run),\notherwise falls back to ``\"echo_range\"``.",
-            "line": 1980,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1980",
+            "line": 2204,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2204",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -2758,14 +2759,14 @@
             "qualname": "create_surface_mask",
             "signature": "create_surface_mask(ds_Sv, surface_depth_m=0.0)",
             "doc": "Create a boolean mask that excludes surface interference.",
-            "line": 2010,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2010",
+            "line": 2234,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2234",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -3032,14 +3033,14 @@
             "qualname": "crop_range_samples",
             "signature": "crop_range_samples(ds_Sv: xarray.core.dataset.Dataset, max_range_m: float | None = None, outlier_sigma: float | None = None, outlier_margin: float = 1.5, drop_trailing_all_nan: bool = True, data_var: str = 'Sv', range_var: str = 'echo_range') -> xarray.core.dataset.Dataset",
             "doc": "Trim trailing range samples that carry no data.\n\nA raw file records to the sonar's configured range, so after seafloor\nmasking the deep end of ``range_sample`` is entirely NaN.  Those samples\nstill cost memory and time in every downstream step, and they widen the\nbinned cell grid that :func:`compute_per_cell_statistics` and\n``compute_MVBS`` build, so trimming them once is worth a step of its own.\n\nRun this survey-wide, after the per-file datasets have been merged.  The\ntrim point is a property of the whole survey, and cropping per file would\nleave the segments with different ``range_sample`` lengths, which the\nping_time concatenation resolves by padding the short ones back out with\nNaN.\n\nThree criteria are available and compose: whichever are active are each\nturned into a candidate cut and the shallowest wins.\n\n* *outlier_sigma* rejects anomalous pings, then crops to the deepest\n  **retained** ping.  A single glitch ping reaching far past the seafloor\n  otherwise holds the whole range axis open, which is what defeats\n  *drop_trailing_all_nan*.  The threshold is deliberately generous, so\n  uncommon-but-real depths survive and only wild outliers are cut.\n* *max_range_m* is a hard ceiling, applied whether or not samples above it\n  hold data.\n* *drop_trailing_all_nan* is the lossless fallback when no outlier test is\n  requested.\n\nArgs:\n    ds_Sv: Dataset to crop.\n    max_range_m: Hard ceiling in metres.  Range samples whose shallowest\n        *range_var* across pings exceeds this are dropped, whether or not\n        they hold data, so a ceiling below the deepest echo of interest\n        discards it.  Combines with the other criteria; None disables it.\n    outlier_sigma: Standard deviations above the mean, over the per-ping\n        deepest finite sample, at which a ping becomes a candidate\n        outlier.  None disables outlier rejection.\n    outlier_margin: Multiplier applied to ``mean + outlier_sigma * sd`` to\n        get the reject threshold.  Raise it to flag fewer pings, lower it\n        to flag more.  Only used when *outlier_sigma* is set.\n    drop_trailing_all_nan: Crop to one past the deepest range sample\n        holding a finite *data_var* value anywhere in the dataset.\n        Lossless.  Ignored when *outlier_sigma* is set.  With this False\n        and both other criteria unset the dataset is returned unchanged.\n    data_var: Variable inspected for finite values.\n    range_var: Variable supplying each sample's range in metres.\n\nReturns:\n    xr.Dataset: *ds_Sv* sliced along ``range_sample``.\n\nRaises:\n    ValueError: If *data_var* holds no finite values, if *max_range_m*\n        excludes every range sample, or if outlier rejection would flag\n        every ping.",
-            "line": 574,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L574",
+            "line": 798,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L798",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -3174,14 +3175,14 @@
             "qualname": "detect_seafloor",
             "signature": "detect_seafloor(ds_Sv=None, echodata=None, channel=None, min_valid_depth_m=10.0)",
             "doc": "Detect seafloor depth and return a 1-D ``(ping_time,)`` DataArray.\n\nThe returned line is in metres. Its vertical reference depends on whether\n``ds_Sv`` has been passed through ``echopype.consolidate.add_depth``:\n\n* If ``ds_Sv`` contains a ``depth`` variable, the line is **surface\n  referenced** (metres below surface) so it can be compared directly\n  against ``ds_Sv['depth']`` in :func:`create_seafloor_mask`.\n* Otherwise the line is **transducer referenced** (metres along the beam\n  from the transducer face), matching ``ds_Sv['echo_range']``.",
-            "line": 1219,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1219",
+            "line": 1443,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1443",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -3327,7 +3328,7 @@
             "repo_relative_path": "src/aa_si_utils/data_retrieval.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -3460,8 +3461,8 @@
             "qualname": "embed_clustering_results",
             "signature": "embed_clustering_results(ds_normalized, clustering_results, dataset_name, ml_result_name)",
             "doc": "Embed one or more clustering results into the normalized dataset.",
-            "line": 2910,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2910",
+            "line": 2913,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2913",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -3672,6 +3673,137 @@
           "step": "ep_add_depth"
         }
       ]
+    },
+    {
+      "op": "ep_add_location",
+      "description": "Add ``latitude`` and ``longitude`` at each ping to an Sv Dataset, interpolated from the raw file's position fixes with echopype.",
+      "category": "consolidate",
+      "spec_file": "registry/builtin/specs/ep_add_location.yaml",
+      "experimental": false,
+      "sink": false,
+      "cache_key": "ep_add_location",
+      "version": null,
+      "inputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Sv dataset to add position to, typically from compute_sv.",
+          "required": true,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": null
+        },
+        {
+          "name": "echodata",
+          "type": "EchoData",
+          "description": "The raw file's EchoData, which holds the position fixes.",
+          "required": true,
+          "default": null,
+          "many": false,
+          "expected_variables": [],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ds_Sv",
+          "type": "Dataset",
+          "description": "Input Sv dataset with ``latitude`` and ``longitude`` along ping_time.",
+          "required": true,
+          "default": null,
+          "many": false,
+          "expected_variables": [
+            "latitude",
+            "longitude"
+          ],
+          "expected_coords": [],
+          "provenance_role": null,
+          "notes": null
+        }
+      ],
+      "params": [
+        {
+          "name": "nmea_sentence",
+          "type": "str",
+          "units": null,
+          "description": "NMEA sentence type to take position from, such as ``GGA``. Unset uses every sentence type the file recorded.",
+          "default": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": "Mixing sentence types can repeat fix times at different resolutions; echopype then keeps the first fix for each time."
+        },
+        {
+          "name": "datagram_type",
+          "type": "str",
+          "units": null,
+          "description": "EK datagram to take position from, ``MRU1`` or ``IDX``. Unset uses the NMEA fixes.",
+          "default": null,
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        },
+        {
+          "name": "missing",
+          "type": "str",
+          "units": null,
+          "description": "What to do for a file with no usable position fixes: ``nan`` fills latitude and longitude with NaN, ``error`` fails the step.",
+          "default": "nan",
+          "required": false,
+          "constraints": {},
+          "fingerprint_mode": "off",
+          "notes": null
+        }
+      ],
+      "implementations": [
+        {
+          "key": "default",
+          "default": true,
+          "callable_path": "aa_si_utils.utils.add_location",
+          "version": null,
+          "tested_versions": [],
+          "setup": null,
+          "teardown": null,
+          "dependency": {
+            "name": "aa-si-utils",
+            "version": ">=0.1.0",
+            "source": "git",
+            "url": "https://github.com/BLayman-NOAA/AA-SI_Utils.git"
+          },
+          "param_map": [],
+          "output_map": [
+            {
+              "spec": "ds_Sv",
+              "expression": "__return__"
+            }
+          ],
+          "source": {
+            "callable_path": "aa_si_utils.utils.add_location",
+            "resolved": true,
+            "module": "aa_si_utils.utils",
+            "qualname": "add_location",
+            "signature": "add_location(ds_Sv: xarray.core.dataset.Dataset, echodata, nmea_sentence: str | None = None, datagram_type: str | None = None, missing: str = 'nan') -> xarray.core.dataset.Dataset",
+            "doc": "Add latitude and longitude at each ping from the raw file's position data.\n\n``echopype.consolidate.add_location`` interpolates the platform's position\nfixes onto ``ping_time``. Repeated fix times are dropped first, keeping the\nfirst, as echodataflow's raw to Sv flow does; this replaces the EchoData's\n``Platform`` group with the deduplicated one.\n\nA file with no usable fixes, which echopype rejects, gets ``latitude`` and\n``longitude`` filled with NaN and a warning when ``missing`` is ``\"nan\"``,\nso a survey merged from files with and without position still lines up.\n\nArgs:\n    ds_Sv: Sv dataset to add position to.\n    echodata: The raw file's EchoData.\n    nmea_sentence: NMEA sentence type to take fixes from, such as ``\"GGA\"``.\n        None uses every sentence type the file recorded.\n    datagram_type: EK datagram to take position from, ``\"MRU1\"`` or\n        ``\"IDX\"``. None uses the NMEA fixes.\n    missing: ``\"nan\"`` to fill a file without fixes with NaN, or\n        ``\"error\"`` to raise as echopype does.\n\nReturns:\n    xr.Dataset: ``ds_Sv`` with ``latitude`` and ``longitude`` along\n    ``ping_time``.\n\nRaises:\n    ValueError: If ``missing`` is not ``\"nan\"`` or ``\"error\"``, or if the file\n        has no fixes and ``missing`` is ``\"error\"``.",
+            "line": 369,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L369",
+            "repo": "BLayman-NOAA/AA-SI_Utils",
+            "ref": "main",
+            "repo_relative_path": "src/aa_si_utils/utils.py",
+            "origin": "git",
+            "installed_version": "0.1.0",
+            "note": "uncommitted local edits, line may differ"
+          }
+        }
+      ],
+      "search": "ep_add_location consolidate add ``latitude`` and ``longitude`` at each ping to an sv dataset, interpolated from the raw file's position fixes with echopype. ds_sv sv dataset to add position to, typically from compute_sv. echodata the raw file's echodata, which holds the position fixes. ds_sv input sv dataset with ``latitude`` and ``longitude`` along ping_time. nmea_sentence nmea sentence type to take position from, such as ``gga``. unset uses every sentence type the file recorded. datagram_type ek datagram to take position from, ``mru1`` or ``idx``. unset uses the nmea fixes. missing what to do for a file with no usable position fixes: ``nan`` fills latitude and longitude with nan, ``error`` fails the step. aa_si_utils.utils.add_location aa-si-utils",
+      "notes": "This step wraps echopype.consolidate.add_location: repeated fix times are dropped first, keeping the first, and the fixes are interpolated onto ``ping_time``.\nA file with no usable fixes, which echopype rejects, gets ``latitude`` and ``longitude`` filled with NaN and a warning by default, so a survey merged from files with and without position still lines up. Set ``missing`` to ``error`` to fail instead.",
+      "used_by": []
     },
     {
       "op": "ep_add_splitbeam_angle",
@@ -4405,8 +4537,8 @@
             "qualname": "filter_normalized_by_cluster",
             "signature": "filter_normalized_by_cluster(ds_normalized, clustering_results, cluster_label=-1, dataset_name='ml_data_clean', normalization_name=None)",
             "doc": "Subset the normalised ML Dataset to samples belonging to a single cluster.\n\nSelects all samples whose label in *clustering_results* matches\n*cluster_label* and returns a filtered copy of the normalised dataset\ncontaining only those samples.  The full ``sample_index_to_grid_index``\nmapping is preserved so the filtered dataset can be passed directly to\n:func:`run_hdbscan` for a second-pass clustering.\n\nDesigned as a single-item primitive so it is compatible with a future\n``map_over`` fan-out over multiple cluster labels without any changes to\nthis function or its op spec.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalised ML dataset produced by\n        :func:`normalize_data`.\n    clustering_results (xr.Dataset): Clustering result from\n        :func:`run_hdbscan`.\n    cluster_label (int): Label of the cluster to isolate.  Use ``-1``\n        (default) to select noise points for re-clustering.  Any\n        non-negative integer selects that specific cluster for\n        sub-cluster refinement.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str): Normalization result suffix used to locate\n        the normalised feature variable\n        (``{dataset_name}_{normalization_name}``).\n\nReturns:\n    dict: ``{'ds_normalized_filtered': xr.Dataset}`` — a copy of\n    *ds_normalized* whose normalised feature variable is subsetted to\n    the requested cluster's samples.  The full\n    ``sample_index_to_grid_index`` mapping is retained.\n\nRaises:\n    ValueError: If *cluster_label* is not present in *clustering_results*\n        or if the normalization variable is not found in *ds_normalized*.",
-            "line": 3394,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3394",
+            "line": 3397,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3397",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -4543,8 +4675,8 @@
             "qualname": "filter_normalized_by_feature",
             "signature": "filter_normalized_by_feature(ds_normalized, feature_name, min_value=None, max_value=None, dataset_name='ml_data_clean', normalization_name=None)",
             "doc": "Subset the normalised ML Dataset to samples inside a raw-feature range.\n\nThresholds are applied to the pre-normalization values in *dataset_name*,\nso they are given in the feature's own units (dB for ``mean_Sv``) rather\nthan in transformed units.  The normalised feature variable is carried\nthrough untouched, which lets a second-pass :func:`run_hdbscan` reuse the\nfirst pass's normalization instead of re-fitting a scaler on the subset.\n\nChains after :func:`filter_normalized_by_cluster` to isolate, for example,\nthe high-Sv part of the first pass's noise points.\n\nArgs:\n    ds_normalized (xr.Dataset): Normalised ML dataset from\n        :func:`normalize_data`, or a filtered copy of one.\n    feature_name (str): Feature to threshold on, matching a label in the\n        feature coordinate (e.g. ``'mean_Sv'``).\n    min_value (float or None): Keep samples at or above this value.\n        Defaults to None for no lower bound.\n    max_value (float or None): Keep samples at or below this value.\n        Defaults to None for no upper bound.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str): Normalization result suffix used to locate\n        the normalised feature variable\n        (``{dataset_name}_{normalization_name}``).\n\nReturns:\n    dict: ``{'ds_normalized_filtered': xr.Dataset}``, a copy of\n    *ds_normalized* subsetted to the samples inside the requested range.\n    The ``sample_index_to_grid_index`` mapping is subsetted with it.\n\nRaises:\n    ValueError: If both bounds are None, if *feature_name* or the\n        normalization variable is not found, or if no samples fall inside\n        the requested range.",
-            "line": 3482,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3482",
+            "line": 3485,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3485",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -5111,14 +5243,14 @@
             "qualname": "initial_setup_and_validation",
             "signature": "initial_setup_and_validation(raw_input_folder, calibration_outputs_string='calibration', raw_file_names=None, clear_previous_json_logs=True, file_time_start=None, file_time_end=None)",
             "doc": "Set up output folders, resolve raw file paths, and optionally clear previous logs.\n\nArgs:\n    raw_input_folder: Path to the folder containing raw input files. May be a\n        local path or a remote fsspec URL (``gs://bucket/survey/raw``); a\n        remote folder is listed without downloading any data.\n    calibration_outputs_string: Subdirectory name for calibration artifacts. When\n        running inside the recipe executor this is resolved relative to the pipeline's\n        user-facing outputs directory (``artifacts_dir`` from the execution context)\n        so calibration files land alongside images and logs under ``outputs/``.\n        Falls back to a CWD-relative path when called standalone (e.g. in a notebook).\n        Calibration JSON logs are written to a ``logs/`` subdirectory within this\n        folder (i.e. ``<calibration_outputs>/logs/``).\n    raw_file_names: Optional list of specific raw file name strings to process.\n        If empty or None, all .raw files in raw_input_folder are used.\n    clear_previous_json_logs: If True, delete existing calibration_flags.json (default: True).\n    file_time_start: Optional inclusive lower bound (ISO string or datetime)\n        on each raw file's recording span. The span is inferred from the\n        ``D{YYYYMMDD}-T{HHMMSS}`` name stamps: a file's own stamp is its\n        start and the next file's stamp is its end, so a file that starts\n        before this bound but records into the window is kept. Filtering is\n        name-based except for the single file straddling this bound, whose\n        real end is read from its datagram headers so a gap between survey\n        legs is not mistaken for one long recording.\n    file_time_end: Optional inclusive upper bound; see *file_time_start*.\n\nReturns:\n    dict with keys:\n        raw_file_paths: list[str] of absolute paths (or gs:// URLs) to raw\n            acoustic files.\n        calibration_output_dir: str resolved full path to the calibration outputs folder.",
-            "line": 2399,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2399",
+            "line": 2623,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2623",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5230,14 +5362,14 @@
             "qualname": "log_seafloor_detection_stats",
             "signature": "log_seafloor_detection_stats(echodata, ds_Sv=None, min_valid_depth_m=10.0)",
             "doc": "Print summary statistics for seafloor detections across channels.",
-            "line": 2131,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2131",
+            "line": 2355,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2355",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5361,14 +5493,14 @@
             "qualname": "mask_sparse_bins",
             "signature": "mask_sparse_bins(ds_Sv: xarray.core.dataset.Dataset, range_bin: str = '2m', ping_time_bin: str = '10s', nan_threshold: float = 0.8, range_var: str = 'echo_range', block_pings: int = 2000) -> xarray.core.dataset.Dataset",
             "doc": "Mask Sv values in bins where NaN fraction meets or exceeds a threshold.\n\nPartitions the data into (time, range) bins and sets entire bins to NaN\nwhen the proportion of missing values within that bin is at or above\n*nan_threshold*.\n\nSv is counted one ping block at a time and masked through\n:meth:`xarray.DataArray.where`, so a dask-backed input is never fully\nmaterialized and the returned Sv stays lazy.  Variables other than Sv are\nshared with the input rather than copied.\n\nArgs:\n    ds_Sv: Sv dataset to process.\n    range_bin: Range bin size as a string (e.g. ``\"2m\"``).\n    ping_time_bin: Time bin size as a pandas-compatible offset string\n        (e.g. ``\"10s\"``).\n    nan_threshold: Fraction of NaN values (0-1) at or above which a bin\n        is masked.\n    range_var: Name of the range coordinate variable.\n    block_pings: Pings read per block while counting NaNs.  Caps peak\n        memory and does not affect the result.\n\nReturns:\n    xr.Dataset: Copy of *ds_Sv* with sparse bins set to NaN.",
-            "line": 196,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L196",
+            "line": 201,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L201",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5519,8 +5651,8 @@
             "qualname": "merge_clustering_passes",
             "signature": "merge_clustering_passes(clustering_results_pass1, clustering_results_pass2, ml_result_name, dataset_name='ml_data_clean', normalization_name=None, retain_parent_labels=True)",
             "doc": "Merge pass-1 and pass-2 clustering results into a single result Dataset.\n\nCombines a first-pass clustering result with one or more second-pass\nresults obtained by re-clustering a subset of the pass-1 samples (e.g.\nnoise points or a specific cluster).  Child cluster labels are remapped\nto unique integers that do not collide with pass-1 labels.  Noise points\nproduced by the second pass override the parent label for those samples.\n\nDesigned as a fan-in primitive: *clustering_results_pass2* accepts either\na single Dataset or a list of Datasets today (``many: true`` in YAML) and\nwill accept a collected list from a future ``collect:`` step attribute once\nthe recipe executor supports native fan-in — with no changes to this\nfunction or its op spec.\n\nArgs:\n    clustering_results_pass1 (xr.Dataset): Clustering result from the\n        first pass of :func:`run_hdbscan`, covering all samples.\n    clustering_results_pass2 (xr.Dataset or list[xr.Dataset]): One or\n        more clustering result Datasets from second-pass\n        :func:`run_hdbscan` calls, each covering a subset of the pass-1\n        samples.  A single Dataset is wrapped into a list automatically.\n    ml_result_name (str): Name assigned to the merged result for\n        downstream tracking.\n    dataset_name (str): Base ML dataset name.  Defaults to\n        ``'ml_data_clean'``.\n    normalization_name (str or None): Normalization result suffix stored\n        in result metadata.  Defaults to None.\n    retain_parent_labels (bool): When True, stores the original pass-1\n        label for every sample as a ``parent_labels`` variable alongside\n        the merged labels, enabling parent→child lineage queries.\n        Defaults to True.\n\nReturns:\n    dict: ``{'clustering_results': xr.Dataset}`` — a merged Dataset with\n    the same sample scope as *clustering_results_pass1*.  Child cluster\n    labels are offset above the highest pass-1 label so they never\n    collide.  Includes a ``parent_labels`` variable when\n    *retain_parent_labels* is True.",
-            "line": 3589,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3589",
+            "line": 3592,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L3592",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -5592,7 +5724,7 @@
           "required": false,
           "constraints": {},
           "fingerprint_mode": "off",
-          "notes": "Unset suits per-file Sv concatenated on raw ping_time, where segments never overlap.\n\"mean\" suits a fan-in over per segment binned products. compute_mvbs and compute_per_cell_statistics anchor their time bins to a global origin, so a segment boundary inside a bin makes the segments on both sides emit that bin, each holding part of its pings. Left alone, the merged store carries a duplicate index that every downstream reindex rejects; add_auxiliary_features raises InvalidIndexError on it.\n\"first\" suits a fan-in over overlapping slices of one store, such as dive windows cut from the survey grid, where two dives sharing a minute hold the same cells twice and nothing should be averaged. A per segment variable that differs on the overlap is kept from the first segment only, a sign it does not belong on the shared axis; attach it per segment after the fan-in.\nWith \"mean\", variables with \"units: dB\" are averaged in the linear domain and converted back, since a mean of decibels is not the mean of what they measure. The average is unweighted: the partial bins do not record how many pings each held."
+          "notes": "Unset suits per-file Sv concatenated on raw ping_time, where segments never overlap.\n\"mean\" suits a fan-in over per segment binned products. compute_mvbs and compute_per_cell_statistics anchor their time bins to a global origin, so a segment boundary inside a bin makes the segments on both sides emit that bin, each holding part of its pings. Left alone, the merged store carries a duplicate index that every downstream reindex rejects; add_auxiliary_features raises InvalidIndexError on it.\n\"first\" suits a fan-in over overlapping slices of one store, such as dive windows cut from the survey grid, where two dives sharing a minute hold the same cells twice and nothing should be averaged. A per segment variable that differs on the overlap is kept from the first segment only, a sign it does not belong on the shared axis; attach it per segment after the fan-in.\nWith \"mean\", variables with \"units: dB\" are averaged in the linear domain and converted back, since a mean of decibels is not the mean of what they measure. When every segment carries ping_count along ``dim``, as compute_mvbs output does, each part is weighted by it and the merged count is the sum. Otherwise the average is unweighted."
         }
       ],
       "implementations": [
@@ -5636,15 +5768,15 @@
             "module": "aa_si_utils.utils",
             "qualname": "concat_datasets",
             "signature": "concat_datasets(datasets, dim='ping_time', on_duplicate=None, **kwargs)",
-            "doc": "Concatenate a list of xarray Datasets along a dimension.\n\nReconsolidation (fan-in) helper for the recipe system's ``collect``\npattern: a mapped step that produces one Dataset per data segment (e.g.\nper-file MVBS) is gathered into a list, and this joins them back into one\nDataset along ``dim`` (default ``ping_time``).\n\nA single Dataset (not a list) is returned unchanged so a ``map_over``\nsource that resolves to one item still works (single-item transparency).\n\nOnly variables that already have ``dim`` are concatenated. Variables\nwithout it (e.g. an Sv dataset's ``frequency_nominal`` on ``(channel,)``,\nor a scalar ``sound_speed``) are taken from the first segment and keep\ntheir original shape. ``xarray.concat``'s default (``data_vars=\"all\"``)\nwould instead broadcast every variable along ``dim``, turning\n``frequency_nominal`` into ``(ping_time, channel)`` and scalars into\n``(ping_time,)`` -- which silently corrupts the schema for downstream\nconsumers that expect per-channel metadata to stay 1-D.\n\nNote that per-segment metadata differences are therefore resolved in\nfavour of the first segment: if segments were calibrated with different\nenvironmental parameters, the merged dataset records the first segment's\n``sound_speed``/``sound_absorption``. The data variables themselves are\nunaffected -- each segment's values were already computed with its own\nparameters.\n\nThe provenance variables in :data:`_PROVENANCE_CONCAT_VARS` are exempt\nfrom that rule: taking only the first segment's ``source_filenames``\nwould make a survey merged from many raw files claim a single source, so\nthey are concatenated along their own dimension to list every\ncontributing file.\n\nArgs:\n    datasets: A list of ``xarray.Dataset`` objects, or a single Dataset.\n    dim: Dimension to concatenate along. Defaults to ``\"ping_time\"``.\n    on_duplicate: What to do when segments share a label on *dim*.\n        ``None`` (default) leaves them, which is right when the segments\n        cannot overlap. ``\"mean\"`` averages them into one entry, which is\n        what a fan-in over per-segment *binned* products needs: see\n        :func:`_combine_duplicate_labels`. ``\"first\"`` keeps the first and\n        sorts, which is what a fan-in over overlapping *slices of one\n        store* needs: see :func:`_drop_duplicate_labels`.\n    **kwargs: Forwarded to :func:`xarray.concat`, and override the\n        defaults set here.\n\nReturns:\n    A single concatenated ``xarray.Dataset``.\n\nRaises:\n    ValueError: If ``datasets`` is an empty collection.",
-            "line": 3360,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L3360",
+            "doc": "Concatenate a list of xarray Datasets along a dimension.\n\nReconsolidation (fan-in) helper for the recipe system's ``collect``\npattern: a mapped step that produces one Dataset per data segment (e.g.\nper-file MVBS) is gathered into a list, and this joins them back into one\nDataset along ``dim`` (default ``ping_time``).\n\nA single Dataset (not a list) is returned unchanged so a ``map_over``\nsource that resolves to one item still works (single-item transparency).\n\nOnly variables that already have ``dim`` are concatenated. Variables\nwithout it (e.g. an Sv dataset's ``frequency_nominal`` on ``(channel,)``,\nor a scalar ``sound_speed``) are taken from the first segment and keep\ntheir original shape. ``xarray.concat``'s default (``data_vars=\"all\"``)\nwould instead broadcast every variable along ``dim``, turning\n``frequency_nominal`` into ``(ping_time, channel)`` and scalars into\n``(ping_time,)`` -- which silently corrupts the schema for downstream\nconsumers that expect per-channel metadata to stay 1-D.\n\nNote that per-segment metadata differences are therefore resolved in\nfavour of the first segment: if segments were calibrated with different\nenvironmental parameters, the merged dataset records the first segment's\n``sound_speed``/``sound_absorption``. The data variables themselves are\nunaffected -- each segment's values were already computed with its own\nparameters.\n\nThe provenance variables in :data:`_PROVENANCE_CONCAT_VARS` are exempt\nfrom that rule: taking only the first segment's ``source_filenames``\nwould make a survey merged from many raw files claim a single source, so\nthey are concatenated along their own dimension to list every\ncontributing file.\n\nArgs:\n    datasets: A list of ``xarray.Dataset`` objects, or a single Dataset.\n    dim: Dimension to concatenate along. Defaults to ``\"ping_time\"``.\n    on_duplicate: What to do when segments share a label on *dim*.\n        ``None`` (default) leaves them, which is right when the segments\n        cannot overlap. ``\"mean\"`` averages them into one entry, which is\n        what a fan-in over per-segment *binned* products needs, weighted\n        by ``ping_count`` when every segment carries it: see\n        :func:`_combine_duplicate_labels`. ``\"first\"`` keeps the first and\n        sorts, which is what a fan-in over overlapping *slices of one\n        store* needs: see :func:`_drop_duplicate_labels`.\n    **kwargs: Forwarded to :func:`xarray.concat`, and override the\n        defaults set here.\n\nReturns:\n    A single concatenated ``xarray.Dataset``.\n\nRaises:\n    ValueError: If ``datasets`` is an empty collection.",
+            "line": 3644,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L3644",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -5954,8 +6086,8 @@
             "qualname": "normalize_ml_data_step",
             "signature": "normalize_ml_data_step(ds_ml_ready, normalizer=None, **kwargs)",
             "doc": "Recipe step wrapping :func:`normalize_data` with a normalizer port.\n\nArgs:\n    ds_ml_ready (xr.Dataset): Dataset produced by reshape_data_for_ml.\n    normalizer (FittedNormalizer or None): Scaling from an earlier\n        normalize step to apply instead of fitting. Defaults to None.\n    **kwargs: Keyword arguments of :func:`normalize_data`.\n\nReturns:\n    dict: ``'ds_normalized'`` (the dataset) and ``'normalizer'`` (the\n    FittedNormalizer fitted here or passed in).",
-            "line": 1568,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L1568",
+            "line": 1571,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L1571",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -6897,8 +7029,8 @@
             "qualname": "plot_clustering_report",
             "signature": "plot_clustering_report(ds_normalized, clustering_results=None, dataset_name=None, ml_result_name=None, clustering_model=None, ds_Sv=None, plot_window=None, x_axis_units='datetime', y_axis_units='meters', overlay_line_var=None, overlay_windows=None, overlay_window_keys=None, overlay_fit_style=None, overlay_bound_style=None, normalization_name=None, cluster_colors=None, y_to_x_aspect_ratio_override=None, cluster_stats_sv_data_var='Sv', cluster_stats_compute_pairwise_differences=True, cluster_stats_dpi=200, save_image=None, save_formats=None, save_dir=None, show=None, dpi=None, time_min=None, time_max=None)",
             "doc": "Render the full clustering report for one or more clustering results.\n\nSet ``cluster_stats_sv_data_var='ml_features'`` to plot statistics for\nthe flattened ML features used by clustering instead of gridded Sv channel\nvalues.\n\nThe cluster statistics figure carries a lot of small text, so it is\nrendered at ``cluster_stats_dpi`` rather than the report-wide ``dpi``\nused by the much larger echogram. Pass None to tie it back to ``dpi``.\n\n``time_min`` and ``time_max`` window the echogram by UTC timestamp,\ntaking precedence over the ping bounds in ``plot_window``. Pair them with\n``x_axis_units='datetime'`` to label the axis with clock times.\n\n``overlay_windows`` draws line files onto the echogram per window: each\nwindow's files under ``overlay_window_keys`` (the three dive-profile keys\nby default) are read onto that window's own pings, so every window is a\nseparate segment and overlapping windows each keep their own line.\n\n``overlay_fit_style`` and ``overlay_bound_style`` are matplotlib keyword\ndicts for the fitted profile and for its two confidence bounds. Each is\nmerged over the built-in style, so naming only ``color`` restyles the\ncolour and leaves the width and dash pattern alone.\n\n``clustering_results`` is optional. Every panel but the hierarchy plot\nreads the labels from ``ds_normalized``, where\n:func:`embed_clustering_results` stored them under ``ml_result_name``, so\na report can be drawn from that checkpointed dataset alone. Without a\nresult the hierarchy panel is skipped, and ``normalization_name`` supplies\nwhat ``cluster_stats_sv_data_var='ml_features'`` would otherwise read from\nthe result.",
-            "line": 2948,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2948",
+            "line": 2951,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2951",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -7598,7 +7730,7 @@
             "repo_relative_path": "src/aa_si_utils/data_retrieval.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -7888,14 +8020,14 @@
             "qualname": "read_raw_files_to_stores",
             "signature": "read_raw_files_to_stores(raw_file_paths, sonar_model='EK60', include_bot=True, intermediate_format='netcdf', use_swap='auto')",
             "doc": "Open raw sonar files and write each as an intermediate store.\n\nArgs:\n    raw_file_paths: List of string paths or Path objects pointing to raw files.\n        Entries may also be remote fsspec URLs (``gs://bucket/.../f.raw``).\n        Each remote file is downloaded to a private local scratch directory,\n        converted, and its local copy deleted before the next file is\n        fetched — local disk therefore holds at most one raw file at a time\n        (per concurrent instance), and bucket objects are never modified.\n    sonar_model: Sonar model string for echopype (default: \"EK60\").\n    include_bot: Whether to include .bot files (default: True).\n    intermediate_format: ``\"netcdf\"`` (default), ``\"zarr\"``, or ``\"none\"``.\n        ``\"none\"`` returns in-memory EchoData objects without writing any\n        files.\n\n        Pick by where the intermediates must live:\n\n        ``\"netcdf\"`` is the default and the simplest choice for a *local*\n        temp dir: each raw file is written to a temporary ``.nc`` file, then\n        reopened and combined by ``combine_raw_stores``.  After combining,\n        all groups are rechunked to a single uniform chunk so the downstream\n        zarr v2 checkpoint write (``combine_raw`` step with\n        ``checkpoint: always``) always succeeds.  HDF5 needs seekable\n        writes, so netcdf **cannot** target object storage — a remote temp\n        dir raises.\n\n        ``\"none\"`` keeps every ``EchoData`` object in memory without\n        touching disk.  Suitable when the full dataset fits comfortably in\n        RAM.\n\n        ``\"zarr\"`` is the option for surveys too large to stage locally: it\n        is the only format that can write intermediates to a bucket, so a\n        ``gs://`` temp dir requires it.  Stores are written with\n        ``zarr_format=2`` and ``compress=False`` to match the checkpoint\n        writer exactly; that is what avoids the v3-serializer and\n        v3-BloscCodec errors a default ``to_zarr`` would trigger on the\n        downstream v2 checkpoint write (see ``_open_and_store``).  Remote\n        stores are staged to local scratch and bulk-uploaded, so local disk\n        still holds only one store at a time (per concurrent instance).\n    use_swap: Passed to ``ep.open_raw`` as ``use_swap`` (default: ``\"auto\"``).\n\nReturns:\n    list: Store path strings (zarr/netcdf) for file-backed formats, or a\n    list of in-memory EchoData objects for ``intermediate_format=\"none\"``.",
-            "line": 2895,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L2895",
+            "line": 3123,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L3123",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -8126,14 +8258,14 @@
             "qualname": "read_seafloor_line_evl",
             "signature": "read_seafloor_line_evl(ds_Sv, evl_path=None, vertical_reference='surface', min_status=None, max_gap_s=None, edge_extend_s=0.0, depth_offset_m=0.0, min_coverage=0.0, file_time_start=None, file_time_end=None, window=None, window_key='seabed_evl')",
             "doc": "Read an Echoview ``.evl`` seafloor line onto the ping grid of ``ds_Sv``.\n\nDrop-in replacement for :func:`detect_seafloor`: returns the same 1-D\n``(ping_time,)`` line in metres, on the exact ``ping_time`` coordinate of\n``ds_Sv``, so :func:`create_seafloor_mask` consumes it unchanged. Use it\nwhen a hand-verified Echoview bottom line is more trustworthy than running\ndetection.\n\nA thin wrapper over :func:`read_line_evl`, which documents every argument in\nfull. What this adds is the coverage warning: pings the line does not cover\nare NaN, and :func:`create_seafloor_mask` rejects **every sample** of a ping\nwhose seafloor is NaN, so a short line silently empties the echogram.\n\nTwo ways to say which line. ``evl_path`` is the direct form. ``window``\ntakes a mapping and reads the path out of it, which is what a mapped\nfan-out needs: ``${_item}`` is an all-or-nothing token with no attribute\naccess, so a step mapped over a list of window dicts cannot pull the path\nout of the item as its own param and has to take the dict. A window also\nsupplies ``file_time_start`` / ``file_time_end`` when they are not given\ndirectly, so a folder of part-day seabed exports narrows to the window\nwithout repeating its bounds.\n\nArgs:\n    ds_Sv (xr.Dataset): Sv dataset supplying the target ``ping_time``.\n    evl_path (str | Path | list | None): A single ``.evl`` file, or a folder\n        of them to select from with ``file_time_start`` / ``file_time_end``.\n        Mutually exclusive with *window*; exactly one is required.\n    vertical_reference (str): ``\"surface\"`` (default) or ``\"transducer\"``.\n    min_status (int | None): Drop points below this Echoview status.\n    max_gap_s (float | None): Widest hole to interpolate across, in seconds.\n    edge_extend_s (float | None): Seconds past the ends of the line to hold\n        the end depths.\n    depth_offset_m (float): Constant metres added to the line.\n    min_coverage (float): Fraction of pings that must have a finite depth.\n    file_time_start (str | datetime | None): Window lower bound for\n        selecting line files out of a folder. Taken from *window* when a\n        window is given and this is unset.\n    file_time_end (str | datetime | None): Window upper bound. Same.\n    window (Mapping | None): Mapping carrying the line path under\n        *window_key*, plus optional ``start`` / ``end`` bounds and a\n        ``label``. Extra keys are ignored, so one dict can carry a whole\n        instance's context.\n    window_key (str): Key the line path is read from. Defaults to\n        \"seabed_evl\".\n\nReturns:\n    xr.DataArray: Seafloor depth in metres, dims ``(\"ping_time\",)``, named\n    ``seafloor_depth``, on the ``ping_time`` of ``ds_Sv``.\n\nRaises:\n    TypeError: If *window* is given and is not a mapping.\n    ValueError: If both or neither of *evl_path* and *window* are given, or\n        if *window* carries no line path under *window_key*.",
-            "line": 1638,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1638",
+            "line": 1862,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L1862",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -8237,14 +8369,14 @@
             "qualname": "rechunk_dataset",
             "signature": "rechunk_dataset(ds_Sv: xarray.core.dataset.Dataset, ping_time_chunk: int) -> xarray.core.dataset.Dataset",
             "doc": "Rechunk a Dataset along ping_time.\n\nA standalone step rather than a parameter on any particular masking or\nreduction op, so a recipe can insert (or remove) chunking wherever a\ndownstream op should run dask-parallel, independent of which step\nhappens to run immediately before it.\n\nArgs:\n    ds_Sv: Dataset to rechunk.\n    ping_time_chunk: Target chunk size along ping_time.\n\nReturns:\n    xr.Dataset: *ds_Sv* rechunked along ping_time.",
-            "line": 535,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L535",
+            "line": 759,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L759",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],
@@ -8563,8 +8695,8 @@
             "qualname": "remove_noise",
             "signature": "remove_noise(ds_Sv, ping_num=5, range_sample_num=10, background_noise_max=None, SNR_threshold='3.0dB', assign_to_sv=True)",
             "doc": "Remove background noise from Sv data using echopype.\n\nWraps :func:`echopype.clean.remove_background_noise` and optionally\ncopies the corrected result into the ``Sv`` variable.\n\nArgs:\n    ds_Sv (xr.Dataset): Dataset with ``Sv`` data.\n    ping_num (int): Number of pings for noise estimation.\n        Defaults to 5.\n    range_sample_num (int): Number of range samples for noise\n        estimation. Defaults to 10.\n    background_noise_max (str or None): Upper limit on the estimated\n        noise level, e.g. ``'-125dB'``. ``None`` leaves the estimate\n        unbounded. Defaults to None.\n    SNR_threshold (str): Signal-to-noise ratio below which corrected\n        samples are masked out. Defaults to '3.0dB'.\n    assign_to_sv (bool): Copy ``Sv_corrected`` into ``Sv``.\n        Defaults to True.\n\nReturns:\n    xr.Dataset: Dataset with background noise removed.",
-            "line": 2157,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2157",
+            "line": 2160,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2160",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -8714,8 +8846,8 @@
             "qualname": "reshape_data_for_ml",
             "signature": "reshape_data_for_ml(ds_Sv, data_var='Sv_corrected', dataset_name='ml_data_clean', remove_nan=True, mask_invalid_values=True, custom_data_mask_name=None, feature_strategy='channels', baseline_channel=0, **feature_kwargs)",
             "doc": "Prepare an xarray Dataset for ML by masking, indexing, and flattening.\n\nOrchestrates validity masking, grid-index creation, and feature\nextraction into a single call.  Channels that are entirely NaN are\nautomatically dropped.\n\nArgs:\n    ds_Sv (xr.Dataset): Dataset containing acoustic backscatter data.\n    data_var (str): Sv variable to use. Defaults to 'Sv_corrected'.\n    dataset_name (str): Base name for stored ML variables.\n        Defaults to 'ml_data_clean'.\n    remove_nan (bool): Mask NaN values. Defaults to True.\n    mask_invalid_values (bool): Mask extreme artifact values.\n        Defaults to True.\n    custom_data_mask_name (str or None): Name of a pre-computed mask\n        already present in *ds_Sv* to combine with the auto-generated\n        mask. Defaults to None.\n    feature_strategy (str): Feature extraction strategy forwarded to\n        ``extract_ml_data_flattened``. Defaults to 'channels'.\n    baseline_channel (int): Channel index for baseline difference\n        features. Defaults to 0.\n    **feature_kwargs: Extra arguments for feature extraction.\n\nReturns:\n    xr.Dataset: Dataset with flattened ML data, validity mask, and\n    index mapping.",
-            "line": 661,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L661",
+            "line": 660,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L660",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -8998,8 +9130,8 @@
             "qualname": "run_hdbscan",
             "signature": "run_hdbscan(ds_normalized, dataset_name, normalization_name, ml_result_name, min_cluster_size=None, min_cluster_size_fraction=None, min_samples=2, sample_size=1000000, cluster_selection_method='leaf', use_hdbscan=True, epsilon=0.004, find_background_cluster=False, soft_membership_threshold=None)",
             "doc": "Run clustering as a pure-compute step and return result metadata.",
-            "line": 2533,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2533",
+            "line": 2536,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_ML/blob/main/src/aa_si_ml/ml.py#L2536",
             "repo": "BLayman-NOAA/AA-SI_ML",
             "ref": "main",
             "repo_relative_path": "src/aa_si_ml/ml.py",
@@ -9466,14 +9598,14 @@
             "qualname": "select_ping_time_range",
             "signature": "select_ping_time_range(ds_Sv: xarray.core.dataset.Dataset, start: str | None = None, end: str | None = None, window: collections.abc.Mapping | None = None, allow_empty: bool = False, dim: str = 'ping_time', windows: list | None = None, snap_to_bin: str | None = None) -> xarray.core.dataset.Dataset | None",
             "doc": "Narrow a Dataset to a ping_time window, or to the union of several.\n\nThe user-facing entry point into a survey-wide Sv store.  A survey-level\nrecipe computes and checkpoints Sv once for the whole cruise; a user\nrecipe reuses that checkpoint and calls this to work on its own segment.\n\nCheap on a zarr-backed Dataset: ``sel`` narrows the dask graph to the\nchunks the window touches, so only those are read.  Keep the window step\ndownstream of every step whose checkpoint you want to share -- step hashes\nare a Merkle chain, so a window wired into an upstream step's params\nchanges that step's hash and every hash below it, and no two windows would\never share a cached Sv.\n\nTwo ways to say the same thing.  ``start``/``end`` is the direct form.\n``window`` takes a mapping carrying those two keys, which is what a mapped\nfan-out needs: ``${_item}`` is an all-or-nothing token with no attribute\naccess, so a step mapped over a list of window dicts cannot pull ``start``\nand ``end`` out of the item as separate params and has to take the dict\nitself.  Extra keys in the mapping are ignored, so one dict can carry\neverything an instance needs (a label, its line files, its raw file list)\nwhile this reads only the bounds.\n\nArgs:\n    ds_Sv: Dataset carrying a ``ping_time`` coordinate.\n    start: Inclusive ISO datetime lower bound (e.g. \"2024-10-15T13:38\").\n        None leaves the start open.\n    end: Inclusive ISO datetime upper bound.  None leaves the end open.\n    dim: Time coordinate to slice.  Defaults to ``ping_time``.  Binned\n        products carry the bin's left edge under a different name, so a\n        per-cell statistics dataset is windowed with\n        ``dim=\"cell_ping_time\"``.  The bounds are compared against whatever\n        that coordinate holds, so it has to be datetime-valued.\n    allow_empty: Return ``None`` instead of raising when the window\n        selects no pings.  This is what lets the step be mapped over a\n        whole survey's per-file Sv: most files lie outside any one window,\n        and ``concat_datasets`` already drops ``None`` entries from a\n        collected list, so the fan-in keeps exactly the files that overlap.\n        Left False by default, because against a single merged store an\n        empty window is a mistake worth failing on.\n    window: Mapping supplying ``start`` and ``end`` instead of passing them\n        directly, plus an optional ``label`` printed to identify the\n        instance.  Mutually exclusive with *start* and *end*.\n    windows: Several such mappings.  Keeps every ping inside at least one\n        of them, in time order, each ping once even where windows overlap.\n        This is the form a step mapped over per-file Sv needs to pull a\n        whole set of dive windows out of each file in one pass: the\n        instance sees one file and cannot loop over the list itself.\n        Mutually exclusive with the three arguments above.  Empty windows\n        are skipped silently; only the whole set selecting nothing is\n        reported, through *allow_empty*.\n    snap_to_bin: Bin width such as ``\"10s\"``.  Each window is widened\n        outward to whole bins of that width before selecting: the start\n        moves back to its bin's left edge and the end forward to the last\n        instant of its bin.  Use it when the selection feeds a time\n        binning step, so the first and last bins are averaged over all of\n        their pings and a window ending just inside a bin cannot leave it\n        empty.  Edges are aligned to the epoch, as ``compute_mvbs`` aligns\n        them for any width that divides a day.\n\nReturns:\n    xr.Dataset: The ``ping_time`` slice of *ds_Sv*.  Returned lazily when\n    the input is dask-backed.\n\nRaises:\n    TypeError: If *window* is given and is not a mapping.\n    ValueError: If *window* is combined with *start* or *end*, if it\n        carries neither bound, if the window selects no pings and\n        *allow_empty* is False, or if\n        *start* is after *end*.  Also if *windows* is combined with any of\n        the single-window arguments, or is empty.",
-            "line": 293,
-            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L293",
+            "line": 517,
+            "github_url": "https://github.com/BLayman-NOAA/AA-SI_Utils/blob/main/src/aa_si_utils/utils.py#L517",
             "repo": "BLayman-NOAA/AA-SI_Utils",
             "ref": "main",
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": null
+            "note": "uncommitted local edits, line may differ"
           }
         }
       ],

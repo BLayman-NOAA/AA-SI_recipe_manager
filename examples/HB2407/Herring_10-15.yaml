@@ -115,6 +115,8 @@ steps:
       range_bin: "2m"
       ping_time_bin: "2s"
       nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+      # Level 2 masks compute_sv's Sv, which carries no depth.
+      range_var: "echo_range"
 
   - id: plot_mvbs
     op: plot_sv_echogram

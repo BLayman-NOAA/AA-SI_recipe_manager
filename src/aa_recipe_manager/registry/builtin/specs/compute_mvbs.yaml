@@ -4,9 +4,13 @@ description: >
   Compute Mean Volume Backscattering Strength by averaging Sv over range and
   time bins. Returns a gridded MVBS Dataset.
 notes: >
-  This step is echopype.commongrid.compute_MVBS called directly, so the bin
-  edges and the averaging (in the linear domain, converted back to dB) are
-  echopype's.
+  The binning is echopype.commongrid.compute_MVBS, so the bin edges and the
+  averaging (in the linear domain, converted back to dB) are echopype's.
+
+  The result also carries ping_count, the number of pings in each time bin.
+  When this step is mapped per file, a file boundary inside a time bin makes
+  both files emit that bin, and merge_datasets with on_duplicate "mean" weights
+  the two parts by it.
 
   Every sample is assigned to a bin by the value of its range variable rather
   than by its range_sample index, so channels recorded at different sample
@@ -30,6 +34,7 @@ outputs:
     description: Gridded MVBS Dataset
     expected_variables:
       - Sv
+      - ping_count
     expected_coords:
       - ping_time
       - echo_range
@@ -106,11 +111,12 @@ params:
     default: false
 implementations:
   - key: default
-    callable_path: echopype.commongrid.compute_MVBS
+    callable_path: aa_si_utils.utils.compute_mvbs
     default: true
     dependency:
-      name: echopype
-      version: ">=0.6.0"
-      source: pypi
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
     output_map:
       ds_MVBS: __return__

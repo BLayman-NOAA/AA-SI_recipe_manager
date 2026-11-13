@@ -136,6 +136,8 @@ steps:
       range_bin: "4m"
       ping_time_bin: "2s"
       nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
+      # Level 2 masks compute_sv's Sv, which carries no depth.
+      range_var: "echo_range"
       # Benchmark: 8 or 9 chunks over this window; MVBS needs no multiple.
       mvbs_chunk_ping_time: 1000
 

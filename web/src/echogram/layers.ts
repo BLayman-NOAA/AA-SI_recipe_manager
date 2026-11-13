@@ -11,6 +11,7 @@ import {
   type Layer,
   type LineData,
   type LineSpec,
+  type OutputVariable,
   type Resolution,
   type ViewSettings,
 } from 'aa-si-echogram-gl';
@@ -266,21 +267,60 @@ export function sourcesWithoutLayers(sourceIds: string[], layers: Pick<Layer, 's
  *
  * Sources the panel lacks are left out, since applying them would open them
  * again from their old URLs behind the store's back. A source open now that
- * the saved stack does not read (added after the settings were saved) keeps
- * the layers it has now, so applying the settings does not drop it.
+ * the saved settings do not name (added after they were saved) keeps the
+ * layers it has now, so applying the settings does not drop it. A source they
+ * name without a layer stays without one.
  */
 export function settingsFor(saved: ViewSettings, current: ViewSettings | undefined, open: string[]): ViewSettings {
   // A layer naming no source reads the first.
   const source = (layer: { source?: string }) => layer.source ?? open[0];
   const kept = new Set(open);
   const layers = saved.layers.filter((layer) => kept.has(source(layer)));
-  const covered = new Set(layers.map(source));
+  const covered = new Set([...layers.map(source), ...(saved.sources ?? []).map((entry) => entry.id)]);
   const added = (current?.layers ?? []).filter((layer) => kept.has(source(layer)) && !covered.has(source(layer)));
   return {
     ...saved,
     store: undefined,
     sources: current?.sources?.filter((source) => kept.has(source.id)),
     layers: [...layers, ...added],
+  };
+}
+
+/** The variable a value row draws, as its resolution lists it. */
+function drawnVariable(layer: EchogramLayer): OutputVariable | undefined {
+  const output = layer.resolution?.outputs?.find((entry) => entry.name === layer.output);
+  const name = layer.variable ?? output?.default;
+  return output?.variables?.find((variable) => variable.name === name);
+}
+
+/**
+ * The panel's settings with one more layer on top, reading a row's source.
+ *
+ * The layer reads the first channel no layer of the source reads, else the
+ * first, and is coloured with the cluster palette for labels, else with the
+ * view's colormap. The window is left out, so applying the result keeps the
+ * view where it is rather than snapping it to whole pings.
+ *
+ * Args:
+ *   settings: The panel's settings now.
+ *   layer: The value row whose source the new layer reads.
+ */
+export function withLayerFor(settings: ViewSettings, layer: EchogramLayer): ViewSettings {
+  const source = layer.id;
+  const variable = drawnVariable(layer);
+  const used = new Set(settings.layers.filter((entry) => entry.source === source).map((entry) => entry.channel));
+  let channel = 0;
+  while (used.has(channel)) channel += 1;
+  // A variable with no channel axis has one channel.
+  if (variable && channel >= (variable.channels ?? 1)) channel = 0;
+  const ids = new Set(settings.layers.map((entry) => entry.id));
+  let n = 1;
+  while (ids.has(`${source}-layer-${n}`)) n += 1;
+  const color = variable?.kind === 'labels' ? { palette: 'cluster' } : { colormap: settings.colormap };
+  return {
+    ...settings,
+    window: undefined,
+    layers: [...settings.layers, { id: `${source}-layer-${n}`, source, channel, color }],
   };
 }
 

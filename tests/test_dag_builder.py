@@ -1280,7 +1280,7 @@ class TestBuiltinIntegration:
     assert dag.topological_order[-1] == "plot_mvbs"
     assert dag.nodes["compute_sv"].implementation.callable_path == "echopype.calibrate.compute_Sv"
     assert dag.nodes["compute_mvbs"].implementation.callable_path == (
-      "echopype.commongrid.compute_MVBS"
+      "aa_si_utils.utils.compute_mvbs"
     )
     assert dag.nodes["plot_mvbs"].implementation.callable_path == (
       "aa_si_visualization.echogram.plot_sv_echogram"

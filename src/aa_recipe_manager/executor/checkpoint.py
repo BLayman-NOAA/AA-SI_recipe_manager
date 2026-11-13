@@ -1522,6 +1522,53 @@ def _slice_bytes(ds: Any, dim: str) -> int:
     return worst
 
 
+#: Encoding keys that describe how a text variable was stored.
+_TEXT_ENCODING_KEYS = ("dtype", "filters", "object_codec", "compressor", "compressors")
+
+
+def _clear_text_encoding(ds: Any) -> Any:
+    """Drop the stored format encoding of text variables before a Zarr write.
+
+    A variable read from a Zarr store keeps that store's encoding, and an op
+    that rebuilds it carries it on. Newer xarray reads text as numpy's
+    ``StringDType``, so a ``channel`` coordinate read from one checkpoint and
+    passed through compute_MVBS arrives here with a variable length UTF-8
+    filter in its encoding. A Zarr v2 write of the two together records a fixed
+    width dtype beside that filter, and zarr then cannot read the metadata
+    back. xarray picks a correct encoding for text when none is given.
+
+    Returns ``ds`` unchanged when no text variable carries such keys, else a
+    shallow copy with them removed. Works on a Dataset or a DataTree, whose
+    nodes are cleared alike.
+    """
+    if not any(
+        _stale_text(var) for node in _nodes(ds) for var in node.variables.values()
+    ):
+        return ds
+    ds = ds.copy()
+    for node in _nodes(ds):
+        for var in node.variables.values():
+            if _stale_text(var):
+                var.encoding = {
+                    key: value
+                    for key, value in var.encoding.items()
+                    if key not in _TEXT_ENCODING_KEYS
+                }
+    return ds
+
+
+def _nodes(value: Any) -> list[Any]:
+    """The nodes of a DataTree, or a Dataset as the only node."""
+    return list(value.subtree) if hasattr(value, "subtree") else [value]
+
+
+def _stale_text(var: Any) -> bool:
+    """Whether a variable is text carrying stored format encoding keys."""
+    return var.dtype.kind in "OSUT" and any(
+        key in var.encoding for key in _TEXT_ENCODING_KEYS
+    )
+
+
 def _zarr_uniform_chunks(ds: Any) -> Any:
     """Rechunk a Dataset's dask arrays so every dimension is Zarr-writable.
 
@@ -1681,7 +1728,7 @@ def _serialize_output(
             return target, "pickle"
         # default: zarr
         target = _target(".zarr")
-        ds = _zarr_uniform_chunks(ds)
+        ds = _zarr_uniform_chunks(_clear_text_encoding(ds))
 
         def _write_da_local() -> None:
             with _zarr_write_warnings_suppressed():
@@ -1724,6 +1771,7 @@ def _serialize_output(
             return target, "pickle"
 
         target = _target(".zarr")
+        value = _clear_text_encoding(value)
 
         def _write_tree_local() -> None:
             with _zarr_write_warnings_suppressed():
@@ -1755,7 +1803,7 @@ def _serialize_output(
             return target, "pickle"
         # default: zarr
         target = _target(".zarr")
-        ds = _zarr_uniform_chunks(value)
+        ds = _zarr_uniform_chunks(_clear_text_encoding(value))
 
         def _write_ds_local() -> None:
             with _zarr_write_warnings_suppressed():

@@ -62,9 +62,9 @@ def required_inputs(recipe: Recipe) -> list[tuple[str, str | None]]:
     true``, or feeding a required input port or param of a step.
     """
     from aa_recipe_manager.graph import required_inputs as graph_required_inputs
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
-    names = graph_required_inputs(recipe, load_builtin_registry())
+    names = graph_required_inputs(recipe, load_registry(recipe_ops(recipe)))
     return [(name, recipe.inputs[name].description) for name in names]
 
 

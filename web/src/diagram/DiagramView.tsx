@@ -33,7 +33,7 @@ import type { StepRunState } from '../runs/reducer';
 import { useViewStore } from '../state/view';
 import { selectStep } from './locate';
 import { RouteEdge } from './edges/RouteEdge';
-import { DiagramContext, IconButton, type DiagramActions } from './nodes/common';
+import { DiagramContext, Icon, IconButton, WAITING_TITLE, type DiagramActions, type IconName } from './nodes/common';
 import { MapGroupNode } from './nodes/GroupNodes';
 import { IncludeNode } from './nodes/IncludeNode';
 import { ExternalNode, GhostNode, InputsBoxNode, OutputsBoxNode, RunConfigNode } from './nodes/SmallNodes';
@@ -83,7 +83,7 @@ function minimapColor(flowNode: FlowNode): string {
 }
 
 /** Status rows of the legend (front end doc 3.3), each shown while a step in view has it. */
-const STATUS_LEGEND: { swatch: string; label: string; has: (badge: StepBadge) => boolean }[] = [
+const STATUS_LEGEND: { swatch: string; label: string; icon?: IconName; has: (badge: StepBadge) => boolean }[] = [
   {
     swatch: 'rc-key-survey',
     label: 'Survey cache (S)',
@@ -96,6 +96,7 @@ const STATUS_LEGEND: { swatch: string; label: string; has: (badge: StepBadge) =>
     label: 'Compute (outline: will, fill: did)',
     has: (b) => b.predicted === 'compute' || b.actual === 'computed',
   },
+  { swatch: 'rc-key-waiting', label: WAITING_TITLE, icon: 'hourglass', has: (b) => b.waiting },
   { swatch: 'rc-key-running', label: 'Running', has: (b) => b.actual === 'running' },
   { swatch: 'rc-key-pruned', label: SKIPPED_CACHED_TITLE, has: skippedCached },
   { swatch: 'rc-key-untargeted', label: NOT_NEEDED_TITLE, has: notNeeded },
@@ -116,7 +117,7 @@ function Legend({ view }: { view: View }) {
     <div className="rc-legend" aria-label="Legend">
       {[...items, ...statuses].map((item) => (
         <span key={item.label} className="rc-legend-item">
-          <span className={`rc-legend-swatch ${item.swatch}`} />
+          <span className={`rc-legend-swatch ${item.swatch}`}>{'icon' in item && item.icon && <Icon icon={item.icon} />}</span>
           {item.label}
         </span>
       ))}

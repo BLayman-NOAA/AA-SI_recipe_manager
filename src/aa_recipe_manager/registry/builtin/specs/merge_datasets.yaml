@@ -54,8 +54,9 @@ params:
 
       With "mean", variables with "units: dB" are averaged in the linear domain
       and converted back, since a mean of decibels is not the mean of what they
-      measure. The average is unweighted: the partial bins do not record how
-      many pings each held.
+      measure. When every segment carries ping_count along ``dim``, as
+      compute_mvbs output does, each part is weighted by it and the merged
+      count is the sum. Otherwise the average is unweighted.
     required: false
     default: null
 implementations:

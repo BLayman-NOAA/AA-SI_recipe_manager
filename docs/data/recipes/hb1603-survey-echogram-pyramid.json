@@ -3061,8 +3061,8 @@
       "category": "processing",
       "implementation": {
         "key": "default",
-        "callable_path": "echopype.commongrid.compute_MVBS",
-        "dependency": "echopype"
+        "callable_path": "aa_si_utils.utils.compute_mvbs",
+        "dependency": "aa-si-utils"
       },
       "include": "inc:sub_recipes/processing_lvl_3_viewer.yaml",
       "document": "sub_recipes/processing_lvl_3_viewer.yaml",

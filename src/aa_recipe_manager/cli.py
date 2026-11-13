@@ -46,6 +46,22 @@ from aa_recipe_manager.executor.engine.tasks import (
 _REQUESTED_LOG_LEVEL = "INFO"
 
 
+def _spec_dir_option(command):
+    """Add the repeatable --spec-dir option to a command."""
+    return click.option(
+        "--spec-dir",
+        "spec_dirs",
+        multiple=True,
+        metavar="DIR",
+        help=(
+            "Extra spec library folder searched for ops the recipe uses that "
+            "are not built in (repeatable), after the run config's spec_dirs. "
+            "The contrib sets shipped with the package are always searched, "
+            "and a library never replaces a built in op."
+        ),
+    )(command)
+
+
 def _fail(message: str) -> None:
     """Print an error message to stderr and exit with code 1."""
     click.echo(f"Error: {message}", err=True)
@@ -197,14 +213,22 @@ def main(log_level: str) -> None:
 
 @main.command("generate")
 @click.argument("recipe", type=click.Path(exists=True, dir_okay=False))
-@click.option("--output", "-o", default=None, help="Output file path.")
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="Output file path, or output folder for --format echodataflow.",
+)
 @click.option(
     "--format",
     "output_format",
     default="notebook",
-    type=click.Choice(["notebook", "script"]),
+    type=click.Choice(["notebook", "script", "echodataflow"]),
     show_default=True,
-    help="Output format.",
+    help=(
+        "Output format. 'echodataflow' writes a Prefect flow module with its "
+        "registry entry, config fragments and requirements to a folder."
+    ),
 )
 @click.option("--implementation", default=None, help="Override implementation key for all steps.")
 @click.option("--overwrite", is_flag=True, default=False, help="Overwrite output if it exists.")
@@ -223,6 +247,7 @@ def main(log_level: str) -> None:
     metavar="NAME=VALUE",
     help="Supply a pipeline-level input value for path resolution (repeatable).",
 )
+@_spec_dir_option
 def generate_cmd(
     recipe: str,
     output: str | None,
@@ -233,8 +258,9 @@ def generate_cmd(
     no_tracker: bool,
     cache_aware: bool,
     inputs: tuple[str, ...],
+    spec_dirs: tuple[str, ...],
 ) -> None:
-    """Generate a Jupyter notebook or Python script from RECIPE."""
+    """Generate a Jupyter notebook, Python script or echodataflow flow from RECIPE."""
     parsed_inputs: dict[str, str] = {}
     for item in inputs:
         if "=" not in item:
@@ -253,6 +279,7 @@ def generate_cmd(
             implementation_override=implementation,
             cache_aware=cache_aware,
             inputs=parsed_inputs or None,
+            spec_dirs=spec_dirs,
         )
         click.echo(f"Generated: {out}")
     except Exception as exc:
@@ -282,12 +309,14 @@ def generate_cmd(
     type=click.Path(exists=True, dir_okay=False),
     help="Run config file whose inputs apply, found as for run when omitted.",
 )
+@_spec_dir_option
 def dry_run_cmd(
     recipe: str,
     visualize: bool,
     check_versions: bool,
     inputs: tuple[str, ...],
     config_path: str | None,
+    spec_dirs: tuple[str, ...],
 ) -> None:
     """Validate RECIPE without executing or generating any artifacts.
 
@@ -311,6 +340,7 @@ def dry_run_cmd(
         inputs=merged_inputs or None,
         visualize=visualize,
         check_versions=check_versions,
+        spec_dirs=[*run_config.spec_dirs, *spec_dirs],
     )
 
     click.echo(report.format_text())
@@ -334,10 +364,15 @@ def dry_run_cmd(
     help="Output format.",
 )
 @click.option("--output", "-o", default=None, help="Write output to a file instead of stdout.")
-def deps_cmd(recipe: str, deps_format: str, output: str | None) -> None:
+@_spec_dir_option
+def deps_cmd(
+    recipe: str, deps_format: str, output: str | None, spec_dirs: tuple[str, ...]
+) -> None:
     """Show or export dependencies for RECIPE."""
     try:
-        result = api.export_dependencies(recipe, format=deps_format, output=output)
+        result = api.export_dependencies(
+            recipe, format=deps_format, output=output, spec_dirs=spec_dirs
+        )
         if isinstance(result, str):
             click.echo(result)
         else:
@@ -1128,6 +1163,7 @@ class _CLIProgress:
         "running steps finish, nothing new starts, and the exit code is 2."
     ),
 )
+@_spec_dir_option
 def run_cmd(
     recipe: str,
     executor: str,
@@ -1157,6 +1193,7 @@ def run_cmd(
     no_pin_targets: bool,
     events_path: str | None,
     cancel_file: str | None,
+    spec_dirs: tuple[str, ...],
 ) -> None:
     """Execute RECIPE's pipeline directly in this process."""
     # Force a non-interactive matplotlib backend before any visualization
@@ -1264,6 +1301,7 @@ def run_cmd(
                 pin_targets=not no_pin_targets,
                 events=event_sink,
                 cancel=cancel_token,
+                spec_dirs=[*run_config.spec_dirs, *spec_dirs],
             )
     except Exception as exc:
         # Wall-clock, not a step sum: it's the answer to "did dask actually
@@ -1655,6 +1693,7 @@ def clean_cmd(
     default=False,
     help="Emit the preview as JSON instead of text.",
 )
+@_spec_dir_option
 def preview_cmd(
     recipe: str,
     targets: tuple[str, ...],
@@ -1671,6 +1710,7 @@ def preview_cmd(
     inputs: tuple[str, ...],
     base_dir: str | None,
     as_json: bool,
+    spec_dirs: tuple[str, ...],
 ) -> None:
     """Show, per step, what running RECIPE would do, without running it.
 
@@ -1718,6 +1758,7 @@ def preview_cmd(
             pin_targets=not no_pin_targets,
             storage_options=run_config.storage_options,
             base_dir=base_dir,
+            spec_dirs=[*run_config.spec_dirs, *spec_dirs],
         )
     except Exception as exc:
         _handle_recipe_errors(exc)

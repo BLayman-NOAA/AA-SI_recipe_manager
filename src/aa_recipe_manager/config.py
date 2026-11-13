@@ -49,6 +49,7 @@ _KNOWN_KEYS = frozenset(
         "executor",
         "dask_scheduler",
         "dask_workers",
+        "spec_dirs",
     }
 )
 
@@ -76,6 +77,9 @@ class RunConfig:
     executor: str | None = None
     dask_scheduler: str | None = None
     dask_workers: int | None = None
+    #: Extra spec library folders searched for ops a recipe uses that are not
+    #: built in. Relative folders are resolved against the config file's folder.
+    spec_dirs: list[str] = field(default_factory=list)
     #: Path the config was loaded from, or ``None`` when no file was found.
     source: Path | None = None
 
@@ -212,6 +216,19 @@ def load_run_config(
             f"{type(inputs).__name__}."
         )
 
+    spec_dirs = data.get("spec_dirs") or []
+    if not isinstance(spec_dirs, list) or not all(
+        isinstance(item, str) for item in spec_dirs
+    ):
+        raise ValueError(
+            f"Config file {path}: 'spec_dirs' must be a list of folder paths."
+        )
+    spec_dirs = [
+        item if item.startswith("contrib:") or Path(item).is_absolute()
+        else str(path.parent / item)
+        for item in spec_dirs
+    ]
+
     return RunConfig(
         user_cache_dir=data.get("user_cache_dir"),
         temp_dir=data.get("temp_dir"),
@@ -222,5 +239,6 @@ def load_run_config(
         executor=data.get("executor"),
         dask_scheduler=data.get("dask_scheduler"),
         dask_workers=data.get("dask_workers"),
+        spec_dirs=spec_dirs,
         source=path,
     )

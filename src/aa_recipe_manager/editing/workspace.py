@@ -848,14 +848,14 @@ class RecipeWorkspace:
         Its warnings are left to ``validate``.
         """
         from aa_recipe_manager.parser.dag_builder import build_dag
-        from aa_recipe_manager.registry.loader import load_builtin_registry
+        from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 build_dag(
                     recipe,
-                    load_builtin_registry(),
+                    load_registry(recipe_ops(recipe)),
                     input_values=inputs,
                     check_versions=False,
                     base_dir=self.base_dir,
@@ -1009,9 +1009,9 @@ def _undeclared_names(recipe: Recipe) -> list[str]:
     and a custom step's spec is the recipe's own. An override is flagged when
     the sub-recipe does not declare the input and no step of it uses one.
     """
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
-    registry = load_builtin_registry()
+    registry = load_registry(recipe_ops(recipe))
     found = []
     for step in recipe.steps:
         if step.op == "custom" or not registry.has_spec(step.op):

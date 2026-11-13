@@ -19,10 +19,14 @@ interface LayerListProps {
   front: string | null;
   /** Session titles by sid, which name the rows when they span sessions. */
   titles: Record<string, string>;
+  /** Rows whose source the panel draws no layer of. */
+  bare: string[];
   /** Select a row's step, bringing its session's tab to the front first. */
   onSelect: (layer: EchogramLayer) => void;
   onRefresh: (layer: EchogramLayer) => void;
   onRemove: (layer: EchogramLayer) => void;
+  /** Draw a layer of a bare row's source in the panel. */
+  onAddLayer: (layer: EchogramLayer) => void;
   /** Run to a row's step and refresh the row when the run finishes. */
   onRun: (layer: EchogramLayer) => void;
   /** Change how a line row's line is drawn. */
@@ -119,15 +123,17 @@ function LineControls({ layer, label, onChange }: LineControlsProps) {
  * The steps drawn in the echogram, one row per layer: the front session's
  * first, named with their session's title when the rows span sessions or
  * come from a tab behind. A line row also sets its line's colour, width and
- * visibility.
+ * visibility. A row whose source the panel draws no layer of offers to add one.
  */
 export function LayerList({
   layers,
   front,
   titles,
+  bare,
   onSelect,
   onRefresh,
   onRemove,
+  onAddLayer,
   onRun,
   onLineStyle,
   canRun,
@@ -139,7 +145,8 @@ export function LayerList({
       {orderedRows(layers, front).map((layer) => {
         const text = rowLabel(layer, titles, spanning, front);
         const tiers = tierLetters(layer.resolution);
-        const state = STATE_TEXT[layer.state];
+        const drawsNothing = bare.includes(layer.id);
+        const state = STATE_TEXT[layer.state] || (drawsNothing ? 'no layers drawn' : '');
         const freshness = freshnessText(layer.freshness, Boolean(layer.resolution));
         const inFront = layer.sid === front;
         const action = actionsFor(layer);
@@ -195,6 +202,16 @@ export function LayerList({
                   onClick={() => onRun(layer)}
                 >
                   Run to {layer.step}
+                </button>
+              )}
+              {drawsNothing && (
+                <button
+                  type="button"
+                  className="rc-button rc-small"
+                  title="Draw a layer of this source in the echogram"
+                  onClick={() => onAddLayer(layer)}
+                >
+                  Add layer
                 </button>
               )}
               <button

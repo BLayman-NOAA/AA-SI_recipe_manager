@@ -31,6 +31,7 @@ import {
   unsavedText,
   withFreshness,
   withLabels,
+  withLayerFor,
   type EchogramLayer,
   type LineLayer,
 } from '../src/echogram/layers';
@@ -289,22 +290,23 @@ describe('what a finished run computed', () => {
 });
 
 describe('the panel side', () => {
+  const base = {
+    version: 1,
+    level: 'auto' as const,
+    pixelsPerPing: 1,
+    colormap: 'viridis',
+    filter: 'nearest' as const,
+    xUnit: 'time',
+    yUnit: 'depth',
+    aspect: { mode: 'free' as const, exaggeration: 1 },
+  };
+
   it('finds sources no layer reads', () => {
     expect(sourcesWithoutLayers(['a', 'b', 'c'], [{ source: 'a' }, { source: 'c' }])).toEqual(['b']);
     expect(sourcesWithoutLayers(['a'], [])).toEqual(['a']);
   });
 
   it('fits saved settings to the open sources, keeping the layers of a source added since', () => {
-    const base = {
-      version: 1,
-      level: 'auto' as const,
-      pixelsPerPing: 1,
-      colormap: 'viridis',
-      filter: 'nearest' as const,
-      xUnit: 'time',
-      yUnit: 'depth',
-      aspect: { mode: 'free' as const, exaggeration: 1 },
-    };
     const saved: ViewSettings = {
       ...base,
       store: 'old',
@@ -321,6 +323,35 @@ describe('the panel side', () => {
     expect(fitted.sources).toEqual(current.sources);
     expect(fitted.layers).toEqual([{ source: 'a', channel: 1 }, { source: 'new', channel: 0 }]);
     expect(fitted.colormap).toBe('viridis');
+  });
+
+  it('keeps a source the saved settings name without a layer without one', () => {
+    const sources = [{ id: 'a', store: 'u' }, { id: 'b', store: 'v' }];
+    const saved: ViewSettings = { ...base, sources, layers: [{ source: 'a', channel: 0 }] };
+    const current: ViewSettings = { ...base, layers: [{ source: 'a', channel: 0 }, { source: 'b', channel: 0 }] };
+    expect(settingsFor(saved, current, ['a', 'b']).layers).toEqual([{ source: 'a', channel: 0 }]);
+  });
+
+  it('adds a layer of a row on top, on the first free channel, without the window', () => {
+    const row = layer('sv', { resolution: svMapped.echogram.resolution as unknown as Resolution });
+    const settings: ViewSettings = { ...base, window: { x: [0, 1], y: [0, 1] }, layers: [] };
+    const first = withLayerFor(settings, row);
+    expect(first.window).toBeUndefined();
+    expect(first.layers).toEqual([{ id: `${row.id}-layer-1`, source: row.id, channel: 0, color: { colormap: 'viridis' } }]);
+    const second = withLayerFor(first, row);
+    expect(second.layers[1]).toMatchObject({ id: `${row.id}-layer-2`, channel: 1 });
+    // Sv has two channels, so a third layer goes back to the first.
+    expect(withLayerFor(second, row).layers[2]).toMatchObject({ id: `${row.id}-layer-3`, channel: 0 });
+  });
+
+  it('adds a labels layer on the cluster palette', () => {
+    const row = layer('embed_results', {
+      output: 'ds_normalized',
+      variable: 'ml_dataset_hdbscan_results_grid',
+      resolution: embed.echogram.resolution as unknown as Resolution,
+    });
+    const added = withLayerFor({ ...base, layers: [] }, row).layers[0];
+    expect(added).toMatchObject({ channel: 0, color: { palette: 'cluster' } });
   });
 
   it('knows a forgotten mount when it sees one', () => {

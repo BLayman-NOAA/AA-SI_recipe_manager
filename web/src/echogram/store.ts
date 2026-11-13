@@ -57,6 +57,7 @@ import {
   spansSessions,
   unsavedText,
   withFreshness,
+  withLayerFor,
   withLabels,
   type ComputedSteps,
   type EchogramLayer,
@@ -127,6 +128,11 @@ export interface EchogramState {
   titles: Record<string, string>;
   /** Each line layer's fetched lines by instance id. Not saved: a reload fetches them again. */
   lines: Record<string, Record<string, LineData>>;
+  /**
+   * Rows whose source the panel draws no layer of, after the user removed its
+   * last one there. Not saved: after a reload the panel reports them so again.
+   */
+  bare: string[];
 
   /** Draw a step's saved output, after an eye click. */
   show: (sid: string, step: string, options?: ShowOptions) => Promise<void>;
@@ -134,6 +140,8 @@ export interface EchogramState {
   addChoice: (choice: Choice) => Promise<void>;
   cancelChoice: () => void;
   remove: (id: string) => void;
+  /** Draw a layer of a row's source on top of the panel's stack. */
+  addLayer: (id: string) => Promise<void>;
   /** Change how a line row's line is drawn, and keep it. */
   setLineStyle: (id: string, style: LineStyle) => void;
   /** Fetch a layer's step again and draw the newer data, or retry the same. */
@@ -141,7 +149,7 @@ export interface EchogramState {
   /** Take a session's run all preview and last run, and set its layers' freshness from them. */
   track: (sid: string, preview: Preview | null, computed: ComputedSteps | null) => void;
   setTitles: (titles: Record<string, string>) => void;
-  /** The panel's layer stack changed: drop a source whose last layer the user removed there. */
+  /** The panel's layer stack changed: mark the rows whose source it draws no layer of. */
   onPanelLayersChange: (layers: Layer[]) => void;
   /** An error the panel showed; a layer whose mount the server forgot is resolved again. */
   onPanelError: (error: unknown) => void;
@@ -287,9 +295,13 @@ let reported: Layer[] | null = null;
 let settingsTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useEchogramStore = create<EchogramState>((set, get) => {
-  // Every change to the rows goes through here, so labels stay unique and freshness current.
+  // Every change to the rows goes through here, so labels stay unique, freshness current and bare rows real.
   const setLayers = (change: (layers: EchogramLayer[]) => EchogramLayer[]) =>
-    set((state) => ({ layers: withFreshness(withLabels(change(state.layers)), state.bySession) }));
+    set((state) => {
+      const layers = withFreshness(withLabels(change(state.layers)), state.bySession);
+      const bare = state.bare.filter((id) => layers.some((layer) => layer.id === id));
+      return { layers, bare: bare.length === state.bare.length ? state.bare : bare };
+    });
   const previewOf = (sid: string, step: string) =>
     get().bySession[sid]?.preview?.steps.find((entry) => entry.step_id === step);
   const patch = (id: string, change: Partial<EchogramLayer>) =>
@@ -606,6 +618,7 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
     bySession: {},
     titles: {},
     lines: {},
+    bare: [],
 
     // An answer that comes after another tab came to the front still draws its
     // layer, which belongs to its own tab, but says and offers nothing there.
@@ -711,6 +724,21 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       }
     },
 
+    addLayer: (id) => {
+      const panel = get().panel;
+      const row = find(id);
+      if (!panel || row?.kind !== 'value') return Promise.resolve();
+      return enqueue(async () => {
+        const settings = panel.settingsObject;
+        if (get().panel !== panel || !settings || !panel.sourceIds.includes(id)) return;
+        try {
+          await panel.applySettings(withLayerFor(settings, find(id) ?? row));
+        } catch (error) {
+          patch(id, { state: 'error', error: errorText(error) });
+        }
+      });
+    },
+
     setLineStyle: (id, style) => {
       if (find(id)?.kind !== 'line') return;
       patch(id, style);
@@ -754,9 +782,8 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
         });
         return;
       }
-      for (const id of sourcesWithoutLayers(panel.sourceIds, layers)) {
-        if (find(id)?.state === 'shown') get().remove(id);
-      }
+      const bare = sourcesWithoutLayers(panel.sourceIds, layers).filter((id) => find(id));
+      if (bare.join('\n') !== get().bare.join('\n')) set({ bare });
     },
 
     onPanelError: (error) => {
@@ -819,6 +846,7 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
         gpu: 'unavailable',
         layers: [],
         lines: {},
+        bare: [],
         choice: null,
         message: layers.length || busy ? NEEDS_WEBGPU : null,
       });
@@ -834,6 +862,7 @@ export const useEchogramStore = create<EchogramState>((set, get) => {
       set((state) => ({
         panel: null,
         layers: state.layers.map((layer) => ({ ...layer, state: 'loading' as const, error: null })),
+        bare: [],
       }));
     },
 

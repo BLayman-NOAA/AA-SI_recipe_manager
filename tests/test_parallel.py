@@ -86,9 +86,17 @@ def helpers() -> types.ModuleType:
             _rec("collect_named", out=list(out))
             return sum(out)
 
+        def keep_above(x: int, floor: int = 15) -> int | None:
+            _rec("keep_above", x=x)
+            return x if x > floor else None
+
+        def add_total(x: int, values: list[int]) -> int:
+            _rec("add_total", x=x, values=list(values))
+            return x + sum(values)
+
         for fn in (
             make_list, make_scalar, inc, scale, offset, split_two, collect_two,
-            collect_sum, collect_named
+            collect_sum, collect_named, keep_above, add_total
         ):
             setattr(module, fn.__name__, fn)
         sys.modules[MOD] = module
@@ -290,6 +298,73 @@ def test_map_over_empty_source_folds_to_empty(helpers):
     assert result.outputs["proc"]["out"] == []
     assert result.outputs["merge"]["total"] == 0
     assert not [c for c in helpers.call_log if c[0] == "inc"]  # never ran
+
+
+def test_a_chain_over_another_source_reads_the_whole_folded_list(helpers):
+    """Each window instance sees every per file result, not one of them.
+
+    The shape of a step mapped over time windows that reads the outputs of a
+    chain mapped over files.
+    """
+    files = _step(
+        "files", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    per_file = _step(
+        "per_file", "inc",
+        inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"},
+        map_over="${files.items}",
+    )
+    windows = _step(
+        "windows", "make_list",
+        params={"n": 2},
+        param_decls={"n": ParamDeclaration(type="int")},
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    per_window = _step(
+        "per_window", "add_total",
+        inputs={"x": "${_item}", "values": "${per_file.out}"},
+        in_ports={"x": _INT, "values": _MANY}, out_ports={"out": _INT},
+        output_map={"out": "__return__"},
+        map_over="${windows.items}",
+    )
+
+    result = _run([files, per_file, windows, per_window])
+
+    # per_file -> [11, 21, 31], summing to 63; windows -> [10, 20].
+    assert result.outputs["per_window"]["out"] == [73, 83]
+    calls = [kw for name, kw in helpers.call_log if name == "add_total"]
+    assert [c["values"] for c in calls] == [[11, 21, 31], [11, 21, 31]]
+
+
+def test_a_none_output_skips_the_rest_of_its_instance(helpers):
+    """An empty window stops its own instance and leaves the others alone."""
+    producer = _step(
+        "seg", "make_list",
+        out_ports={"items": _LIST}, output_map={"items": "__return__"},
+    )
+    select = _step(
+        "select", "keep_above",
+        inputs={"x": "${_item}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"},
+        map_over="${seg.items}",
+    )
+    compute = _step(
+        "compute", "inc",
+        inputs={"x": "${select.out}"},
+        in_ports={"x": _INT}, out_ports={"out": _INT},
+        output_map={"out": "__return__"},
+        map_over="${seg.items}",
+    )
+
+    result = _run([producer, select, compute])
+
+    assert result.outputs["select"]["out"] == [None, 20, 30]
+    assert result.outputs["compute"]["out"] == [None, 21, 31]
+    assert [kw["x"] for name, kw in helpers.call_log if name == "inc"] == [20, 30]
 
 
 def test_mapped_chain_shares_element_context(helpers):

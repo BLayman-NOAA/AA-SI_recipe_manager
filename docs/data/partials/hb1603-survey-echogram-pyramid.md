@@ -227,7 +227,7 @@
     from aa_si_utils.utils import apply_mask_to_sv
     from aa_si_ml.ml import remove_noise
     from aa_si_utils.utils import mask_sparse_bins
-    from echopype.commongrid import compute_MVBS
+    from aa_si_utils.utils import compute_mvbs
     from aa_si_utils.utils import concat_datasets
     from aa_si_utils.utils import rechunk_dataset
     from aa_si_echogram_gl.ops import plan_pyramid_segments
@@ -492,7 +492,7 @@
 
         # viewer_file_mvbs: Compute Mean Volume Backscattering Strength by averaging
         # Sv over range and time bins.
-        _iter_ds_MVBS = compute_MVBS(
+        _iter_ds_MVBS = compute_mvbs(
             ds_Sv=_iter_viewer_mask_sparse_ds_Sv,
             range_bin='2m',
             ping_time_bin='10s',

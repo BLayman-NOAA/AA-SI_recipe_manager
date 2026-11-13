@@ -166,6 +166,10 @@ steps:
       range_bin: "2m"
       ping_time_bin: "2s"
       nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+      range_var: "depth"
+      # crop_max_range_m plus about 7 m of transducer depth; raise it with the
+      # crop.
+      mvbs_range_var_max: "260m"
 
   - id: plot_mvbs
     op: plot_sv_echogram

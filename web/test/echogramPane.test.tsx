@@ -2,6 +2,7 @@
 // fake device, and EchogramPanel is replaced by a stand-in recording its sources.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ViewSettings } from 'aa-si-echogram-gl';
 import type { DockviewApi } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Preview } from '../src/api/models';
@@ -49,6 +50,8 @@ const panels = vi.hoisted(
       names: Record<string, string | undefined>;
       lines: { id: string; color: string; width: number; visible: boolean }[];
       retries: number;
+      settings?: ViewSettings;
+      applied: ViewSettings[];
       destroyed: boolean;
     }[],
 );
@@ -62,6 +65,8 @@ vi.mock('aa-si-echogram-gl', async (original) => {
       names: {} as Record<string, string | undefined>,
       lines: [] as (typeof panels)[number]['lines'],
       retries: 0,
+      settings: undefined as ViewSettings | undefined,
+      applied: [] as ViewSettings[],
       destroyed: false,
     };
     constructor(options: Record<string, unknown>) {
@@ -86,9 +91,11 @@ vi.mock('aa-si-echogram-gl', async (original) => {
       this.record.lines = specs;
     }
     get settingsObject() {
-      return undefined;
+      return this.record.settings;
     }
-    async applySettings() {}
+    async applySettings(settings: ViewSettings) {
+      this.record.applied.push(settings);
+    }
     destroy() {
       this.record.destroyed = true;
     }
@@ -115,7 +122,7 @@ beforeEach(() => {
   resetGpuContext();
   panels.length = 0;
   gpu.fake = false;
-  useEchogramStore.setState({ front: null, gpu: 'unknown', layers: [], panel: null, settings: null, choice: null, pendingRun: null, message: null, busy: null, bySession: {}, titles: {} });
+  useEchogramStore.setState({ front: null, gpu: 'unknown', layers: [], panel: null, settings: null, choice: null, pendingRun: null, message: null, busy: null, bySession: {}, titles: {}, bare: [] });
   useEchogramStore.getState().activate(SID);
   useTabs.setState({ sids: [SID], pendingSelection: null });
   useSessionStore.getState().setSid(SID);
@@ -285,6 +292,35 @@ describe('the echogram pane with a device', () => {
     await user.click(within(list).getByRole('button', { name: 'Remove sv' }));
     await waitFor(() => expect(screen.queryByRole('list', { name: 'Echogram layers' })).toBeNull());
     await waitFor(() => expect(panels[0].sources).toEqual([]));
+  });
+
+  it('says when a row draws no layer in the panel, and adds one from the row', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      [`GET /api/sessions/${SID}`]: makeSession(),
+      [`GET /api/sessions/${SID}/steps/sv/artifacts`]: svMapped,
+    });
+    renderPane();
+    await waitFor(() => expect(panels).toHaveLength(1));
+    await act(() => useEchogramStore.getState().show(SID, 'sv'));
+    const list = await screen.findByRole('list', { name: 'Echogram layers' });
+    await waitFor(() => expect(list).toHaveTextContent('ds_Sv: Sv, 3 datasets'));
+    expect(within(list).queryByRole('button', { name: 'Add layer' })).toBeNull();
+
+    act(() => useEchogramStore.getState().onPanelLayersChange([]));
+    expect(list).toHaveTextContent('ds_Sv: Sv, 3 datasets, no layers drawn');
+    const settings = { version: 2, layers: [], colormap: 'viridis' } as unknown as ViewSettings;
+    panels[0].settings = settings;
+    await user.click(within(list).getByRole('button', { name: 'Add layer' }));
+    await waitFor(() => expect(panels[0].applied).toHaveLength(1));
+    expect(panels[0].applied[0].layers).toEqual([
+      { id: `${SV_ID}-layer-1`, source: SV_ID, channel: 0, color: { colormap: 'viridis' } },
+    ]);
+
+    act(() => useEchogramStore.getState().onPanelLayersChange(panels[0].applied[0].layers as never));
+    expect(list).not.toHaveTextContent('no layers drawn');
+    expect(within(list).queryByRole('button', { name: 'Add layer' })).toBeNull();
+    expect(panels[0].sources).toEqual([SV_ID]);
   });
 
   it('offers a run on a row whose new settings are not computed, or computed for some files', async () => {

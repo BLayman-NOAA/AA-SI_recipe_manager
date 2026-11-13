@@ -1,0 +1,52 @@
+op: plan_time_windows
+cache_key: plan_time_windows  # pinned cache identity - keep stable across op renames
+description: >
+  Plan clock aligned time windows over a set of raw files, from the start times
+  in their names. Map select_ping_time_range over the windows to cut a dataset
+  into the same slices echodataflow's MVBS postprocessing flow uses.
+notes: >
+  Windows are window_mins long and aligned to the clock in UTC, running from
+  the window holding the first file to the window holding the last. A window
+  whose most recent file started more than no_data_gap_hours earlier is a
+  recording gap and is left out; echodataflow marks those slices no_data.
+
+  Each window's end is the last nanosecond before the next window starts, so a
+  ping on a window edge belongs to the later window only, as in echodataflow's
+  half open slices.
+
+  No raw data is read: only the file names.
+category: utility
+inputs:
+  raw_file_paths:
+    type: list
+    description: Raw file paths or names, normally initial_setup.raw_file_paths.
+outputs:
+  windows:
+    type: list
+    description: >
+      List of window dicts with start, end, label and raw_filenames, in time
+      order. Map select_ping_time_range over it with window set to the item.
+params:
+  window_mins:
+    type: int
+    required: false
+    default: 20
+    description: Window length in minutes.
+  no_data_gap_hours:
+    type: float
+    required: false
+    default: 3.0
+    description: >
+      Longest time since the most recent file started for a window to still
+      be planned.
+implementations:
+  - key: default
+    callable_path: aa_si_utils.utils.plan_time_windows
+    default: true
+    dependency:
+      name: aa-si-utils
+      version: ">=0.1.0"
+      source: git
+      url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+    output_map:
+      windows: "['windows']"

@@ -119,12 +119,18 @@ def _load_dag(
     implementation_override: str | None = None,
     check_versions: bool = False,
     base_dir: str | Path | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> PipelineDAG:
-    """Build a PipelineDAG from a recipe path or Recipe object."""
+    """Build a PipelineDAG from a recipe path or Recipe object.
+
+    Ops the recipe uses that are not built in are looked up in the spec
+    libraries: the folders in ``spec_dirs``, then the contrib sets shipped with
+    the package (see :func:`registry.loader.load_registry`).
+    """
     from aa_recipe_manager.model.types import Recipe as RecipeModel
     from aa_recipe_manager.parser.dag_builder import build_dag
     from aa_recipe_manager.parser.yaml_reader import load_recipe
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
     if isinstance(recipe, (str, Path)):
         loaded = load_recipe(recipe)
@@ -140,7 +146,7 @@ def _load_dag(
         implementation_override=implementation_override,
     )
 
-    registry = load_builtin_registry()
+    registry = load_registry(recipe_ops(loaded), spec_dirs)
     return build_dag(
         loaded,
         registry,
@@ -169,8 +175,9 @@ def generate(
     implementation_override: str | None = None,
     cache_aware: bool = False,
     inputs: dict[str, Any] | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> Path:
-    """Generate a Jupyter notebook or Python script from a recipe.
+    """Generate a Jupyter notebook, Python script or echodataflow flow from a recipe.
 
     Parameters
     ----------
@@ -178,10 +185,13 @@ def generate(
         Recipe file path or pre-loaded Recipe object.
     output:
         Output path. Defaults to <recipe_name>.ipynb next to the recipe file
-        (or in the current directory when a Recipe object is passed).
+        (or in the current directory when a Recipe object is passed). For
+        ``"echodataflow"`` it is a folder, defaulting to
+        ``echodataflow_out/<flow key>`` next to the recipe.
     output_format:
-        "notebook" (default) or "script". This is the canonical Python API
-        keyword for selecting the generated artifact type.
+        "notebook" (default), "script", or "echodataflow". The last writes a
+        Prefect flow module for echodataflow with its registry entry, YAML
+        config fragments and requirements, and returns the module's path.
     overwrite:
         Overwrite the output file if it already exists.
     include_provenance:
@@ -197,28 +207,53 @@ def generate(
         Optional pipeline-level input values used to resolve path references
         during DAG construction. Does not affect the generated inputs cell;
         the recipe's declared defaults are always used there.
+    spec_dirs:
+        Extra spec library folders, as for :func:`execute`.
 
     Returns the path to the written output file.
     """
     from aa_recipe_manager.generator.core import CodeGenerator
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
     recipe_path = Path(recipe) if isinstance(recipe, (str, Path)) else None
-    dag = _load_dag(recipe, input_values=inputs, implementation_override=implementation_override, check_versions=False)
+    dag = _load_dag(
+        recipe,
+        input_values=inputs,
+        implementation_override=implementation_override,
+        check_versions=False,
+        spec_dirs=spec_dirs,
+    )
 
-    if output is None:
-        recipe_name = dag.recipe.name
-        ext = ".py" if output_format == "script" else ".ipynb"
-        if recipe_path is not None:
-            output = recipe_path.with_name(f"{recipe_name}{ext}")
-        else:
-            output = Path(f"{recipe_name}{ext}")
-
-    output = Path(output)
-    if output.exists() and not overwrite:
-        raise FileExistsError(
-            f"Output file already exists: {output}. Pass overwrite=True to overwrite."
+    if output_format == "echodataflow":
+        from aa_recipe_manager.generator.echodataflow.sidecars import (
+            flow_slug,
+            module_name,
         )
+
+        slug = flow_slug(dag.recipe.name)
+        if output is None:
+            base = recipe_path.parent if recipe_path is not None else Path(".")
+            output = base / "echodataflow_out" / slug
+        output = Path(output)
+        if (output / module_name(slug)).exists() and not overwrite:
+            raise FileExistsError(
+                f"Output already exists: {output / module_name(slug)}. Pass "
+                "overwrite=True to overwrite."
+            )
+    else:
+        if output is None:
+            recipe_name = dag.recipe.name
+            ext = ".py" if output_format == "script" else ".ipynb"
+            if recipe_path is not None:
+                output = recipe_path.with_name(f"{recipe_name}{ext}")
+            else:
+                output = Path(f"{recipe_name}{ext}")
+
+        output = Path(output)
+        if output.exists() and not overwrite:
+            raise FileExistsError(
+                f"Output file already exists: {output}. Pass overwrite=True to overwrite."
+            )
 
     options: dict[str, Any] = {
         "include_provenance": include_provenance,
@@ -230,7 +265,7 @@ def generate(
     if implementation_override is not None:
         options["implementation_override"] = implementation_override
 
-    registry = load_builtin_registry()
+    registry = load_registry(recipe_ops(dag.recipe), spec_dirs)
     gen = CodeGenerator(registry)
     return gen.generate(dag, output, backend=output_format, options=options)
 
@@ -242,13 +277,15 @@ def dry_run(
     visualize: bool = False,
     check_versions: bool = True,
     base_dir: str | Path | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> DryRunReport:
     """Validate a recipe and return a structured DryRunReport.
 
     No files are written and no pipeline steps are executed. All package-level
     errors are caught and returned as errors inside the DryRunReport; this
     function never raises. Relative local path params are checked under
-    ``base_dir`` when given, else under the working directory.
+    ``base_dir`` when given, else under the working directory. ``spec_dirs``
+    names extra spec library folders, as for :func:`execute`.
     """
     try:
         dag = _load_dag(
@@ -256,6 +293,7 @@ def dry_run(
             input_values=inputs,
             check_versions=check_versions,
             base_dir=base_dir,
+            spec_dirs=spec_dirs,
         )
     except (
         RecipeParseError,
@@ -266,6 +304,8 @@ def dry_run(
         DependencyVersionError,
         FileNotFoundError,
         TypeError,
+        # A spec folder whose op is already registered, among others.
+        ValueError,
     ) as exc:
         recipe_label = str(recipe) if isinstance(recipe, (str, Path)) else "Recipe"
         declared = {} if isinstance(recipe, (str, Path)) else recipe.inputs
@@ -302,6 +342,7 @@ def export_dependencies(
     *,
     format: str = "text",
     output: str | Path | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> Path | str:
     """Resolve and export all implementation dependencies for a recipe.
 
@@ -314,10 +355,12 @@ def export_dependencies(
     output:
         If provided, write the result to this file path and return the Path.
         Otherwise return the result as a string.
+    spec_dirs:
+        Extra spec library folders, as for :func:`execute`.
     """
     from aa_recipe_manager.resolver.dependencies import resolve_dependencies
 
-    dag = _load_dag(recipe, check_versions=False)
+    dag = _load_dag(recipe, check_versions=False, spec_dirs=spec_dirs)
     resolved = resolve_dependencies(dag)
 
     # Inspecting a recipe whose dependencies do not reconcile is exactly when
@@ -390,7 +433,7 @@ def recipe_graph(
     """
     from aa_recipe_manager.graph import build_recipe_graph
     from aa_recipe_manager.parser.yaml_reader import load_recipe
-    from aa_recipe_manager.registry.loader import load_builtin_registry
+    from aa_recipe_manager.registry.loader import load_registry, recipe_ops
 
     if isinstance(recipe, (str, Path)):
         path = Path(recipe)
@@ -404,7 +447,7 @@ def recipe_graph(
         slug = source = loaded.name
     return build_recipe_graph(
         loaded,
-        load_builtin_registry(),
+        load_registry(recipe_ops(loaded)),
         slug=slug,
         title=title or loaded.name,
         source=source,
@@ -887,6 +930,7 @@ def execute(
     pin_targets: bool = True,
     events: EventSink | None = None,
     cancel: CancelToken | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> Any:
     """Execute a recipe's pipeline directly in the current process.
 
@@ -1010,6 +1054,12 @@ def execute(
         then returns normally with ``status == "cancelled"`` on the result
         and in the manifest, holding the outputs that finished; the CLI exits
         with code 2.
+    spec_dirs:
+        Extra spec library folders, searched for ops the recipe uses that are
+        not built in, before the contrib sets shipped under
+        ``registry/contrib``. Only the specs the recipe needs are loaded, and
+        a library never replaces a built in op, so built in step hashes are
+        unchanged.
 
     Returns the :class:`ExecutionResult`.
     """
@@ -1041,6 +1091,7 @@ def execute(
         input_values=inputs,
         implementation_override=implementation_override,
         check_versions=False,
+        spec_dirs=spec_dirs,
     )
 
     # Recipe-declared executor is the lowest-priority default; the explicit
@@ -1232,6 +1283,7 @@ def plan_preview(
     fingerprint_cache: dict[tuple[str, str], Any] | None = None,
     instance_probe_limit: int = 32,
     base_dir: str | Path | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> PlanPreview:
     """Predict, per step, what :func:`execute` with these arguments would do.
 
@@ -1269,6 +1321,8 @@ def plan_preview(
         base_dir: Directory that relative local paths in the recipe are
             checked and fingerprinted under (default: the working directory),
             as for a run started there. The hashes do not depend on which.
+        spec_dirs: Extra spec library folders, as for
+            :func:`execute`.
 
     Returns:
         A :class:`PlanPreview` with one :class:`StepPreview` per step, in
@@ -1279,7 +1333,11 @@ def plan_preview(
     if only and not targets:
         raise ValueError("only=True needs at least one target")
     dag = _load_dag(
-        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+        recipe,
+        input_values=inputs,
+        check_versions=False,
+        base_dir=base_dir,
+        spec_dirs=spec_dirs,
     )
     return _plan_preview(
         dag,
@@ -1325,6 +1383,7 @@ def step_hashes(
     storage_options: dict[str, Any] | None = None,
     fingerprint_cache: dict[tuple[str, str], Any] | None = None,
     base_dir: str | Path | None = None,
+    spec_dirs: Sequence[str | Path] = (),
 ) -> dict[str, StepHash]:
     """Compute every step's cache identity without running anything.
 
@@ -1335,14 +1394,18 @@ def step_hashes(
     those file and folder fingerprints by path so they are read once.
     Relative local paths are checked and read under ``base_dir`` (default: the
     working directory), as for a run started there; the hashes do not depend
-    on which.
+    on which. ``spec_dirs`` names extra spec library folders, as for :func:`execute`.
 
     Returns a mapping of step id to :class:`StepHash`, in topological order.
     """
     from aa_recipe_manager.executor.checkpoint import compute_step_fingerprints
 
     dag = _load_dag(
-        recipe, input_values=inputs, check_versions=False, base_dir=base_dir
+        recipe,
+        input_values=inputs,
+        check_versions=False,
+        base_dir=base_dir,
+        spec_dirs=spec_dirs,
     )
     fingerprints = compute_step_fingerprints(
         dag,
