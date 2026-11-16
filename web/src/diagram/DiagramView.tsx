@@ -27,13 +27,21 @@ import {
   type ReactNode,
 } from 'react';
 import type { Graph, StepNode as GraphStep } from '../api/graph';
-import { notNeeded, skippedCached, type StepBadge } from '../runs/badges';
+import { doneInRun, notNeeded, skippedCached, type StepBadge } from '../runs/badges';
 import { NOT_NEEDED_TITLE, SKIPPED_CACHED_TITLE } from '../runs/wording';
 import type { StepRunState } from '../runs/reducer';
 import { useViewStore } from '../state/view';
 import { selectStep } from './locate';
 import { RouteEdge } from './edges/RouteEdge';
-import { DiagramContext, Icon, IconButton, WAITING_TITLE, type DiagramActions, type IconName } from './nodes/common';
+import {
+  DiagramContext,
+  DONE_TITLE,
+  Icon,
+  IconButton,
+  WAITING_TITLE,
+  type DiagramActions,
+  type IconName,
+} from './nodes/common';
 import { MapGroupNode } from './nodes/GroupNodes';
 import { IncludeNode } from './nodes/IncludeNode';
 import { ExternalNode, GhostNode, InputsBoxNode, OutputsBoxNode, RunConfigNode } from './nodes/SmallNodes';
@@ -98,6 +106,7 @@ const STATUS_LEGEND: { swatch: string; label: string; icon?: IconName; has: (bad
   },
   { swatch: 'rc-key-waiting', label: WAITING_TITLE, icon: 'hourglass', has: (b) => b.waiting },
   { swatch: 'rc-key-running', label: 'Running', has: (b) => b.actual === 'running' },
+  { swatch: 'rc-key-done', label: DONE_TITLE, icon: 'check', has: doneInRun },
   { swatch: 'rc-key-pruned', label: SKIPPED_CACHED_TITLE, has: skippedCached },
   { swatch: 'rc-key-untargeted', label: NOT_NEEDED_TITLE, has: notNeeded },
   { swatch: 'rc-key-unknown', label: 'Instances not yet known', has: (b) => b.predicted === 'unknown' },

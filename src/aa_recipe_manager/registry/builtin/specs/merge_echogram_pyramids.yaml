@@ -15,14 +15,14 @@ notes: >
 category: visualization
 inputs:
   parts:
-    type: object
+    type: DataTree
     many: true
     description: >
       Collected pyramid DataTrees, in ping order, supplied by a
       ``collect: ${mapped_step.pyramid}`` directive.
 outputs:
   pyramid:
-    type: object
+    type: DataTree
     description: The combined pyramid, as one DataTree with a node per level.
 params:
   dim:

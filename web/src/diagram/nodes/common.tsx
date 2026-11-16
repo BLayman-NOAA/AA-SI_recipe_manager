@@ -167,6 +167,7 @@ const ICONS = {
   drill: 'M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
   play: 'M8 5v14l11-7z',
   hourglass: 'M6 2v6l4 4-4 4v6h12v-6l-4-4 4-4V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5-4-4V4h8v3.5l-4 4z',
+  check: 'M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
   eye: 'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   disk: 'M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z',
   diskOutline:
@@ -234,7 +235,7 @@ export function Badges({ items }: { items: ReactNode[] }) {
 /** Said where a step waits in the run going: on its mark and in the diagram key. */
 export const WAITING_TITLE = 'Waiting in this run';
 
-/** A still hourglass beside a step the run going has not got to yet; the spinner takes its place. */
+/** A still hourglass on a step the run going has not got to yet; the spinner takes its place. */
 export function Waiting() {
   return (
     <span className="rc-run-mark rc-run-waiting" role="img" aria-label={WAITING_TITLE} title={WAITING_TITLE}>
@@ -243,7 +244,19 @@ export function Waiting() {
   );
 }
 
-/** A spinning ring shown beside a step or sub-recipe while it runs. */
+/** Said where the run shown finished a step: on its mark and in the diagram key. */
+export const DONE_TITLE = 'Done in this run';
+
+/** A checkmark on a step the run shown finished; it takes the spinner's place. */
+export function Done() {
+  return (
+    <span className="rc-run-mark rc-run-done" role="img" aria-label={DONE_TITLE} title={DONE_TITLE}>
+      <Icon icon="check" />
+    </span>
+  );
+}
+
+/** A spinning ring shown on a step or sub-recipe while it runs. */
 export function Spinner() {
   return <span className="rc-run-mark rc-run-spinner" role="img" aria-label="Running" title="Running" />;
 }

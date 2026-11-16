@@ -3516,7 +3516,7 @@
       "outputs": [
         {
           "name": "pyramid",
-          "type": "object",
+          "type": "DataTree",
           "description": "DataTree with one node per level, carrying the multiscales block and the per chunk summaries on its root attributes.",
           "disposed": false,
           "many": false,
@@ -3553,7 +3553,7 @@
       "inputs": [
         {
           "name": "parts",
-          "type": "object",
+          "type": "DataTree",
           "required": true,
           "description": "Collected pyramid DataTrees, in ping order, supplied by a ``collect: ${mapped_step.pyramid}`` directive.",
           "value": "${build_pyramid.pyramid}",
@@ -3578,7 +3578,7 @@
       "outputs": [
         {
           "name": "pyramid",
-          "type": "object",
+          "type": "DataTree",
           "description": "The combined pyramid, as one DataTree with a node per level.",
           "disposed": false,
           "many": false,
@@ -3746,7 +3746,7 @@
       "id": "out:survey_echogram_store.pyramid",
       "kind": "output",
       "label": "survey_echogram_store.pyramid",
-      "type": "object",
+      "type": "DataTree",
       "declared": false,
       "from": {
         "step": "survey_echogram_store",
@@ -4503,7 +4503,7 @@
       "source_output": "pyramid",
       "target_input": "parts",
       "label": "pyramid -> parts",
-      "type": "object"
+      "type": "DataTree"
     },
     {
       "source": "query_ncei",
@@ -4638,7 +4638,7 @@
       "source_output": "pyramid",
       "target_input": null,
       "label": "pyramid",
-      "type": "object"
+      "type": "DataTree"
     }
   ],
   "groups": [

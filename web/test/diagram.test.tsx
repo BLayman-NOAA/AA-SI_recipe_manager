@@ -419,15 +419,29 @@ describe('Diagram', () => {
         ]),
       );
       await waitFor(() => expect(waiting('seed')).toBeNull());
-      expect(within(nodeElement('seed')).getByRole('img', { name: 'Running' })).toBeInTheDocument();
+      const running = within(nodeElement('seed')).getByRole('img', { name: 'Running' });
+      expect(running.closest('.rc-run-status')).not.toBeNull();
       expect(waiting('total')).not.toBeNull();
 
       act(() =>
         useRunStore.getState().apply('r1', [
-          { seq: 3, time: 3, kind: 'run_finished', run_id: 'x', data: { status: 'cancelled', executed: [], skipped: [], pruned: [], untargeted: [] } },
+          { seq: 3, time: 3, kind: 'step_finished', run_id: 'x', data: { step: 'seed', disposition: 'computed', index: 1, total: 2 } },
+        ]),
+      );
+      const done = (id: string) => within(nodeElement(id)).queryByRole('img', { name: 'Done in this run' });
+      await waitFor(() => expect(done('seed')).not.toBeNull());
+      expect(within(nodeElement('seed')).queryByRole('img', { name: 'Running' })).toBeNull();
+      expect(done('total')).toBeNull();
+      expect(screen.getByLabelText('Legend')).toHaveTextContent('Done in this run');
+
+      act(() =>
+        useRunStore.getState().apply('r1', [
+          { seq: 4, time: 4, kind: 'run_finished', run_id: 'x', data: { status: 'cancelled', executed: [], skipped: [], pruned: [], untargeted: [] } },
         ]),
       );
       await waitFor(() => expect(waiting('total')).toBeNull());
+      expect(done('seed')).not.toBeNull();
+      expect(done('total')).toBeNull();
     });
 
     it('does not render again for a batch of log events', async () => {

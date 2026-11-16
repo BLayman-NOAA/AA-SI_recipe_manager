@@ -26,7 +26,7 @@ inputs:
       - Sv
 outputs:
   pyramid:
-    type: object
+    type: DataTree
     description: >
       DataTree with one node per level, carrying the multiscales block and the
       per chunk summaries on its root attributes.

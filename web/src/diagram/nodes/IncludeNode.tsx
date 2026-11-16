@@ -37,7 +37,7 @@ export function IncludeNode({ data }: ViewNodeProps<'include'>) {
     >
       <Handles inPorts={inPorts} outPorts={outPorts} input output bus="both" />
       {status === 'running' && (
-        <div className="rc-run-marks">
+        <div className="rc-run-marks rc-run-status">
           <Spinner />
         </div>
       )}

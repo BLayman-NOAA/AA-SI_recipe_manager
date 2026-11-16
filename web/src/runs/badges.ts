@@ -114,6 +114,11 @@ export function surveyBackedSteps(preview: Preview | null): Set<string> {
 /** Results a step's hash can be compared with: statuses that read or wrote one. */
 const RESULT_STATUSES: ReadonlySet<StepStatus> = new Set(['computed', 'hit-user-cache', 'hit-survey-cache', 'marker']);
 
+/** The run shown finished the step: it computed it, loaded it, or found it already done. */
+export function doneInRun(badge: StepBadge): boolean {
+  return badge.actual !== null && RESULT_STATUSES.has(badge.actual);
+}
+
 /** The run's result for a step was made with another hash than the preview's (FR-54). */
 export function staleResult(ahead: StepPreview | undefined, actual: StepRunState | undefined): boolean {
   return Boolean(ahead && actual?.hash && RESULT_STATUSES.has(actual.status) && actual.hash !== ahead.step_hash);

@@ -175,6 +175,7 @@ EXPECTED_BUILTIN_OPS = {
     "compute_sv",
     "compute_transducer_depth",
     "ep_add_depth",
+    "ep_add_location",
     "ep_add_splitbeam_angle",
     "ep_detect_seafloor",
     "detect_seafloor",

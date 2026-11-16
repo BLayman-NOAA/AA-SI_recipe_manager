@@ -1,11 +1,12 @@
 import { echogramCandidate, opLabel, type StepNode as GraphStep } from '../../api/graph';
 import { Prose } from '../../Prose';
-import { notNeeded, skippedCached, tierLetter, type StepBadge } from '../../runs/badges';
+import { doneInRun, notNeeded, skippedCached, tierLetter, type StepBadge } from '../../runs/badges';
 import { NOT_NEEDED_TITLE, SKIPPED_CACHED_TITLE } from '../../runs/wording';
 import { clip, firstSentence, plainText } from '../../text';
 import type { Badge } from '../buildView';
 import {
   Badges,
+  Done,
   ExpandButton,
   Handles,
   Icon,
@@ -44,20 +45,34 @@ export function badgeClass(badge: StepBadge | null): string {
 }
 
 /**
- * The marks drawn over a step's corner: an hourglass while it waits in the
- * run, a spinner while it runs, instance progress, the S, U or M letter and
- * the saved indicator. They sit outside the node's flow, so a change never
- * resizes the node (which would lay the diagram out again).
+ * The step's place in the run, drawn over its bottom right corner: an
+ * hourglass while it waits, a spinner while it runs, a checkmark once done.
+ */
+function RunStatus({ badge }: { badge: StepBadge }) {
+  const running = badge.actual === 'running';
+  const done = doneInRun(badge);
+  if (!badge.waiting && !running && !done) return null;
+  return (
+    <div className="rc-run-marks rc-run-status">
+      {badge.waiting && <Waiting />}
+      {running && <Spinner />}
+      {done && <Done />}
+    </div>
+  );
+}
+
+/**
+ * The marks drawn over a step's top right corner: instance progress, the S, U
+ * or M letter and the saved indicator. Like the run status they sit outside
+ * the node's flow, so a change never resizes the node (which would lay the
+ * diagram out again).
  */
 function RunMarks({ badge }: { badge: StepBadge }) {
   const letter = tierLetter(badge);
   const saved = badge.saved;
-  const running = badge.actual === 'running';
-  if (!running && !badge.waiting && !badge.progress && !letter && !saved && !badge.willSave) return null;
+  if (!badge.progress && !letter && !saved && !badge.willSave) return null;
   return (
     <div className="rc-run-marks">
-      {badge.waiting && <Waiting />}
-      {running && <Spinner />}
       {badge.progress && (
         <span className="rc-run-mark rc-run-progress" title="Instances done">
           {badge.progress.done}/{badge.progress.count ?? '?'}
@@ -158,6 +173,7 @@ export function StepNode({ data }: ViewNodeProps<'step'>) {
     >
       <Handles inPorts={inPorts} outPorts={outPorts} input output bus="both" />
       {badge && <RunMarks badge={badge} />}
+      {badge && <RunStatus badge={badge} />}
       {badge?.stale && <span className="rc-stale-corner" title="The hash changed since the result shown" />}
       <div className="rc-step-head">
         <div className="rc-step-id">{step.id}</div>

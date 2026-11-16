@@ -163,7 +163,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -426,7 +426,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -524,7 +524,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -748,7 +748,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -1149,7 +1149,7 @@
       "outputs": [
         {
           "name": "pyramid",
-          "type": "object",
+          "type": "DataTree",
           "description": "DataTree with one node per level, carrying the multiscales block and the per chunk summaries on its root attributes.",
           "required": true,
           "default": null,
@@ -1262,7 +1262,7 @@
             "ref": "main",
             "repo_relative_path": "src/aa_si_echogram_gl/ops.py",
             "origin": "git",
-            "installed_version": "0.0.1.dev0",
+            "installed_version": "0.2.0",
             "note": null
           }
         }
@@ -1386,7 +1386,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -1513,7 +1513,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -1607,7 +1607,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -1720,7 +1720,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -1936,7 +1936,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -2121,7 +2121,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -2410,7 +2410,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -2523,7 +2523,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -2653,7 +2653,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -2766,7 +2766,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -3040,7 +3040,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -3182,7 +3182,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -3468,7 +3468,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -3797,7 +3797,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -4544,7 +4544,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -4682,7 +4682,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5250,7 +5250,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5369,7 +5369,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5500,7 +5500,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5658,7 +5658,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5776,7 +5776,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -5821,7 +5821,7 @@
       "inputs": [
         {
           "name": "parts",
-          "type": "object",
+          "type": "DataTree",
           "description": "Collected pyramid DataTrees, in ping order, supplied by a ``collect: ${mapped_step.pyramid}`` directive.",
           "required": true,
           "default": null,
@@ -5835,7 +5835,7 @@
       "outputs": [
         {
           "name": "pyramid",
-          "type": "object",
+          "type": "DataTree",
           "description": "The combined pyramid, as one DataTree with a node per level.",
           "required": true,
           "default": null,
@@ -5903,7 +5903,7 @@
             "ref": "main",
             "repo_relative_path": "src/aa_si_echogram_gl/ops.py",
             "origin": "git",
-            "installed_version": "0.0.1.dev0",
+            "installed_version": "0.2.0",
             "note": null
           }
         }
@@ -6093,7 +6093,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -6674,7 +6674,7 @@
             "ref": "main",
             "repo_relative_path": "src/aa_si_echogram_gl/ops.py",
             "origin": "git",
-            "installed_version": "0.0.1.dev0",
+            "installed_version": "0.2.0",
             "note": null
           }
         }
@@ -7036,7 +7036,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -8027,7 +8027,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -8265,7 +8265,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -8376,7 +8376,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -8702,7 +8702,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -8853,7 +8853,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -9137,7 +9137,7 @@
             "repo_relative_path": "src/aa_si_ml/ml.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
@@ -9605,7 +9605,7 @@
             "repo_relative_path": "src/aa_si_utils/utils.py",
             "origin": "git",
             "installed_version": "0.1.0",
-            "note": "uncommitted local edits, line may differ"
+            "note": null
           }
         }
       ],
