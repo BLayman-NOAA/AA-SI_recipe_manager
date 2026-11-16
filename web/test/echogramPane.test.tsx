@@ -69,6 +69,7 @@ vi.mock('aa-si-echogram-gl', async (original) => {
       applied: [] as ViewSettings[],
       destroyed: false,
     };
+    view = { info: undefined };
     constructor(options: Record<string, unknown>) {
       this.record.options = options;
       panels.push(this.record);

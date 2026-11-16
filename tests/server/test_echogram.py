@@ -128,6 +128,9 @@ def test_echogram_errors_use_the_client_error_body(client, mapped):
     assert response.status_code == 410
     assert response.json()["error"] == "gone"
     assert "resolve the step again" in response.json()["message"]
+    # Browsers keep a 410 indefinitely unless told not to, which would hide the
+    # mount once a lookup makes it again.
+    assert response.headers["cache-control"] == "no-store"
 
     # An unknown describe mount is gone too, so the client resolves the step again.
     response = client.get("/echogram/api/describe/0123456789abcdef")

@@ -17,6 +17,7 @@ import { readStored, writeStored } from '../state/storage';
 import { openTab } from '../state/tabs';
 import { useView } from '../state/view';
 import { Chooser } from './Chooser';
+import { EchogramActivity } from './EchogramActivity';
 import './echogram.css';
 import { getGpuContext } from './gpu';
 import { LayerList } from './LayerList';
@@ -76,8 +77,11 @@ function useDocumentMoves(element: RefObject<HTMLElement | null>): number {
  * window's frames and adds its styles to that document. So when the host moves
  * to another document the panel is made again there.
  */
-function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
+function useEchogramPanel(
+  host: RefObject<HTMLDivElement | null>,
+): { gpu: GpuState; panel: EchogramPanel | null; plot: HTMLElement | null } {
   const [gpu, setGpu] = useState<GpuState>({ kind: 'starting' });
+  const [made, setMade] = useState<{ panel: EchogramPanel; plot: HTMLElement | null } | null>(null);
   const moves = useDocumentMoves(host);
   useEffect(() => {
     const container = host.current;
@@ -101,6 +105,7 @@ function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
           onViewChange: store.settingsChanged,
         });
         setGpu({ kind: 'ready' });
+        setMade({ panel, plot: container.querySelector<HTMLElement>('.egl-plot') });
         void store.attach(panel);
       })
       .catch((error: unknown) => {
@@ -114,12 +119,13 @@ function useEchogramPanel(host: RefObject<HTMLDivElement | null>): GpuState {
       live = false;
       window.removeEventListener('pagehide', store.captureSettings);
       if (panel) {
+        setMade(null);
         store.detach();
         panel.destroy();
       }
     };
   }, [host, moves]);
-  return gpu;
+  return { gpu, panel: made?.panel ?? null, plot: made?.plot ?? null };
 }
 
 interface SourcesProps {
@@ -191,7 +197,7 @@ function RunOffer({ sid, step, memoryOnly }: { sid: string; step: string; memory
 
 export function EchogramPane() {
   const host = useRef<HTMLDivElement>(null);
-  const gpu = useEchogramPanel(host);
+  const { gpu, panel, plot } = useEchogramPanel(host);
   const sid = useSessionStore((state) => state.sid);
   const graph = useCurrentSession().data?.graph;
   const layers = useEchogramStore((state) => state.layers);
@@ -262,6 +268,7 @@ export function EchogramPane() {
         </div>
       )}
       <div ref={host} className="rc-echogram-host" />
+      <EchogramActivity plot={plot} panel={panel} />
     </div>
   );
 }

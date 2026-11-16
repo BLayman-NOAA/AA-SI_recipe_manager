@@ -63,6 +63,7 @@ def test_unknown_route_uses_the_error_body(client):
     response = client.get("/api/nothing")
     assert response.status_code == 404
     assert response.json()["error"] == "not_found"
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize(

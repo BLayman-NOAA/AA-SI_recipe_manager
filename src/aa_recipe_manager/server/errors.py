@@ -191,9 +191,14 @@ def error_body(error: str, message: str, details: Any) -> dict[str, Any]:
     return {"error": error, "message": message, "details": details, "step_id": None}
 
 
+#: Sent with every error. Browsers keep some errors without being told to, a
+#: 410 Gone indefinitely, which would hide a mount the server has since made again.
+NO_STORE = {"Cache-Control": "no-store"}
+
+
 async def _handle(request: Request, exc: Exception) -> JSONResponse:
     status, body = translate_error(exc)
-    return JSONResponse(body, status_code=status)
+    return JSONResponse(body, status_code=status, headers=NO_STORE)
 
 
 def install_handlers(app: FastAPI) -> None:

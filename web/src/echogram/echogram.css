@@ -128,3 +128,48 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The activity notice, drawn into the panel's plot over its top right corner.
+   The hover readout uses the same corner, so the notice steps aside for it. */
+.rc-echogram-activity {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--egl-readout, rgba(12, 12, 12, 0.88));
+  border: 1px solid var(--egl-line, #333);
+  border-radius: 4px;
+  color: var(--egl-text, #ddd);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.egl-readout:not(:empty) ~ .rc-echogram-activity {
+  display: none;
+}
+
+.rc-echogram-activity > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rc-activity-spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 2px solid color-mix(in srgb, var(--rc-accent) 25%, transparent);
+  border-top-color: var(--rc-accent);
+  border-radius: 50%;
+  animation: rc-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rc-activity-spinner {
+    animation-duration: 3s;
+  }
+}
